@@ -1,0 +1,11 @@
+CLAUDE.md
+.claude/docs/**
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build artifacts
+dist/
+_smoke_export_test.json
