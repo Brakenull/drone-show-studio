@@ -1,5 +1,5 @@
 CLAUDE.md
-.claude/docs/**
+.claude/**
 
 # Python
 __pycache__/
@@ -9,3 +9,12 @@ __pycache__/
 # Build artifacts
 dist/
 _smoke_export_test.json
+
+# C++ (stage2_core_engine)
+build/
+out/
+*.pyd
+*.dll
+*.obj
+CMakeFiles/
+CMakeCache.txt

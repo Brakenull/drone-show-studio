@@ -116,3 +116,58 @@ def evaluate_object_at_time(obj, scene, time_sec: float):
     scene.frame_set(int(round(time_sec * scene_fps)))
     depsgraph = bpy.context.evaluated_depsgraph_get()
     return obj.evaluated_get(depsgraph)
+
+
+def shift_keyframes_to_frames(obj, frame_mapping: dict) -> int:
+    """Move every keyframe point at an `old_frame` in `frame_mapping` (int ->
+    int) to its `new_frame`, translating Bezier handles by the same delta so
+    handle shape (hence in/out tangent) is preserved (spec section 3.5's
+    Auto-Fix Timeline Timing operator).
+
+    Processes old frames in descending `new_frame` order: since Auto-Fix only
+    ever stretches (each new_frame >= its old_frame) and preserves relative
+    ordering, moving the keyframe that ends up latest first guarantees no
+    not-yet-processed keyframe is ever overwritten or crossed.
+
+    Returns the number of keyframe points moved (0 if the object has no
+    animation data).
+    """
+    anim = obj.animation_data
+    if anim is None or anim.action is None:
+        return 0
+
+    action_slot = getattr(anim, "action_slot", None)
+    ordered_old_frames = sorted(frame_mapping, key=lambda f: frame_mapping[f], reverse=True)
+
+    moved = 0
+    for fcurve in _iter_action_fcurves(anim.action, action_slot):
+        for old_frame in ordered_old_frames:
+            new_frame = frame_mapping[old_frame]
+            delta = new_frame - old_frame
+            if delta == 0:
+                continue
+            for kp in fcurve.keyframe_points:
+                if abs(kp.co.x - old_frame) < 0.5:
+                    kp.co.x += delta
+                    kp.handle_left.x += delta
+                    kp.handle_right.x += delta
+                    moved += 1
+        fcurve.update()
+    return moved
+
+
+def shift_timeline_markers_to_frames(scene, frame_mapping: dict) -> int:
+    """Move every timeline marker at an `old_frame` in `frame_mapping` to its
+    `new_frame`, so shape names (looked up by marker frame) stay attached to
+    the keyframe they named after Auto-Fix Timeline Timing shifts it.
+    Returns the number of markers moved."""
+    moved = 0
+    for old_frame in sorted(frame_mapping, key=lambda f: frame_mapping[f], reverse=True):
+        new_frame = frame_mapping[old_frame]
+        if new_frame == old_frame:
+            continue
+        for marker in scene.timeline_markers:
+            if marker.frame == old_frame:
+                marker.frame = new_frame
+                moved += 1
+    return moved

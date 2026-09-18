@@ -47,6 +47,7 @@ def build_project_metadata(
             "center": [float(v) for v in holding_area["center"]],
             "size": [float(v) for v in holding_area["size"]],
             "max_height": float(holding_area["max_height"]),
+            "grid_spacing_m": float(holding_area["grid_spacing_m"]),
             "layer_spacing_m": float(holding_area["layer_spacing_m"]),
         },
         "kinematic_constraints": (

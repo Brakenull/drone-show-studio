@@ -1,0 +1,58 @@
+{
+  "kinematics_default": {
+    "v_max_mps": 6.0,
+    "a_max_mps2": 3.0,
+    "j_max_mps3": 5.0
+  },
+  "solver": {
+    "num_control_points_min": 10,
+    "adaptive_control_points": true,
+    "max_scp_iterations": 25,
+    "convergence_tol": 1e-3,
+    "trust_region_delta_m": 1.0,
+    "collision_margin_fraction": 0.05,
+    "kinematic_slack_fraction": 0.25,
+    "auto_scale_transition_time": true,
+    "adaptive_time_bucketing": true,
+    "target_time_windows": 16,
+    "max_substage_duration_s": 12.0,
+    "enable_staggered_takeoff": true,
+    "staggered_wave_delay_s": 1.2,
+    "w_slack_collision": 100000.0,
+    "cluster_distance_threshold_m": 2.0,
+    "max_cluster_size": 12,
+    "enable_graph_coloring": true,
+    "apf_seeding": {
+      "enabled": true,
+      "k_repulsion": 50.0,
+      "detection_radius_m": 3.0,
+      "num_euler_steps": 10,
+      "euler_dt": 0.05,
+      "z_stratification_mode": "4_sector_discrete",
+      "z_layer_step_m": 0.75
+    },
+    "cutting_plane": {
+      "enabled": true,
+      "max_dynamic_collocations_per_pair": 3,
+      "detection_frequency_hz": 100.0
+    },
+    "continuous_gatekeeper": {
+      "verification_frequency_hz": 100.0,
+      "min_allowable_distance_m": 1.45,
+      "auto_retry_with_expansion": true,
+      "expansion_factor": 1.25,
+      "max_retry_count": 2
+    }
+  },
+  "solver_weights": {
+    "w_distance": 1.0,
+    "w_vertical_climb": 2.5,
+    "w_heading_change": 0.2,
+    "w_smoothness_snap": 1.0,
+    "w_smoothness_jerk": 0.1
+  },
+  "safety": {
+    "safety_radius_m": 0.75,
+    "min_distance_m": 1.5
+  }
+}

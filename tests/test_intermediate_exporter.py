@@ -16,7 +16,8 @@ HOLDING_AREA = {
     "center": (0.0, -30.0, 5.0),
     "size": (40.0, 10.0),
     "max_height": 15.0,
-    "layer_spacing_m": 1.5,
+    "grid_spacing_m": 2.0,
+    "layer_spacing_m": 2.0,
 }
 
 

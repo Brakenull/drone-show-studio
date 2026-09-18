@@ -1,0 +1,7 @@
+add_executable(test_quintic_bspline test_quintic_bspline.cpp)
+target_link_libraries(test_quintic_bspline PRIVATE drone_core_lib)
+add_test(NAME test_quintic_bspline COMMAND test_quintic_bspline)
+
+add_executable(test_lap_auction test_lap_auction.cpp)
+target_link_libraries(test_lap_auction PRIVATE drone_core_lib)
+add_test(NAME test_lap_auction COMMAND test_lap_auction)

@@ -50,7 +50,7 @@
         },
         "holding_area": {
           "type": "object",
-          "required": ["center", "size", "max_height", "layer_spacing_m"],
+          "required": ["center", "size", "max_height", "grid_spacing_m", "layer_spacing_m"],
           "additionalProperties": false,
           "properties": {
             "center": {
@@ -60,6 +60,7 @@
               "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2
             },
             "max_height": { "type": "number", "exclusiveMinimum": 0 },
+            "grid_spacing_m": { "type": "number", "minimum": 1.8 },
             "layer_spacing_m": { "type": "number", "exclusiveMinimum": 0 }
           }
         },

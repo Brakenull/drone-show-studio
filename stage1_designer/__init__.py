@@ -11,7 +11,7 @@ remain importable - and unit-testable with pytest - outside Blender.
 bl_info = {
     "name": "Drone Show Studio - Designer",
     "author": "Drone Show Studio",
-    "version": (1, 4, 0),
+    "version": (1, 5, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Drone Show",
     "description": (
@@ -34,7 +34,7 @@ if _HAS_BPY:
     import numpy as np
 
     from . import config
-    from .core import color_extractor, holding_area, sampler, timeline_sampler
+    from .core import color_extractor, holding_area, kinematic_validator, sampler, timeline_sampler
     from .exporters import intermediate_exporter
     from .ui import compass_gizmo, panel, viewport_drawer
 
@@ -97,7 +97,7 @@ if _HAS_BPY:
                 tuple(settings.holding_area.center),
                 tuple(settings.holding_area.size),
                 max_height=settings.holding_area.max_height,
-                min_dist=settings.min_distance_m,
+                grid_spacing_m=settings.holding_area.grid_spacing_m,
             )
             all_positions = np.vstack([enu_points, holding_positions]) if n_sampled else holding_positions
             all_colors = list(colors) + [color_extractor.BLACK_RGB8] * n_park
@@ -114,6 +114,30 @@ if _HAS_BPY:
             if marker.frame == frame:
                 return marker.name
         return f"Shape_{frame}"
+
+    def _configured_v_max(settings) -> float:
+        if settings.kinematic_constraints.enabled:
+            return settings.kinematic_constraints.v_max_mps
+        return config.DEFAULT_KINEMATIC_CONSTRAINTS["v_max_mps"]
+
+    def _sample_all_keyframes_for_validation(settings, obj, scene, times, shape_name_fn):
+        """Sample every keyframe exactly as Export would (same function, same
+        holding-area padding) and return (keyframe_entries, transitions) so
+        Export, Check Kinematics and Auto-Fix all validate against identical
+        data — there's only one code path that decides what v_req actually is."""
+        original_frame = scene.frame_current
+        try:
+            entries = []
+            for time_sec in times:
+                frame = int(round(time_sec * (scene.render.fps / scene.render.fps_base)))
+                shape_name = shape_name_fn(scene, frame)
+                entries.append(_build_keyframe_for_time(settings, obj, scene, time_sec, shape_name))
+        finally:
+            scene.frame_set(original_frame)
+
+        positions = [np.array([p["pos"] for p in kf["points"]]) for kf in entries]
+        transitions = kinematic_validator.evaluate_transitions(list(times), positions, _configured_v_max(settings))
+        return entries, transitions
 
     def _refresh_overlay_for_scene(scene) -> None:
         """Re-sample the target object at the scene's current frame and push
@@ -134,7 +158,7 @@ if _HAS_BPY:
                 tuple(settings.holding_area.center),
                 tuple(settings.holding_area.size),
                 max_height=settings.holding_area.max_height,
-                min_dist=settings.min_distance_m,
+                grid_spacing_m=settings.holding_area.grid_spacing_m,
             )
             viewport_drawer.set_holding_preview_points(holding_points)
         else:
@@ -154,6 +178,117 @@ if _HAS_BPY:
         except ImportError:
             pass  # scipy missing - Preview Sample already surfaces this error explicitly
         _redraw_all_view3d()
+
+    def _get_target_and_times(self, context):
+        """Shared setup for the kinematic-check / export / auto-fix operators:
+        validates a target object is set and returns (scene, settings, obj,
+        times), or reports an error and returns None."""
+        scene = context.scene
+        settings = scene.drone_show_settings
+        obj = settings.target_object
+        if obj is None:
+            self.report({"ERROR"}, "No target object set")
+            return None
+
+        try:
+            times = timeline_sampler.get_sample_times_seconds(
+                obj,
+                scene,
+                settings.sampling_mode,
+                fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return None
+
+        if not times:
+            self.report({"ERROR"}, "No keyframes found on target object")
+            return None
+
+        return scene, settings, obj, times
+
+    class DSS_OT_CheckKinematics(bpy.types.Operator):
+        bl_idname = "dss.check_kinematics"
+        bl_label = "Check Kinematics"
+        bl_description = "Sample all keyframes and re-check required transition speeds against v_max"
+
+        def execute(self, context):
+            setup = _get_target_and_times(self, context)
+            if setup is None:
+                return {"CANCELLED"}
+            scene, settings, obj, times = setup
+
+            try:
+                _entries, transitions = _sample_all_keyframes_for_validation(
+                    settings, obj, scene, times, _shape_name_for_frame
+                )
+            except ImportError as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
+
+            panel.set_kinematic_cache(transitions)
+            _redraw_all_view3d()
+            if kinematic_validator.has_error(transitions):
+                self.report({"ERROR"}, "One or more transitions exceed v_max — see the panel for details")
+            else:
+                self.report({"INFO"}, f"Checked {len(transitions)} transition(s), all within budget")
+            return {"FINISHED"}
+
+    class DSS_OT_AutoFixTimeline(bpy.types.Operator):
+        bl_idname = "dss.auto_fix_timeline"
+        bl_label = "Auto-Fix Timeline Timing"
+        bl_description = (
+            "Stretch unsafe keyframe transitions to the minimum duration v_max allows "
+            "(plus collision-avoidance slack), without changing the 3D shapes"
+        )
+
+        def execute(self, context):
+            setup = _get_target_and_times(self, context)
+            if setup is None:
+                return {"CANCELLED"}
+            scene, settings, obj, times = setup
+
+            try:
+                entries, transitions = _sample_all_keyframes_for_validation(
+                    settings, obj, scene, times, _shape_name_for_frame
+                )
+            except ImportError as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
+
+            if not kinematic_validator.has_error(transitions):
+                panel.set_kinematic_cache(transitions)
+                self.report({"INFO"}, "Nothing to fix — every transition is already within v_max")
+                return {"FINISHED"}
+
+            positions = [np.array([p["pos"] for p in kf["points"]]) for kf in entries]
+            v_max = _configured_v_max(settings)
+            fixed_times = kinematic_validator.auto_fix_times(times, positions, v_max)
+
+            scene_fps = scene.render.fps / scene.render.fps_base
+            frame_mapping = {
+                int(round(old_t * scene_fps)): int(round(new_t * scene_fps))
+                for old_t, new_t in zip(times, fixed_times)
+            }
+            moved_keyframes = timeline_sampler.shift_keyframes_to_frames(obj, frame_mapping)
+            timeline_sampler.shift_timeline_markers_to_frames(scene, frame_mapping)
+
+            try:
+                _entries2, transitions2 = _sample_all_keyframes_for_validation(
+                    settings, obj, scene, fixed_times, _shape_name_for_frame
+                )
+            except ImportError as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
+            panel.set_kinematic_cache(transitions2)
+            _redraw_all_view3d()
+
+            self.report(
+                {"INFO"},
+                f"Stretched timeline: {times[0]:.2f}-{times[-1]:.2f}s -> "
+                f"{fixed_times[0]:.2f}-{fixed_times[-1]:.2f}s ({moved_keyframes} keyframe points moved)",
+            )
+            return {"FINISHED"}
 
     class DSS_OT_PreviewSample(bpy.types.Operator):
         bl_idname = "dss.preview_sample"
@@ -182,42 +317,35 @@ if _HAS_BPY:
         bl_description = "Sample all keyframes and export the Phase 1 -> Phase 2 interchange file"
 
         def execute(self, context):
-            scene = context.scene
-            settings = scene.drone_show_settings
-            obj = settings.target_object
-            if obj is None:
-                self.report({"ERROR"}, "No target object set")
+            setup = _get_target_and_times(self, context)
+            if setup is None:
                 return {"CANCELLED"}
+            scene, settings, obj, times = setup
 
-            original_frame = scene.frame_current
             try:
-                times = timeline_sampler.get_sample_times_seconds(
-                    obj,
-                    scene,
-                    settings.sampling_mode,
-                    fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,
+                keyframe_entries, transitions = _sample_all_keyframes_for_validation(
+                    settings, obj, scene, times, _shape_name_for_frame
                 )
-            except ValueError as exc:
-                self.report({"ERROR"}, str(exc))
-                return {"CANCELLED"}
-
-            if not times:
-                self.report({"ERROR"}, "No keyframes found on target object")
-                return {"CANCELLED"}
-
-            try:
-                keyframe_entries = []
-                for time_sec in times:
-                    frame = int(round(time_sec * (scene.render.fps / scene.render.fps_base)))
-                    shape_name = _shape_name_for_frame(scene, frame)
-                    keyframe_entries.append(
-                        _build_keyframe_for_time(settings, obj, scene, time_sec, shape_name)
-                    )
             except ImportError as exc:
                 self.report({"ERROR"}, str(exc))
                 return {"CANCELLED"}
-            finally:
-                scene.frame_set(original_frame)
+
+            panel.set_kinematic_cache(transitions)
+            _redraw_all_view3d()
+
+            # Kinematic Gatekeeping (spec section 3.5): re-checked here
+            # regardless of whether the user ran Check Kinematics first —
+            # the panel's Export button being enabled is only a UI hint, this
+            # is the actual, unconditional gate.
+            if kinematic_validator.has_error(transitions):
+                for t in transitions:
+                    if t.status == kinematic_validator.STATUS_ERROR:
+                        self.report(
+                            {"ERROR"},
+                            f"Keyframe transit [{t.from_index} -> {t.to_index}] requires "
+                            f"~{t.v_req:.1f} m/s (Limit: {_configured_v_max(settings):.1f} m/s)",
+                        )
+                return {"CANCELLED"}
 
             kinematic_constraints = None
             if settings.kinematic_constraints.enabled:
@@ -241,7 +369,8 @@ if _HAS_BPY:
                     "center": tuple(settings.holding_area.center),
                     "size": tuple(settings.holding_area.size),
                     "max_height": settings.holding_area.max_height,
-                    "layer_spacing_m": settings.min_distance_m,
+                    "grid_spacing_m": settings.holding_area.grid_spacing_m,
+                    "layer_spacing_m": settings.holding_area.grid_spacing_m,
                 },
                 fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,
                 safety_radius_m=settings.safety_radius_m,
@@ -265,7 +394,12 @@ if _HAS_BPY:
             self.report({"INFO"}, f"Exported {len(keyframe_entries)} keyframes to {filepath}")
             return {"FINISHED"}
 
-    _CLASSES = (DSS_OT_PreviewSample, DSS_OT_ExportIntermediate)
+    _CLASSES = (
+        DSS_OT_PreviewSample,
+        DSS_OT_CheckKinematics,
+        DSS_OT_AutoFixTimeline,
+        DSS_OT_ExportIntermediate,
+    )
 
     def register():
         global _redraw_timer_running

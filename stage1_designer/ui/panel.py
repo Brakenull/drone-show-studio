@@ -3,7 +3,36 @@
 import bpy
 
 from .. import config
+from ..core.kinematic_validator import STATUS_ERROR, STATUS_OK, STATUS_WARNING
 from . import viewport_drawer
+
+# Cache of the last kinematic pre-validation pass (spec section 3.5), so the
+# panel can render it on every redraw without re-sampling every keyframe each
+# time (that's the same expensive work Export does). Refreshed by
+# DSS_OT_CheckKinematics, DSS_OT_ExportIntermediate and DSS_OT_AutoFixTimeline
+# in __init__.py; `None` means "never checked since the target object/scene
+# was last touched".
+_kinematic_cache = {"transitions": None}
+
+
+def set_kinematic_cache(transitions) -> None:
+    _kinematic_cache["transitions"] = transitions
+
+
+def get_kinematic_cache():
+    return _kinematic_cache["transitions"]
+
+
+def has_kinematic_error() -> bool:
+    transitions = _kinematic_cache["transitions"]
+    return bool(transitions) and any(t.status == STATUS_ERROR for t in transitions)
+
+
+_STATUS_ICON = {
+    STATUS_OK: "CHECKMARK",
+    STATUS_WARNING: "ERROR",
+    STATUS_ERROR: "CANCEL",
+}
 
 
 class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
@@ -17,6 +46,17 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         name="Max Height (Z hold max)",
         default=config.DEFAULT_HOLDING_AREA["max_height"],
         min=0.1,
+        unit="LENGTH",
+    )
+    grid_spacing_m: bpy.props.FloatProperty(
+        name="Launch Grid Spacing (d_launch)",
+        description=(
+            "Holding-area grid pitch. Deliberately larger than the in-flight "
+            "min_distance_m: rest-to-rest launch points can't bend to dodge a "
+            "neighbor, so this needs its own margin (spec section 3.2)"
+        ),
+        default=config.DEFAULT_GRID_SPACING_M,
+        min=config.MIN_GRID_SPACING_M,
         unit="LENGTH",
     )
 
@@ -160,6 +200,7 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.prop(settings.holding_area, "center")
         box.prop(settings.holding_area, "size")
         box.prop(settings.holding_area, "max_height")
+        box.prop(settings.holding_area, "grid_spacing_m")
 
         box = layout.box()
         box.label(text="Kinematic Constraints")
@@ -169,6 +210,25 @@ class DSS_PT_MainPanel(bpy.types.Panel):
             col.prop(settings.kinematic_constraints, "v_max_mps")
             col.prop(settings.kinematic_constraints, "a_max_mps2")
             col.prop(settings.kinematic_constraints, "j_max_mps3")
+
+        box = layout.box()
+        box.label(text="Kinematic Pre-Validation")
+        box.operator("dss.check_kinematics", icon="FILE_REFRESH")
+        transitions = get_kinematic_cache()
+        if transitions is None:
+            box.label(text="Not checked yet")
+        elif not transitions:
+            box.label(text="Nothing to check (need >= 2 keyframes)", icon="CHECKMARK")
+        else:
+            col = box.column(align=True)
+            for t in transitions:
+                col.label(
+                    text=f"[{t.from_index}->{t.to_index}] {t.v_req:.1f} m/s over {t.delta_t:.2f}s (D={t.d_max:.1f}m)",
+                    icon=_STATUS_ICON[t.status],
+                )
+            if has_kinematic_error():
+                box.label(text="ERROR: transition(s) exceed v_max — Export is locked", icon="ERROR")
+            box.operator("dss.auto_fix_timeline", icon="MOD_TIME")
 
         box = layout.box()
         box.label(text="Viewport")
@@ -185,7 +245,11 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.label(text="Export")
         box.prop(settings, "export_path")
         box.prop(settings, "export_format")
-        box.operator("dss.export_intermediate", icon="EXPORT")
+        row = box.row()
+        row.enabled = not has_kinematic_error()
+        row.operator("dss.export_intermediate", icon="EXPORT")
+        if has_kinematic_error():
+            box.label(text="Fix the kinematic error(s) above (or Auto-Fix) to unlock Export", icon="ERROR")
 
 
 CLASSES = (
