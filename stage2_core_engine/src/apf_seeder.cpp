@@ -87,8 +87,37 @@ std::vector<Eigen::MatrixXd> seed_control_points_with_apf(const std::vector<Boun
     // warm-start point (matching parametric progress, not absolute time,
     // since mega-cluster sub-stage decomposition can already shift a
     // drone's real per-window timing independently of this seed).
+    //
+    // FIXED numerical-blowup bug (found and fixed 2026-09-18): the force
+    // magnitude k_rep*(1/dist - 1/R_det)/dist^2 behaves like k_rep/dist^3 as
+    // dist -> 0, which is essentially unbounded for any dist just above the
+    // dist_sq < 1e-12 exact-coincidence guard below -- that guard only
+    // prevents literal division by zero, not the near-singular blowup for
+    // small-but-nonzero separations. Root-caused on the real 300-drone
+    // Phase 1 export (`C:\Users\brake\Local\Temp\intermediate_export-1.json`)
+    // via direct instrumentation: a single drone's seeded control point
+    // reached ~8982 m from origin (a plausible show position is within tens
+    // of meters), which then produced an astronomically large spline
+    // bounding box and, downstream, an equally astronomical voxel range in
+    // collision::SpatioTemporalHash::insert()'s voxel_keys_for_bbox() --
+    // this, not that function itself, was the real driver of the
+    // multi-gigabyte memory growth this class of real-world dense scenario
+    // produced (see spatio_temporal_hash.hpp's class comment for the
+    // separate, genuine rescan-redundancy fix that this one complements).
+    // Fixed with the standard N-body-integrator safety valve: clamp each
+    // point's per-step displacement magnitude, so no single Euler step can
+    // move a point further than `kMaxStepDisplacementM` regardless of how
+    // large the (possibly near-singular) force is. Direction is preserved;
+    // only magnitude is capped. Chosen as `r_det` itself (already the
+    // config's own characteristic length scale for this simulation) so a
+    // legitimately congested pair can still be pushed a full detection-
+    // radius apart in one step -- generous for the seed's actual purpose
+    // (nudging a few meters to escape a bad local geometry), while bounding
+    // worst-case cumulative displacement to num_euler_steps * r_det instead
+    // of unbounded.
     const double r_det = config.detection_radius_m;
     const double r_det_sq = r_det * r_det;
+    const double kMaxStepDisplacementM = r_det;
     for (int step = 0; step < config.num_euler_steps; ++step) {
         std::vector<std::vector<Eigen::Vector3d>> force(num_drones,
                                                           std::vector<Eigen::Vector3d>(num_free, Eigen::Vector3d::Zero()));
@@ -112,7 +141,12 @@ std::vector<Eigen::MatrixXd> seed_control_points_with_apf(const std::vector<Boun
         }
         for (int i = 0; i < num_drones; ++i) {
             for (int k = 0; k < num_free; ++k) {
-                r[i][k] += config.euler_dt * force[i][k];
+                Eigen::Vector3d step_vec = config.euler_dt * force[i][k];
+                const double step_norm = step_vec.norm();
+                if (step_norm > kMaxStepDisplacementM) {
+                    step_vec *= (kMaxStepDisplacementM / step_norm);
+                }
+                r[i][k] += step_vec;
             }
         }
     }

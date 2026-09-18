@@ -115,4 +115,29 @@ struct DroneTrajectorySolution {
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
                                             const CoreConfig& config);
 
+// Staggered Wave Takeoff cross-row race check (docs/2-phase_2.md section
+// 1.7; fixed 2026-09-18): pipeline.cpp re-times each launch row's
+// already-solved maneuver (from a single joint solve() call above, which
+// assumes every drone starts at the same local time 0) into a different
+// absolute-time window by wrapping it with a pre-delay hold and/or
+// post-gap hold. That re-timing is never itself checked by solve()'s own
+// Decoupled Continuous Gatekeeper (section 1.9), which only ever verified
+// the synchronized, local-time-0 solve. This function independently
+// re-verifies the REAL, per-drone chained timeline the caller actually
+// intends to fly — using the exact same decoupled, no-solver-bookkeeping
+// method as evaluate_continuous_clearance() inside scp_solver.cpp,
+// generalized from one spline per drone over [0, duration] to a
+// chronological chain of spline stages per drone (e.g. hold, maneuver,
+// hold), all implicitly starting at a shared time 0 for this check. Returns
+// the worst (minimum) point-wise separation found by sampling at
+// >= verification_frequency_hz; +infinity if there are fewer than 2 drones
+// or `total_duration` is non-positive. Callers should compare the result
+// against continuous_gatekeeper.min_allowable_distance_m and react (e.g.
+// fall back to an unstaggered build) the same way solve()'s own gatekeeper
+// reacts to a rejection.
+double evaluate_worst_case_separation_over_stages(
+    const std::vector<std::vector<DroneTrajectorySolution::Stage>>& per_drone_stages,
+    const std::vector<int>& drone_ids, double total_duration, double enforced_min_distance,
+    double verification_frequency_hz);
+
 }  // namespace drone_core::optimizer

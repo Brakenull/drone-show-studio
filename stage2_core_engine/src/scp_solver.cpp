@@ -1233,6 +1233,84 @@ ContinuousSafetyResult evaluate_continuous_clearance(const std::vector<Eigen::Ma
     return report;
 }
 
+// Staggered Wave Takeoff cross-row race check (see scp_solver.hpp's
+// declaration comment for the full rationale). Generalizes
+// evaluate_continuous_clearance() above from "one spline per drone over
+// [0, duration]" to "a chronological chain of spline stages per drone,
+// implicitly starting at a shared time 0" — each per-drone chain's own
+// stages are expected to sum to `total_duration` with no gaps (the caller's
+// pre-delay/maneuver/post-gap segments always connect end-to-end by
+// construction), so a query at global time t within [0, total_duration]
+// unambiguously falls into exactly one stage per drone.
+double evaluate_worst_case_separation_over_stages(
+    const std::vector<std::vector<DroneTrajectorySolution::Stage>>& per_drone_stages,
+    const std::vector<int>& drone_ids, double total_duration, double enforced_min_distance,
+    double verification_frequency_hz) {
+    const int num_drones = static_cast<int>(per_drone_stages.size());
+    if (num_drones < 2 || total_duration <= 0.0) return std::numeric_limits<double>::infinity();
+
+    struct Chain {
+        std::vector<QuinticBSpline> stage_splines;
+        std::vector<double> stage_start_times;  // cumulative, parallel to stage_splines
+        double total = 0.0;
+    };
+    std::vector<Chain> chains(num_drones);
+    for (int i = 0; i < num_drones; ++i) {
+        double t = 0.0;
+        chains[i].stage_splines.reserve(per_drone_stages[i].size());
+        chains[i].stage_start_times.reserve(per_drone_stages[i].size());
+        for (const auto& stage : per_drone_stages[i]) {
+            chains[i].stage_start_times.push_back(t);
+            chains[i].stage_splines.emplace_back(stage.control_points, stage.duration);
+            t += stage.duration;
+        }
+        chains[i].total = t;
+    }
+
+    auto position_at = [&](int i, double t) -> Eigen::Vector3d {
+        const Chain& chain = chains[i];
+        if (chain.stage_splines.empty()) return Eigen::Vector3d::Zero();
+        const double clamped_t = std::clamp(t, 0.0, chain.total);
+        size_t stage = 0;
+        for (size_t s = 0; s < chain.stage_start_times.size(); ++s) {
+            if (chain.stage_start_times[s] <= clamped_t) {
+                stage = s;
+            } else {
+                break;
+            }
+        }
+        return chain.stage_splines[stage].position(clamped_t - chain.stage_start_times[stage]);
+    };
+
+    std::map<int, int> drone_index;
+    for (int i = 0; i < num_drones; ++i) drone_index[drone_ids[i]] = i;
+
+    const double dt = 1.0 / std::max(1.0, verification_frequency_hz);
+    const int num_windows = std::max(1, static_cast<int>(std::ceil(total_duration / dt)));
+    const Eigen::Vector3d margin = Eigen::Vector3d::Constant(enforced_min_distance);
+
+    // Same one-instant-at-a-time, freshly-discarded-hash approach as
+    // evaluate_continuous_clearance() above, for the same O(num_drones)
+    // peak-memory reason (see its comment).
+    double worst = std::numeric_limits<double>::infinity();
+    for (int w = 0; w < num_windows; ++w) {
+        const double t = std::min(total_duration, w * dt);
+        collision::SpatioTemporalHash hash(enforced_min_distance, dt);
+        for (int i = 0; i < num_drones; ++i) {
+            const Eigen::Vector3d p = position_at(i, t);
+            hash.insert(collision::DroneWindow{drone_ids[i], 0, p - margin, p + margin});
+        }
+        for (const auto& pair : hash.find_candidate_pairs()) {
+            auto it_i = drone_index.find(pair.drone_i);
+            auto it_j = drone_index.find(pair.drone_j);
+            if (it_i == drone_index.end() || it_j == drone_index.end()) continue;
+            const double d = (position_at(it_i->second, t) - position_at(it_j->second, t)).norm();
+            worst = std::min(worst, d);
+        }
+    }
+    return worst;
+}
+
 // After solve_transition_once() settles, this independently re-verifies
 // every stage's final splines (see evaluate_continuous_clearance() above)
 // against continuous_gatekeeper.min_allowable_distance_m. A rejected
@@ -1254,21 +1332,34 @@ ContinuousSafetyResult evaluate_continuous_clearance(const std::vector<Eigen::Ma
 // sub-stages' work too, which is acceptable since a gatekeeper rejection is
 // meant to be a rare, severely-congested-passage event, not a routine path.
 //
-// KNOWN PERFORMANCE SHORTFALL (found 2026-09-17, not yet root-caused): the
-// doc's own N=40 ring-swap benchmark (section 6) requires <= 20s on an
+// PERFORMANCE SHORTFALL (found 2026-09-17, substantially fixed 2026-09-18):
+// the doc's own N=40 ring-swap benchmark (section 6) requires <= 20s on an
 // 8-core CPU; measured ~137s (~7x over budget) on the same synthetic
 // harness that verified this gatekeeper's correctness fix (see
-// stage2_nway_conflict_limitation memory). Ablation ruled out
+// stage2_nway_conflict_limitation memory). Ablation had ruled out
 // find_inter_sample_minima()'s cutting-plane scan as the dominant cost
-// (disabling cutting_plane entirely only dropped it to ~110s), even after
-// bounding that scan to each pair's own broad-phase time window instead of
-// the full transition (also ~137s, no measurable change) — so the real
-// cost driver is still open. Suspect candidates, untested: per-drone OSQP
-// setup/factorization overhead scaling with the extra collision rows
-// cutting-plane adds, or this retry loop's whole-transition-from-scratch
-// re-solve cost when a genuinely congested case needs 1-2 retries (which a
-// dense N=40 all-to-all ring swap plausibly does). Do not assume this is
-// fixed; profile before further changes.
+// (disabling cutting_plane entirely only dropped it to ~110s) but never
+// profiled collision::SpatioTemporalHash::find_candidate_pairs() itself,
+// which this SCP loop's outer iteration rebuilds from scratch up to
+// max_scp_iterations times per stage, and evaluate_continuous_clearance()
+// above rebuilds again once per gatekeeper timestep (i.e. potentially
+// thousands of calls for one transition). That function had its own
+// separate, real inefficiency (see spatio_temporal_hash.cpp's
+// find_candidate_pairs() comment: an O(V) redundant-rescan multiplier per
+// drone-window, V being how many voxels a padded bbox spans) which this
+// loop's every call paid on top of the genuine candidate-pair cost.
+// Re-measured on the same N=40, R=15m ring-swap harness after that fix
+// (fresh repro script, original ad-hoc one was job-scratch and gone — see
+// stage2_nway_conflict_limitation memory for the recreated harness and
+// exact numbers): the ring->antipodal transition itself now solves in
+// ~11s, under budget, with no safety regression (worst continuous
+// separation 1.73 m, comfortably above the 1.45 m gatekeeper floor). Not
+// claimed universally fixed for every scenario — a transition whose own
+// D_max/duration forces many dense time windows can still be slow (a
+// separate holding-area-departure stage in the same re-test, whose D_max
+// and duration were incidentally large, took ~60s) — but the specific,
+// named N=40 ring-swap acceptance benchmark this comment used to fail by
+// ~7x now passes.
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
                                             const CoreConfig& config) {
     const auto& gatekeeper = config.solver.continuous_gatekeeper;

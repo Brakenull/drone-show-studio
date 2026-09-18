@@ -86,20 +86,23 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
     // risk this addresses is worst at t=0, before any separation has had
     // time to develop).
     //
-    // KNOWN BUG (found 2026-09-17, pre-existing since Rev 2.6/2.7, not fixed
-    // by Rev 2.9, not yet fixed here): every row's maneuver control points
-    // come from ONE joint optimizer::solve() call below that assumes every
-    // drone executes its own maneuver starting at the SAME local time 0. The
-    // per-row delay applied further down (`stage_t_start = t_start +
-    // pre_delay_s`) then re-times each row's *already solved* maneuver to
-    // start later in absolute wall-clock time, without re-verifying (or
-    // re-solving) pairwise separation across that shift — a delayed row's
-    // real position at absolute time T is that maneuver's solved position at
-    // local time (T - delay), which the joint solve never checked against
-    // an undelayed row's position at local time T. Confirmed via ablation on
-    // a synthetic N=10 ring-swap holding-area departure: enabling staggering
-    // measured 1.001 m worst-case separation; disabling it (no other change)
-    // raised that to 1.773 m. See stage2_nway_conflict_limitation memory.
+    // FIXED BUG (found 2026-09-17, fixed 2026-09-18): every row's maneuver
+    // control points come from ONE joint optimizer::solve() call below that
+    // assumes every drone executes its own maneuver starting at the SAME
+    // local time 0. The per-row delay applied further down re-times each
+    // row's *already solved* maneuver to start later in absolute wall-clock
+    // time — that re-timing was never itself re-verified, so a delayed
+    // row's real position at absolute time T (that maneuver's solved
+    // position at local time T - delay) was never checked against an
+    // undelayed row's position at local time T. Confirmed via ablation on a
+    // synthetic N=10 ring-swap holding-area departure: enabling staggering
+    // measured 1.001 m worst-case separation; disabling it (no other
+    // change) raised that to 1.773 m. Fixed below (see build_slot_outcomes'
+    // comment): the staggered build is independently re-verified with
+    // optimizer::evaluate_worst_case_separation_over_stages() and discarded
+    // in favor of the (safe-by-construction) unstaggered build if it fails.
+    // See stage2_nway_conflict_limitation memory for the full investigation
+    // and re-test results.
     const bool stagger_takeoff = config.solver.enable_staggered_takeoff;
     const std::vector<int> launch_row_indices =
         stagger_takeoff ? compute_holding_row_indices(n, project.metadata.holding_area,
@@ -177,11 +180,12 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         // `duration` — the wave adds a per-row wait before/after it, folded
         // into this transition's total span so later keyframes' timing is
         // unaffected in relative terms (same time_stretch_offset mechanism
-        // Rev 2.5's T_min auto-scaling already relies on).
+        // Rev 2.5's T_min auto-scaling already relies on). The actual span
+        // (and the time_stretch_offset update it feeds) is only known once
+        // build_slot_outcomes() below has run and, if the staggered
+        // configuration turns out unsafe, fallen back to the unstaggered
+        // span — see that block.
         const bool apply_stagger = stagger_takeoff && kf_index == 0;
-        const double stagger_span_s = apply_stagger ? max_launch_row * config.solver.staggered_wave_delay_s : 0.0;
-        const double t_end = t_start + duration + stagger_span_s;
-        time_stretch_offset += (t_end - nominal_t_end);
 
         // Formation Hold (final keyframe): drones stop, matching how the
         // show ends. Fly-Through Waypoint (every other keyframe): drones
@@ -218,115 +222,184 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
 
         const std::vector<optimizer::DroneTrajectorySolution> solutions = optimizer::solve(problems, duration, config);
 
-        Eigen::MatrixXd next_actual_velocity = Eigen::MatrixXd::Zero(n, 3);
-        Eigen::MatrixXi next_actual_color = Eigen::MatrixXi::Zero(n, 3);
-        std::vector<int> next_drone_id_by_slot(n, -1);
-
         auto lerp_color = [](const Eigen::Vector3i& c0, const Eigen::Vector3i& c1, double frac) -> Eigen::Vector3i {
             const Eigen::Vector3d result = c0.cast<double>() + frac * (c1.cast<double>() - c0.cast<double>());
             return result.array().round().matrix().cast<int>();
         };
+
+        // Per-slot output of build_slot_outcomes() below, held before
+        // committing to trajectories_by_drone so the Staggered Wave Takeoff
+        // race check (see build_slot_outcomes' doc comment) can build,
+        // verify, and if necessary discard a candidate build without any
+        // pipeline-level state mutation.
+        struct SlotOutcome {
+            std::vector<TrajectorySegment> segments;  // this transition's new segments, in emission order
+            Eigen::Vector3d next_velocity = Eigen::Vector3d::Zero();
+            Eigen::Vector3i next_color = Eigen::Vector3i::Zero();
+        };
+
+        // Builds every slot's segment list for this transition under a given
+        // staggering choice, without mutating any pipeline-level state.
+        //
+        // Staggered Wave Takeoff cross-row race (previously KNOWN BUG, found
+        // 2026-09-17, fixed 2026-09-18): `solutions` above comes from ONE
+        // joint optimizer::solve() call that assumes every drone executes
+        // its own maneuver starting at the same local time 0. Wrapping a
+        // row's solved maneuver in a pre-delay/post-gap hold (use_stagger =
+        // true) re-times it into a different absolute-time window without
+        // solve() ever having verified pairwise separation across that
+        // shift. The fix is below, where this lambda's staggered output is
+        // independently re-checked and, if unsafe, discarded in favor of
+        // this same lambda's use_stagger=false output — which needs no
+        // separate re-check because it is exactly the synchronized,
+        // local-time-0 configuration optimizer::solve()'s own Decoupled
+        // Continuous Gatekeeper already verified before returning
+        // `solutions`, i.e. it is safe by construction, not just observed
+        // safe on one ablation.
+        auto build_slot_outcomes = [&](bool use_stagger, double* out_t_end) {
+            std::vector<SlotOutcome> outcomes(n);
+            const double this_stagger_span_s = use_stagger ? max_launch_row * config.solver.staggered_wave_delay_s : 0.0;
+            const double this_t_end = t_start + duration + this_stagger_span_s;
+            if (out_t_end) *out_t_end = this_t_end;
+
+            for (int slot = 0; slot < n; ++slot) {
+                const int target_slot = assign_result.assignment[slot];
+                SlotOutcome outcome;
+                double stage_t_start = t_start;
+
+                // Rev 2.6 section 1.7: rows farther from the front of the
+                // launch grid wait `row_index * staggered_wave_delay_s`
+                // before starting their real maneuver.
+                if (use_stagger) {
+                    const int row = launch_row_indices[slot];
+                    const double pre_delay_s = row * config.solver.staggered_wave_delay_s;
+                    if (pre_delay_s > 1e-9) {
+                        const trajectory::BoundaryConditions& start = problems[slot].start;
+                        TrajectorySegment hold;
+                        hold.start_time_sec = stage_t_start;
+                        hold.end_time_sec = stage_t_start + pre_delay_s;
+                        hold.control_points = build_hold_segment_control_points(start, pre_delay_s,
+                                                                                 config.solver.num_control_points_min);
+                        hold.knot_vector = trajectory::clamped_knot_vector(
+                            static_cast<int>(hold.control_points.rows()), trajectory::kDegree, pre_delay_s);
+                        hold.color_keyframes = {ColorKeyframe{hold.start_time_sec, actual_color.row(slot)},
+                                                 ColorKeyframe{hold.end_time_sec, actual_color.row(slot)}};
+                        outcome.segments.push_back(std::move(hold));
+                        stage_t_start += pre_delay_s;
+                    }
+                }
+
+                // Rev 2.6 section 1.7: a transition longer than the
+                // mega-cluster threshold comes back as multiple chained
+                // sub-stages — emit one TrajectorySegment per sub-stage,
+                // chained start-to-end. `maneuver_t_start` (rather than
+                // t_start) anchors the color-lerp fraction so a staggered
+                // pre-delay hold doesn't shift the real maneuver's color
+                // interpolation.
+                const double maneuver_t_start = stage_t_start;
+                const auto& stages = solutions[slot].stages;
+                for (size_t stage_idx = 0; stage_idx < stages.size(); ++stage_idx) {
+                    const auto& stage = stages[stage_idx];
+                    const double stage_t_end = stage_t_start + stage.duration;
+                    const int num_control_points = static_cast<int>(stage.control_points.rows());
+                    const Eigen::VectorXd knot_vector =
+                        trajectory::clamped_knot_vector(num_control_points, trajectory::kDegree, stage.duration);
+
+                    const double frac_start = (stage_t_start - maneuver_t_start) / duration;
+                    const double frac_end = (stage_t_end - maneuver_t_start) / duration;
+
+                    TrajectorySegment segment;
+                    segment.start_time_sec = stage_t_start;
+                    segment.end_time_sec = stage_t_end;
+                    segment.knot_vector = knot_vector;
+                    segment.control_points = stage.control_points;
+                    segment.color_keyframes = {
+                        ColorKeyframe{stage_t_start,
+                                      lerp_color(actual_color.row(slot), Q_colors.row(target_slot), frac_start)},
+                        ColorKeyframe{stage_t_end, lerp_color(actual_color.row(slot), Q_colors.row(target_slot), frac_end)},
+                    };
+                    outcome.segments.push_back(std::move(segment));
+
+                    if (stage_idx + 1 == stages.size()) {
+                        const trajectory::QuinticBSpline spline(stage.control_points, stage.duration);
+                        outcome.next_velocity = spline.velocity(stage.duration);
+                    }
+                    stage_t_start = stage_t_end;
+                }
+
+                // Rows that departed earlier finish their own maneuver
+                // before this_t_end; they hover at their formation slot
+                // (v=0) until the slowest (highest-row) wave catches up, so
+                // every slot is simultaneously at rest at Q when the next
+                // transition starts.
+                if (use_stagger) {
+                    const double post_gap_s = this_t_end - stage_t_start;
+                    if (post_gap_s > 1e-9) {
+                        trajectory::BoundaryConditions rest;
+                        rest.position = Q.row(target_slot).transpose();
+                        rest.velocity = Eigen::Vector3d::Zero();
+                        rest.acceleration = Eigen::Vector3d::Zero();
+                        TrajectorySegment hold;
+                        hold.start_time_sec = stage_t_start;
+                        hold.end_time_sec = this_t_end;
+                        hold.control_points = build_hold_segment_control_points(rest, post_gap_s,
+                                                                                 config.solver.num_control_points_min);
+                        hold.knot_vector = trajectory::clamped_knot_vector(
+                            static_cast<int>(hold.control_points.rows()), trajectory::kDegree, post_gap_s);
+                        hold.color_keyframes = {ColorKeyframe{hold.start_time_sec, Q_colors.row(target_slot)},
+                                                 ColorKeyframe{hold.end_time_sec, Q_colors.row(target_slot)}};
+                        outcome.segments.push_back(std::move(hold));
+                        outcome.next_velocity = Eigen::Vector3d::Zero();
+                    }
+                }
+
+                outcome.next_color = Q_colors.row(target_slot);
+                outcomes[slot] = std::move(outcome);
+            }
+            return outcomes;
+        };
+
+        double t_end = 0.0;
+        std::vector<SlotOutcome> outcomes = build_slot_outcomes(apply_stagger, &t_end);
+
+        if (apply_stagger) {
+            std::vector<std::vector<optimizer::DroneTrajectorySolution::Stage>> per_drone_stages(n);
+            for (int slot = 0; slot < n; ++slot) {
+                per_drone_stages[slot].reserve(outcomes[slot].segments.size());
+                for (const auto& seg : outcomes[slot].segments) {
+                    per_drone_stages[slot].push_back(optimizer::DroneTrajectorySolution::Stage{
+                        seg.control_points, seg.end_time_sec - seg.start_time_sec});
+                }
+            }
+            const double enforced_min_distance =
+                config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
+            const double worst_staggered_separation = optimizer::evaluate_worst_case_separation_over_stages(
+                per_drone_stages, drone_id_by_slot, t_end - t_start, enforced_min_distance,
+                config.solver.continuous_gatekeeper.verification_frequency_hz);
+            if (worst_staggered_separation < config.solver.continuous_gatekeeper.min_allowable_distance_m) {
+                // Staggering desynced this transition into an unsafe
+                // configuration — fall back to the synchronized build, safe
+                // by construction (see build_slot_outcomes' comment).
+                outcomes = build_slot_outcomes(false, &t_end);
+            }
+        }
+        time_stretch_offset += (t_end - nominal_t_end);
+
+        Eigen::MatrixXd next_actual_velocity = Eigen::MatrixXd::Zero(n, 3);
+        Eigen::MatrixXi next_actual_color = Eigen::MatrixXi::Zero(n, 3);
+        std::vector<int> next_drone_id_by_slot(n, -1);
 
         for (int slot = 0; slot < n; ++slot) {
             const int target_slot = assign_result.assignment[slot];
             const int drone_id = drone_id_by_slot[slot];
             DroneTrajectory& traj = trajectories_by_drone[drone_id];
 
-            double stage_t_start = t_start;
-
-            // Rev 2.6 section 1.7: rows farther from the front of the launch
-            // grid wait `row_index * staggered_wave_delay_s` before starting
-            // their real maneuver, and (to keep every drone's segment list
-            // spanning the same [t_start, t_end] transition window) the rows
-            // that took off first idle at their solved end state for the
-            // remaining wave time after their maneuver finishes.
-            if (apply_stagger) {
-                const int row = launch_row_indices[slot];
-                const double pre_delay_s = row * config.solver.staggered_wave_delay_s;
-                if (pre_delay_s > 1e-9) {
-                    const trajectory::BoundaryConditions& start = problems[slot].start;
-                    TrajectorySegment hold;
-                    hold.segment_index = static_cast<int>(traj.segments.size());
-                    hold.start_time_sec = stage_t_start;
-                    hold.end_time_sec = stage_t_start + pre_delay_s;
-                    hold.control_points =
-                        build_hold_segment_control_points(start, pre_delay_s, config.solver.num_control_points_min);
-                    hold.knot_vector = trajectory::clamped_knot_vector(
-                        static_cast<int>(hold.control_points.rows()), trajectory::kDegree, pre_delay_s);
-                    hold.color_keyframes = {ColorKeyframe{hold.start_time_sec, actual_color.row(slot)},
-                                             ColorKeyframe{hold.end_time_sec, actual_color.row(slot)}};
-                    traj.segments.push_back(std::move(hold));
-                    stage_t_start += pre_delay_s;
-                }
-            }
-
-            // Rev 2.6 section 1.7: a transition longer than the mega-cluster
-            // threshold comes back as multiple chained sub-stages instead of
-            // one piece — emit one TrajectorySegment per sub-stage, chained
-            // start-to-end across the transition's [t_start, t_end] span.
-            // `maneuver_t_start` (rather than t_start) anchors the color-lerp
-            // fraction so a staggered pre-delay hold doesn't shift the real
-            // maneuver's color interpolation.
-            const double maneuver_t_start = stage_t_start;
-            const auto& stages = solutions[slot].stages;
-            for (size_t stage_idx = 0; stage_idx < stages.size(); ++stage_idx) {
-                const auto& stage = stages[stage_idx];
-                const double stage_t_end = stage_t_start + stage.duration;
-                const int num_control_points = static_cast<int>(stage.control_points.rows());
-                const Eigen::VectorXd knot_vector =
-                    trajectory::clamped_knot_vector(num_control_points, trajectory::kDegree, stage.duration);
-
-                const double frac_start = (stage_t_start - maneuver_t_start) / duration;
-                const double frac_end = (stage_t_end - maneuver_t_start) / duration;
-
-                TrajectorySegment segment;
+            for (auto& segment : outcomes[slot].segments) {
                 segment.segment_index = static_cast<int>(traj.segments.size());
-                segment.start_time_sec = stage_t_start;
-                segment.end_time_sec = stage_t_end;
-                segment.knot_vector = knot_vector;
-                segment.control_points = stage.control_points;
-                segment.color_keyframes = {
-                    ColorKeyframe{stage_t_start, lerp_color(actual_color.row(slot), Q_colors.row(target_slot), frac_start)},
-                    ColorKeyframe{stage_t_end, lerp_color(actual_color.row(slot), Q_colors.row(target_slot), frac_end)},
-                };
                 traj.segments.push_back(std::move(segment));
-
-                if (stage_idx + 1 == stages.size()) {
-                    const trajectory::QuinticBSpline spline(stage.control_points, stage.duration);
-                    next_actual_velocity.row(target_slot) = spline.velocity(stage.duration).transpose();
-                }
-                stage_t_start = stage_t_end;
             }
-
-            // Rows that departed earlier finish their own maneuver before
-            // t_end; they hover at their formation slot (v=0) until the
-            // slowest (highest-row) wave catches up, so every slot is
-            // simultaneously at rest at Q when the next transition starts —
-            // matching the P = Q assumption below for every slot, not just
-            // the ones with no post-gap.
-            if (apply_stagger) {
-                const double post_gap_s = t_end - stage_t_start;
-                if (post_gap_s > 1e-9) {
-                    trajectory::BoundaryConditions rest;
-                    rest.position = Q.row(target_slot).transpose();
-                    rest.velocity = Eigen::Vector3d::Zero();
-                    rest.acceleration = Eigen::Vector3d::Zero();
-                    TrajectorySegment hold;
-                    hold.segment_index = static_cast<int>(traj.segments.size());
-                    hold.start_time_sec = stage_t_start;
-                    hold.end_time_sec = t_end;
-                    hold.control_points =
-                        build_hold_segment_control_points(rest, post_gap_s, config.solver.num_control_points_min);
-                    hold.knot_vector = trajectory::clamped_knot_vector(
-                        static_cast<int>(hold.control_points.rows()), trajectory::kDegree, post_gap_s);
-                    hold.color_keyframes = {ColorKeyframe{hold.start_time_sec, Q_colors.row(target_slot)},
-                                             ColorKeyframe{hold.end_time_sec, Q_colors.row(target_slot)}};
-                    traj.segments.push_back(std::move(hold));
-                    next_actual_velocity.row(target_slot) = Eigen::Vector3d::Zero();
-                }
-            }
-
-            next_actual_color.row(target_slot) = Q_colors.row(target_slot);
+            next_actual_velocity.row(target_slot) = outcomes[slot].next_velocity.transpose();
+            next_actual_color.row(target_slot) = outcomes[slot].next_color.transpose();
             next_drone_id_by_slot[target_slot] = drone_id;
         }
 

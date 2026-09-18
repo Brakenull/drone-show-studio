@@ -13,29 +13,32 @@
 // for drones that share a voxel or one of its 26 spatial neighbors within
 // the same time window.
 //
-// KNOWN SCALABILITY RISK (found 2026-09-17, not yet fixed): this O(N log N)
-// bound assumes drones are reasonably spread out relative to voxel_size_xyz.
-// It degrades badly when a large fraction of N drones are genuinely packed
-// within a few voxels of each other (e.g., a real 300-drone holding-area
-// launch pad too small for its fleet size, forced into dense vertical
-// stacking) -- each such drone's padded bbox spans many voxel cells (see
-// scp_solver.cpp's margin = safety_radius_m + enforced_min_distance), so
-// find_candidate_pairs()'s per-cell neighborhood search revisits a large,
-// overlapping fraction of the dense cluster from many different cells,
-// producing a candidate-pair count and peak memory that scale closer to
-// O(N^2) (or worse, given per-drone bbox multiplicity across voxels) than
-// O(N log N) for that cluster. Confirmed on a real 300-drone Phase 1 export
-// (`C:\Users\brake\Local\Temp\intermediate_export-1.json`, holding area
-// 40x10m with 2m grid spacing -- geometrically too small for 300 drones at
-// 1.5m minimum separation without heavy Z-layer stacking): the very first
-// SCP iteration of the holding-area departure transition drove process
-// memory from ~2.7 GB to 7.5+ GB in under 10 seconds, twice reproduced, and
-// was only stopped by an external memory-usage watchdog before it could
-// destabilize the host machine. Not yet root-caused to a specific line (the
-// leading suspect is find_candidate_pairs()'s per-cell neighborhood
-// rebuild, see its comment), and not yet fixed -- treat running this class
-// against a densely-packed real fleet as unsafe until it is. See
-// stage2_nway_conflict_limitation memory for the full investigation.
+// FIXED SCALABILITY BUG (found 2026-09-17, fixed 2026-09-18): this O(N log N)
+// bound assumes drones are reasonably spread out relative to voxel_size_xyz;
+// it degrades when a large fraction of N drones are genuinely packed within
+// a few voxels of each other (e.g., a real 300-drone holding-area launch pad
+// too small for its fleet size, forced into dense vertical stacking), each
+// such drone's padded bbox spanning many voxel cells (see scp_solver.cpp's
+// margin = safety_radius_m + enforced_min_distance). Confirmed on a real
+// 300-drone Phase 1 export (`C:\Users\brake\Local\Temp\intermediate_export-
+// 1.json`, holding area 40x10m with 2m grid spacing -- geometrically too
+// small for 300 drones at 1.5m minimum separation without heavy Z-layer
+// stacking): the very first SCP iteration of the holding-area departure
+// transition drove process memory from ~2.7 GB to 7.5+ GB in under 10
+// seconds. Root-caused to find_candidate_pairs()'s old per-*occupied-cell*
+// outer loop: because insert() adds one grid_ entry per voxel a padded bbox
+// spans (V cells for a drone whose bbox is V voxels across), the old
+// implementation re-ran a fresh 27-neighbor-cell scan from EACH of those V
+// occupied cells separately, an O(V) redundant-rescan multiplier per drone-
+// window on top of the genuine candidate-pair cost -- see
+// find_candidate_pairs()'s comment for the fix (iterate once per drone-
+// window over a single dilated bounding-box cell range instead of once per
+// occupied cell). This removes the redundant multiplier; it does NOT change
+// the fact that a holding area genuinely too small for its fleet (i.e. where
+// true candidate pairs approach O(N) per drone) is inherently O(N^2)-ish
+// work -- that is a property of the geometry, not a fixable algorithmic
+// inefficiency. See stage2_nway_conflict_limitation memory for the full
+// investigation and re-test results.
 
 namespace drone_core::collision {
 
@@ -94,6 +97,12 @@ private:
     double voxel_size_xyz_;
     double voxel_size_t_;
     std::unordered_multimap<VoxelKey, DroneWindow, VoxelKeyHash> grid_;
+    // Canonical one-entry-per-insert() list, mirroring `grid_`'s multimap
+    // entries but without the per-voxel duplication -- find_candidate_pairs()
+    // iterates this (one pass per drone-window) instead of over `grid_`'s
+    // occupied cells (which would revisit the same drone-window once per
+    // voxel its own padded bbox spans; see this header's class comment).
+    std::vector<DroneWindow> windows_;
 
     std::vector<VoxelKey> voxel_keys_for_bbox(const DroneWindow& window) const;
 };

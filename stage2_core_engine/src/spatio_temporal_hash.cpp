@@ -35,53 +35,66 @@ void SpatioTemporalHash::insert(const DroneWindow& window) {
     for (const auto& key : voxel_keys_for_bbox(window)) {
         grid_.emplace(key, window);
     }
+    windows_.push_back(window);
 }
 
-// KNOWN SCALABILITY RISK (see spatio_temporal_hash.hpp's class-level
-// comment for the full incident writeup): for a densely-packed cluster
-// where many drones' padded bboxes span several voxels each, `grid_`
-// contains many entries per drone-window, so this function's outer loop
-// revisits that cluster from many different cells, each time rebuilding a
-// `neighborhood` that can itself contain a large fraction of the same
-// cluster -- observed to drive memory into the multiple-GB range on a real
-// 300-drone dense holding-area departure. `seen` deduplicates the *output*
-// pairs but not this redundant re-scanning work itself.
+// FIXED (see spatio_temporal_hash.hpp's class-level comment for the full
+// incident writeup): the old implementation iterated per *occupied cell*
+// (of which a single drone-window contributes one per voxel its padded bbox
+// spans -- V of them) and, for each, rebuilt a fresh 27-neighbor-cell scan
+// from scratch. Two cells belonging to the same drone-window's own bbox
+// produce nearly-identical 27-neighborhoods (offset by one cell), so that
+// redundant rescanning multiplied the real candidate-pair cost by a factor
+// of roughly V -- the dominant driver of the multi-GB memory spike on a
+// real densely-packed 300-drone holding area.
+//
+// Fixed by iterating once per drone-window (`windows_`, one entry per
+// insert() call) instead of once per occupied cell. For each drone-window,
+// its own bbox's voxel range [x0,x1]x[y0,y1]x[z0,z1] is dilated by exactly
+// one cell on every side in a single range computation -- not by unioning
+// 27-cell neighborhoods per individual cell -- which is the exact set of
+// voxels that could contain a spatially-adjacent neighbor of ANY cell the
+// bbox itself occupies (standard Minkowski dilation of an axis-aligned box
+// by one cell). `partner_drone_ids` deduplicates a neighbor drone that
+// shares more than one of those dilated cells with this window, so it is
+// still only emitted once per drone-window pair.
+//
+// This does not change the fact that a cluster genuinely too dense for its
+// voxel size (true candidate pairs approaching O(N) per drone) is
+// inherently expensive -- only the redundant multiplicative rescanning on
+// top of that genuine cost is removed.
 std::vector<CandidatePair> SpatioTemporalHash::find_candidate_pairs() const {
     std::vector<CandidatePair> pairs;
     std::set<std::tuple<int, int, int>> seen;
-    std::unordered_map<VoxelKey, bool, VoxelKeyHash> visited_cells;
 
-    for (const auto& [key, self_window] : grid_) {
-        if (visited_cells.find(key) != visited_cells.end()) {
-            continue;
-        }
-        visited_cells[key] = true;
+    for (const auto& self_window : windows_) {
+        const int x0 = static_cast<int>(std::floor(self_window.bbox_min.x() / voxel_size_xyz_)) - 1;
+        const int x1 = static_cast<int>(std::floor(self_window.bbox_max.x() / voxel_size_xyz_)) + 1;
+        const int y0 = static_cast<int>(std::floor(self_window.bbox_min.y() / voxel_size_xyz_)) - 1;
+        const int y1 = static_cast<int>(std::floor(self_window.bbox_max.y() / voxel_size_xyz_)) + 1;
+        const int z0 = static_cast<int>(std::floor(self_window.bbox_min.z() / voxel_size_xyz_)) - 1;
+        const int z1 = static_cast<int>(std::floor(self_window.bbox_max.z() / voxel_size_xyz_)) + 1;
 
-        std::vector<const DroneWindow*> neighborhood;
-        for (int dx = -1; dx <= 1; ++dx) {
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dz = -1; dz <= 1; ++dz) {
-                    const VoxelKey neighbor_key{key.x + dx, key.y + dy, key.z + dz, key.t};
-                    auto range = grid_.equal_range(neighbor_key);
+        std::set<int> partner_drone_ids;
+        for (int x = x0; x <= x1; ++x) {
+            for (int y = y0; y <= y1; ++y) {
+                for (int z = z0; z <= z1; ++z) {
+                    const auto range = grid_.equal_range(VoxelKey{x, y, z, self_window.window_index});
                     for (auto it = range.first; it != range.second; ++it) {
-                        neighborhood.push_back(&it->second);
+                        if (it->second.drone_id != self_window.drone_id) {
+                            partner_drone_ids.insert(it->second.drone_id);
+                        }
                     }
                 }
             }
         }
 
-        auto self_range = grid_.equal_range(key);
-        for (auto sit = self_range.first; sit != self_range.second; ++sit) {
-            for (const DroneWindow* other : neighborhood) {
-                if (other->drone_id == sit->second.drone_id) {
-                    continue;
-                }
-                int a = sit->second.drone_id;
-                int b = other->drone_id;
-                if (a > b) std::swap(a, b);
-                if (seen.insert({a, b, key.t}).second) {
-                    pairs.push_back(CandidatePair{a, b, key.t});
-                }
+        for (int other_id : partner_drone_ids) {
+            int a = self_window.drone_id;
+            int b = other_id;
+            if (a > b) std::swap(a, b);
+            if (seen.insert({a, b, self_window.window_index}).second) {
+                pairs.push_back(CandidatePair{a, b, self_window.window_index});
             }
         }
     }
