@@ -1,5 +1,8 @@
 #pragma once
 
+#include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -104,14 +107,63 @@ struct DroneTrajectorySolution {
     std::vector<Stage> stages;  // chronological; size 1 unless mega-cluster-decomposed
 };
 
+// Structured diagnostics for a Decoupled Continuous Gatekeeper rejection
+// (docs/5-studio_gui.md section 5.1, B1). Every time here is
+// transition-local (0 = the start of the rejected transition's synchronized,
+// unstaggered solve); pipeline.cpp shifts them to show time.
+struct SeparationViolation {
+    int drone_a = 0;  // drone_a < drone_b, persistent show drone IDs
+    int drone_b = 0;
+    double time_sec = 0.0;  // instant of this pair's worst sample
+    double distance_m = 0.0;
+    Eigen::Vector3d position_a = Eigen::Vector3d::Zero();
+    Eigen::Vector3d position_b = Eigen::Vector3d::Zero();
+};
+
+struct GatekeeperAttempt {
+    double duration_sec = 0.0;
+    double worst_separation_m = 0.0;
+};
+
+struct SafetyViolationReport {
+    double worst_separation_m = 0.0;
+    double required_separation_m = 0.0;  // continuous_gatekeeper.min_allowable_distance_m
+    double enforced_min_distance_m = 0.0;
+    double verification_frequency_hz = 0.0;
+    std::vector<GatekeeperAttempt> attempts;  // chronological; the last one is the rejected attempt
+    // Final attempt only: each violating pair's single worst sample, sorted
+    // by ascending distance and capped at kMaxReportedViolations entries.
+    // violating_pair_count is the uncapped count.
+    std::vector<SeparationViolation> violations;
+    int violating_pair_count = 0;
+    // The final attempt's splines, one per problem, in `problems` order.
+    std::vector<DroneTrajectorySolution> rejected_solutions;
+};
+
+inline constexpr int kMaxReportedViolations = 200;
+
+// Thrown by solve() below. what() keeps the exact pre-B1 message so callers
+// matching on the text are unaffected; the report is shared (not copied) so
+// the exception stays cheap and nothrow-copyable.
+class SafetyViolationError : public std::runtime_error {
+public:
+    SafetyViolationError(const std::string& message, SafetyViolationReport report)
+        : std::runtime_error(message), report_(std::make_shared<const SafetyViolationReport>(std::move(report))) {}
+    const SafetyViolationReport& report() const noexcept { return *report_; }
+
+private:
+    std::shared_ptr<const SafetyViolationReport> report_;
+};
+
 // `duration` and `config` (kinematics/weights/safety/solver, all already
 // resolved through the 4-tier / 3-tier fallback in config.hpp) fully
 // determine solver behavior; there is no longer a separate options struct.
 //
-// Throws std::runtime_error (Rev 2.8 section 1.9's Slack Rejection
-// Gatekeeper) if this transition is still unsafe after its retry budget —
-// pybind11 translates this to a Python RuntimeError for
-// bindings/py_bindings.cpp's optimize_trajectories() callers.
+// Throws SafetyViolationError (a std::runtime_error; Rev 2.9 section 1.9's
+// Decoupled Continuous Gatekeeper) if this transition is still unsafe after
+// its retry budget. pipeline.cpp adds transition context and rethrows it as
+// io::PipelineSafetyError, which the binding maps to
+// drone_core.SafetyViolationError (a Python RuntimeError subclass).
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
                                             const CoreConfig& config);
 

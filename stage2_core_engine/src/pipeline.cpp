@@ -220,12 +220,67 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
             problems[slot] = problem;
         }
 
-        const std::vector<optimizer::DroneTrajectorySolution> solutions = optimizer::solve(problems, duration, config);
-
         auto lerp_color = [](const Eigen::Vector3i& c0, const Eigen::Vector3i& c1, double frac) -> Eigen::Vector3i {
             const Eigen::Vector3d result = c0.cast<double>() + frac * (c1.cast<double>() - c0.cast<double>());
             return result.array().round().matrix().cast<int>();
         };
+
+        std::vector<optimizer::DroneTrajectorySolution> solutions;
+        try {
+            solutions = optimizer::solve(problems, duration, config);
+        } catch (const optimizer::SafetyViolationError& e) {
+            // docs/5-studio_gui.md B1: put the rejection in show context
+            // (which transition, show time, the rejected splines next to the
+            // transitions that did pass) so a viewer can replay it.
+            const optimizer::SafetyViolationReport& report = e.report();
+            TransitionSafetyFailure failure;
+            failure.solver = report;
+            failure.transition_index = static_cast<int>(kf_index);
+            failure.from_keyframe = kf_index == 0 ? "holding_area" : project.keyframes[kf_index - 1].shape_name;
+            failure.to_keyframe = kf.shape_name;
+            failure.transition_start_time_sec = t_start;
+            failure.transition_duration_sec = report.attempts.empty() ? duration : report.attempts.back().duration_sec;
+            failure.metadata = result.metadata;
+            failure.metadata.total_duration_sec = t_start + failure.transition_duration_sec;
+
+            failure.completed_trajectories.reserve(trajectories_by_drone.size());
+            for (const auto& [drone_id, traj] : trajectories_by_drone) failure.completed_trajectories.push_back(traj);
+
+            std::map<int, DroneTrajectory> rejected_by_drone;
+            for (int slot = 0; slot < n && slot < static_cast<int>(report.rejected_solutions.size()); ++slot) {
+                const int target_slot = assign_result.assignment[slot];
+                const int drone_id = drone_id_by_slot[slot];
+                DroneTrajectory& traj = rejected_by_drone[drone_id];
+                traj.drone_id = drone_id;
+                int segment_index = static_cast<int>(trajectories_by_drone[drone_id].segments.size());
+                double stage_t_start = t_start;
+                for (const auto& stage : report.rejected_solutions[slot].stages) {
+                    const double stage_t_end = stage_t_start + stage.duration;
+                    const double frac_start = (stage_t_start - t_start) / failure.transition_duration_sec;
+                    const double frac_end = (stage_t_end - t_start) / failure.transition_duration_sec;
+                    TrajectorySegment segment;
+                    segment.segment_index = segment_index++;
+                    segment.start_time_sec = stage_t_start;
+                    segment.end_time_sec = stage_t_end;
+                    segment.control_points = stage.control_points;
+                    segment.knot_vector = trajectory::clamped_knot_vector(
+                        static_cast<int>(stage.control_points.rows()), trajectory::kDegree, stage.duration);
+                    segment.color_keyframes = {
+                        ColorKeyframe{stage_t_start,
+                                      lerp_color(actual_color.row(slot), Q_colors.row(target_slot), frac_start)},
+                        ColorKeyframe{stage_t_end, lerp_color(actual_color.row(slot), Q_colors.row(target_slot), frac_end)},
+                    };
+                    traj.segments.push_back(std::move(segment));
+                    stage_t_start = stage_t_end;
+                }
+            }
+            failure.rejected_trajectories.reserve(rejected_by_drone.size());
+            for (auto& [drone_id, traj] : rejected_by_drone) failure.rejected_trajectories.push_back(std::move(traj));
+            // Now carried as rejected_trajectories; don't keep two copies.
+            failure.solver.rejected_solutions.clear();
+
+            throw PipelineSafetyError(e.what(), std::move(failure));
+        }
 
         // Per-slot output of build_slot_outcomes() below, held before
         // committing to trajectories_by_drone so the Staggered Wave Takeoff

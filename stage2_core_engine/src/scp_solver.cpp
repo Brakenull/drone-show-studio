@@ -1184,10 +1184,21 @@ struct ContinuousSafetyResult {
     double min_distance = std::numeric_limits<double>::infinity();
 };
 
+// Per unordered drone pair, the single worst sample below the gatekeeper
+// floor (docs/5-studio_gui.md B1). Bounded by the number of distinct
+// violating pairs, not by duration * frequency, so it keeps
+// evaluate_continuous_clearance()'s O(num_drones)-per-instant memory story.
+using ViolationsByPair = std::map<std::pair<int, int>, SeparationViolation>;
+
+// `violations`, when non-null, collects every pair closer than
+// `report_below_m`, with `time_offset` added to the stage-local sample time
+// (so multi-stage transitions report transition-local time).
 ContinuousSafetyResult evaluate_continuous_clearance(const std::vector<Eigen::MatrixXd>& control_points,
                                                        const std::vector<int>& drone_ids, double duration,
                                                        double enforced_min_distance,
-                                                       double verification_frequency_hz) {
+                                                       double verification_frequency_hz,
+                                                       ViolationsByPair* violations = nullptr,
+                                                       double report_below_m = 0.0, double time_offset = 0.0) {
     ContinuousSafetyResult report;
     const int num_drones = static_cast<int>(control_points.size());
     if (num_drones < 2 || duration <= 0.0) return report;
@@ -1226,8 +1237,21 @@ ContinuousSafetyResult evaluate_continuous_clearance(const std::vector<Eigen::Ma
             auto it_i = drone_index.find(pair.drone_i);
             auto it_j = drone_index.find(pair.drone_j);
             if (it_i == drone_index.end() || it_j == drone_index.end()) continue;
-            const double d = (splines[it_i->second].position(t) - splines[it_j->second].position(t)).norm();
+            const Eigen::Vector3d p_i = splines[it_i->second].position(t);
+            const Eigen::Vector3d p_j = splines[it_j->second].position(t);
+            const double d = (p_i - p_j).norm();
             report.min_distance = std::min(report.min_distance, d);
+
+            if (violations && d < report_below_m) {
+                const bool i_first = pair.drone_i < pair.drone_j;
+                const std::pair<int, int> key = i_first ? std::make_pair(pair.drone_i, pair.drone_j)
+                                                        : std::make_pair(pair.drone_j, pair.drone_i);
+                auto [it, inserted] = violations->try_emplace(key);
+                if (inserted || d < it->second.distance_m) {
+                    it->second = SeparationViolation{key.first, key.second, time_offset + t, d,
+                                                     i_first ? p_i : p_j, i_first ? p_j : p_i};
+                }
+            }
         }
     }
     return report;
@@ -1372,11 +1396,17 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
 
     CoreConfig attempt_config = config;
     double attempt_duration = duration;
+    std::vector<GatekeeperAttempt> attempt_history;
 
     for (int attempt = 0;; ++attempt) {
         TransitionSolveResult result = solve_transition_once(problems, attempt_duration, attempt_config);
 
+        // Violations are collected on every attempt (cheap: bounded by the
+        // number of violating pairs) but only the rejected final attempt's
+        // set is reported.
+        ViolationsByPair violations_by_pair;
         double worst_continuous_distance = std::numeric_limits<double>::infinity();
+        double stage_offset = 0.0;
         const size_t num_stages = result.trajectories.empty() ? 0 : result.trajectories[0].stages.size();
         for (size_t stage = 0; stage < num_stages; ++stage) {
             std::vector<Eigen::MatrixXd> stage_control_points;
@@ -1385,21 +1415,42 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                 stage_control_points.push_back(traj.stages[stage].control_points);
             }
             const double stage_duration = result.trajectories[0].stages[stage].duration;
-            const ContinuousSafetyResult report =
-                evaluate_continuous_clearance(stage_control_points, drone_ids, stage_duration, enforced_min_distance,
-                                               gatekeeper.verification_frequency_hz);
+            const ContinuousSafetyResult report = evaluate_continuous_clearance(
+                stage_control_points, drone_ids, stage_duration, enforced_min_distance,
+                gatekeeper.verification_frequency_hz, &violations_by_pair, gatekeeper.min_allowable_distance_m,
+                stage_offset);
             worst_continuous_distance = std::min(worst_continuous_distance, report.min_distance);
+            stage_offset += stage_duration;
         }
+        attempt_history.push_back(GatekeeperAttempt{attempt_duration, worst_continuous_distance});
 
         if (worst_continuous_distance >= gatekeeper.min_allowable_distance_m) {
             return result.trajectories;
         }
         if (!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) {
-            throw std::runtime_error(
+            SafetyViolationReport report;
+            report.worst_separation_m = worst_continuous_distance;
+            report.required_separation_m = gatekeeper.min_allowable_distance_m;
+            report.enforced_min_distance_m = enforced_min_distance;
+            report.verification_frequency_hz = gatekeeper.verification_frequency_hz;
+            report.attempts = std::move(attempt_history);
+            report.violating_pair_count = static_cast<int>(violations_by_pair.size());
+            report.violations.reserve(violations_by_pair.size());
+            for (auto& [key, violation] : violations_by_pair) report.violations.push_back(violation);
+            std::sort(report.violations.begin(), report.violations.end(),
+                      [](const SeparationViolation& a, const SeparationViolation& b) {
+                          return a.distance_m < b.distance_m;
+                      });
+            if (report.violations.size() > static_cast<size_t>(kMaxReportedViolations)) {
+                report.violations.resize(kMaxReportedViolations);
+            }
+            report.rejected_solutions = std::move(result.trajectories);
+            throw SafetyViolationError(
                 "CRITICAL: Safety violation detected by 100Hz continuous gatekeeper! (worst separation " +
-                std::to_string(worst_continuous_distance) + " m, required " +
-                std::to_string(gatekeeper.min_allowable_distance_m) + " m, after " + std::to_string(attempt + 1) +
-                " attempt(s))");
+                    std::to_string(worst_continuous_distance) + " m, required " +
+                    std::to_string(gatekeeper.min_allowable_distance_m) + " m, after " +
+                    std::to_string(attempt + 1) + " attempt(s))",
+                std::move(report));
         }
         attempt_duration *= gatekeeper.expansion_factor;
         attempt_config.solver.apf_seeding.k_repulsion *= 2.0;
