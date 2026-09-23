@@ -1,0 +1,50 @@
+{
+  "profile_name": "Standard_Show_Quad_v1",
+  "physical": {
+    "mass_kg": 0.55,
+    "arm_length_m": 0.16,
+    "propeller_diameter_m": 0.127,
+    "inertia_diag_kgm2": [0.0025, 0.0025, 0.0045],
+    "drag_coefficient_cd": 0.45,
+    "reference_area_m2": 0.035
+  },
+  "motor_prop": {
+    "max_thrust_per_motor_n": 3.2,
+    "thrust_to_weight_ratio": 2.37,
+    "motor_time_constant_ms": 20.0,
+    "kv_rating": 2300,
+    "rotor_torque_to_thrust_m": 0.006
+  },
+  "battery": {
+    "cells_s": 4,
+    "capacity_mah": 2200,
+    "nominal_voltage_v": 14.8,
+    "cutoff_voltage_v": 13.6,
+    "internal_resistance_ohm": 0.035,
+    "led_max_power_w": 18.0,
+    "avionics_current_a": 0.35,
+    "powertrain_efficiency": 0.8,
+    "peukert_exponent": 1.05,
+    "initial_soc": 1.0
+  },
+  "controller_gains": {
+    "pos_p": [2.5, 2.5, 3.0],
+    "vel_p": [1.8, 1.8, 2.2],
+    "vel_i": [0.4, 0.4, 0.8],
+    "att_p": [6.5, 6.5, 4.0],
+    "rate_p": [18.0, 18.0, 10.0],
+    "max_tilt_deg": 35.0
+  },
+  "tolerances": {
+    "mass_pct": 3.0,
+    "max_thrust_pct": 5.0,
+    "motor_time_constant_pct": 20.0,
+    "drag_coefficient_pct": 10.0,
+    "battery_capacity_pct": 5.0,
+    "internal_resistance_pct": 15.0,
+    "initial_soc_min": 0.95,
+    "gnss_rtk_noise_m": 0.02,
+    "gnss_drift_rate_m_per_sqrt_s": 0.01,
+    "initial_position_error_m": 0.05
+  }
+}

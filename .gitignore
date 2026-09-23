@@ -18,3 +18,5 @@ out/
 *.obj
 CMakeFiles/
 CMakeCache.txt
+# Python virtual environment
+.venv/
