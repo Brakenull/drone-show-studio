@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "studio-desktop",
+  "productName": "Drone Show Studio",
   "version": "0.1.0",
   "identifier": "com.brake.studio-desktop",
   "build": {
@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "studio-desktop",
-        "width": 800,
-        "height": 600
+        "title": "Drone Show Studio",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 640,
+        "dragDropEnabled": true
       }
     ],
     "security": {
