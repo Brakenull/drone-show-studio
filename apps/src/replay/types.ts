@@ -64,5 +64,7 @@ export interface ReplayData {
 export interface ReplayFocus {
   time: number;
   drones: number[];
+  /** Shown with the replay's label, e.g. that a Monte Carlo crash is drawn on the planned paths. */
+  note?: string;
   key: number; // changes on every request so the same moment can be focused twice
 }

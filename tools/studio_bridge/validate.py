@@ -68,6 +68,32 @@ def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray) -> in
     return int(np.all((targets >= lo) & (targets <= hi), axis=1).sum())
 
 
+def holding_capacity(meta: dict[str, Any], slots: np.ndarray) -> dict[str, Any]:
+    """How many drones the declared holding area takes (Phase 1's own layout rules), and what the layout
+    actually used. Phase 1 widens the area along X when the fleet doesn't fit (holding_area.py)."""
+    from stage1_designer.core.holding_area import layer_grid_dims, max_layer_count
+
+    ha = meta["holding_area"]
+    spacing = ha["grid_spacing_m"]
+    cols, rows = layer_grid_dims(ha["size"][0], ha["size"][1], spacing)
+    max_layers = max_layer_count(ha["center"][2], ha["max_height"], spacing)
+    width_used = float(np.ptp(slots[:, 0])) if len(slots) else 0.0
+    return {
+        "per_layer": cols * rows,
+        "max_layers": max_layers,
+        "capacity": cols * rows * max_layers,
+        "layers_used": int(len(np.unique(np.round(slots[:, 2], 6)))),
+        "widened": width_used > (cols - 1) * spacing + 1e-6,
+        "width_used_m": width_used,
+    }
+
+
+def gatekeeper_floor_default() -> float | None:
+    from .config_fields import get, load_defaults
+
+    return get(load_defaults(), "solver.continuous_gatekeeper.min_allowable_distance_m")
+
+
 def min_spacing(points: np.ndarray) -> float:
     if len(points) < 2:
         return float("inf")
@@ -105,6 +131,21 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
                                     "leaving the upper layers then have to pass through parked drones, which Stage 2 "
                                     "usually cannot make safe. Move the holding area away from the formation."})
 
+    capacity = holding_capacity(meta, slots)
+    if capacity["widened"]:
+        warnings.append({"path": "/project_metadata/holding_area",
+                         "message": f"The holding area ({ha['size'][0]:g} × {ha['size'][1]:g} m, up to "
+                                    f"{capacity['max_layers']} layers at {ha['grid_spacing_m']:g} m spacing) has room "
+                                    f"for {capacity['capacity']} drones, and the fleet has {meta['fleet_size']}. "
+                                    f"Phase 1 widened it to {capacity['width_used_m']:.1f} m along X to fit "
+                                    "everyone, so it covers more ground than its size says."})
+    floor = gatekeeper_floor_default()
+    if floor is not None and ha["grid_spacing_m"] < floor:
+        warnings.append({"path": "/project_metadata/holding_area/grid_spacing_m",
+                         "message": f"Parked drones are {ha['grid_spacing_m']:g} m apart, closer than the "
+                                    f"{floor:g} m the safety check requires. Stage 2 will reject the show at "
+                                    "takeoff. Use a grid spacing of at least that."})
+
     summary = {
         "fleet_size": meta["fleet_size"],
         "version": meta["version"],
@@ -116,6 +157,8 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
             "layers": int(len(np.unique(np.round(slots[:, 2], 6)))),
             "slots_bbox_min": slots.min(axis=0).tolist(),
             "slots_bbox_max": slots.max(axis=0).tolist(),
+            "capacity": capacity,
+            "gatekeeper_floor_m": floor,
         },
         "first_formation_targets_in_holding_area": overlap,
     }

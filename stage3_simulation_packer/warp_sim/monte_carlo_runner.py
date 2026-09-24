@@ -23,6 +23,7 @@ Exit code: 0 = all criteria passed, 1 = a criterion failed, 2 = bad input.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -31,7 +32,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -214,7 +215,11 @@ def _run_one(run_index: int) -> dict[str, Any]:
 
 def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: StressConfig | None = None,
                     device: str | None = None, workers: int = 1, nominal_only: bool = False,
-                    progress: bool = False) -> dict[str, Any]:
+                    progress: bool = False,
+                    on_record: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    """`progress` prints one line per run (for the CLI). `on_record` (docs/5-studio_gui.md B3) is called
+    with a copy of each finished record as it arrives: the nominal one first (run = -1), then runs 0..N-1
+    in order. An exception it raises stops the test (pending worker runs are cancelled) and propagates."""
     from .simulator import DigitalTwin, Disturbances, SimConfig
 
     cfg = cfg or StressConfig()
@@ -228,6 +233,8 @@ def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: Stress
     if progress:
         print(f"[nominal] min sep {nominal['min_separation_m']} m, min SOC {nominal['min_final_soc']:.3f}, "
               f"{nominal['realtime_factor']:.2f}x realtime", flush=True)
+    if on_record:
+        on_record(copy.deepcopy(nominal))
 
     runs: list[dict[str, Any]] = []
     if not nominal_only and cfg.runs > 0:
@@ -247,9 +254,11 @@ def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: Stress
                     print(f"[run {record['run'] + 1:3d}/{cfg.runs}] {status} min sep {record['min_separation_m']} m, "
                           f"min SOC {record['min_final_soc']:.3f}, wind {record['scenario']['mean_wind_mps']} m/s, "
                           f"{record['realtime_factor']:.2f}x", flush=True)
+                if on_record:
+                    on_record(copy.deepcopy(record))
         finally:
             if not in_process:
-                pool.shutdown()
+                pool.shutdown(cancel_futures=True)
         runs.sort(key=lambda r: r["run"])
 
     report = {

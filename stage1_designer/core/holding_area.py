@@ -35,6 +35,11 @@ def layer_capacity(width: float, length: float, grid_spacing_m: float) -> int:
     return cols * rows
 
 
+def max_layer_count(center_z: float, max_height: float, grid_spacing_m: float) -> int:
+    """Layers that fit with Zc + (m-1)*grid_spacing_m <= max_height (at least 1)."""
+    return max(int(math.floor((max_height - center_z) / grid_spacing_m)) + 1, 1)
+
+
 def compute_holding_positions(
     n_park: int,
     center: Tuple[float, float, float],
@@ -56,9 +61,7 @@ def compute_holding_positions(
     xc, yc, zc = center
     width, length = float(size[0]), float(size[1])
 
-    # Maximum number of layers such that Zc + (m-1)*grid_spacing_m <= max_height.
-    max_layers = int(math.floor((max_height - zc) / grid_spacing_m)) + 1
-    max_layers = max(max_layers, 1)
+    max_layers = max_layer_count(zc, max_height, grid_spacing_m)
 
     cols, rows = layer_grid_dims(width, length, grid_spacing_m)
     capacity = cols * rows

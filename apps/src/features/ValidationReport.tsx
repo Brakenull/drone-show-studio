@@ -4,6 +4,51 @@ import type { Validation } from "../bridge/types";
 
 const fmt = (v: number, d = 1) => v.toFixed(d);
 
+/** Holding-area capacity (docs/5-studio_gui.md §6.1): one block per layer the area may stack, filled by
+ *  the drones parked in it, so a crowded or overflowing area shows before a long Stage 2 run. */
+function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) {
+  const ha = summary.holding_area;
+  const c = ha.capacity;
+  const n = summary.fleet_size;
+  const floor = ha.gatekeeper_floor_m;
+  const tooClose = floor !== null && ha.grid_spacing_m < floor;
+  return (
+    <section className="capacity" aria-labelledby="capacity-title">
+      <h3 id="capacity-title">Holding area</h3>
+      <div className="capacity-gauge" role="img" aria-label={`${Math.min(n, c.capacity)} of ${c.capacity} places used`}>
+        {Array.from({ length: c.max_layers }, (_, layer) => {
+          const fill = Math.max(0, Math.min(1, (n - layer * c.per_layer) / c.per_layer));
+          return (
+            <span key={layer} className="capacity-layer" title={`Layer ${layer + 1}`}>
+              <span
+                className={c.widened ? "capacity-fill capacity-over" : "capacity-fill"}
+                style={{ width: `${fill * 100}%` }}
+              />
+            </span>
+          );
+        })}
+      </div>
+      <p className={c.widened ? "tone-warn" : undefined}>
+        {c.widened
+          ? `Too small: room for ${c.capacity} drones, the fleet has ${n}. Phase 1 widened it to ${fmt(c.width_used_m)} m.`
+          : `Room for ${c.capacity} drones in ${ha.size[0]} × ${ha.size[1]} m; this show parks ${n} in ${c.layers_used} of ${c.max_layers} ${
+              c.max_layers === 1 ? "layer" : "layers"
+            }.`}
+      </p>
+      <p className="muted small">
+        {c.per_layer} places per layer at {ha.grid_spacing_m} m apart, layers stacked up to {ha.max_height} m.{" "}
+        {floor !== null && (
+          <span className={tooClose ? "tone-bad" : undefined}>
+            {tooClose
+              ? `Parked drones start closer than the ${floor} m the safety check requires.`
+              : `The safety check requires ${floor} m, so parked neighbours start clear of it.`}
+          </span>
+        )}
+      </p>
+    </section>
+  );
+}
+
 export function ValidationReport({ validation }: { validation: Validation }) {
   const { ok, errors, warnings, summary } = validation;
   return (
@@ -58,18 +103,8 @@ export function ValidationReport({ validation }: { validation: Validation }) {
               <dt>Minimum spacing</dt>
               <dd>{summary.min_distance_m} m</dd>
             </div>
-            <div>
-              <dt>Holding area</dt>
-              <dd>
-                {summary.holding_area.size[0]} × {summary.holding_area.size[1]} m, {summary.holding_area.layers}{" "}
-                {summary.holding_area.layers === 1 ? "layer" : "layers"}
-              </dd>
-            </div>
-            <div>
-              <dt>Launch grid</dt>
-              <dd>{summary.holding_area.grid_spacing_m} m</dd>
-            </div>
           </dl>
+          <Capacity summary={summary} />
           <table className="table">
             <caption className="visually-hidden">Formations</caption>
             <thead>

@@ -9,7 +9,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from .events import EXIT_INPUT, EXIT_INTERNAL, EXIT_OK, emit, log
+from .events import EXIT_INPUT, EXIT_INTERNAL, EXIT_OK, emit, log, reserve_stdout
 from .paths import REPO_ROOT, find_extension_dir, find_packer
 
 
@@ -54,7 +54,19 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     check("pyarrow", "stage2 (Arrow output)", module_version("pyarrow"))
     check("warp", "stage3", module_version("warp"))
     check("pack_to_binary", "stage3", packer_check)
-    emit("doctor", repo_root=str(REPO_ROOT), extension_dir=str(find_extension_dir() or ""), checks=checks)
+
+    devices = ["cpu"]
+
+    def cuda_check():
+        from .stage3_job import cuda_devices
+
+        found = cuda_devices()
+        devices.extend(found)
+        return ", ".join(found) if found else "no NVIDIA GPU; Monte Carlo runs on the CPU"
+
+    check("cuda", "stage3 (GPU, optional)", cuda_check)
+    emit("doctor", repo_root=str(REPO_ROOT), extension_dir=str(find_extension_dir() or ""), checks=checks,
+         devices=devices)
     emit("done", status="succeeded", exit_code=EXIT_OK)
     return EXIT_OK
 
@@ -84,22 +96,70 @@ def cmd_new_run(args: argparse.Namespace) -> int:
     if not result["ok"]:
         emit("done", status="failed_input", exit_code=EXIT_INPUT)
         return EXIT_INPUT
-    run_dir = create_run(source, Path(args.runs_dir).resolve(), result["data"])
+    overrides = None
+    if args.overrides_json is not None:
+        import json
+
+        from .config_fields import override_errors
+
+        overrides = json.loads(args.overrides_json)
+        errors = override_errors(overrides)
+        if errors:
+            emit("error", code="input", message="Planner settings rejected: " + "; ".join(errors))
+            emit("done", status="failed_input", exit_code=EXIT_INPUT)
+            return EXIT_INPUT
+    run_dir = create_run(source, Path(args.runs_dir).resolve(), result["data"],
+                         copy_from=Path(args.copy_from) if args.copy_from else None, overrides=overrides)
     emit("run_created", run_id=run_dir.name, run_dir=str(run_dir))
     emit("done", status="succeeded", exit_code=EXIT_OK)
     return EXIT_OK
 
 
 def cmd_stage2(args: argparse.Namespace) -> int:
+    import json
+
     from .stage2_job import run_stage2
 
-    return run_stage2(Path(args.run_dir), Path(args.overrides) if args.overrides else None)
+    if args.overrides_json is not None:
+        overrides = json.loads(args.overrides_json)
+    elif args.overrides:
+        overrides = json.loads(Path(args.overrides).read_text(encoding="utf-8"))
+    else:
+        overrides = {}
+    return run_stage2(Path(args.run_dir), overrides)
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """The planner settings editor's data for a run (docs/5-studio_gui.md §6.2)."""
+    import json
+
+    from . import config_fields
+
+    run_dir = Path(args.run_dir)
+    meta = json.loads((run_dir / "input" / "phase1.json").read_text(encoding="utf-8"))["project_metadata"]
+    saved = run_dir / "stage2" / "config_overrides.json"
+    overrides = json.loads(saved.read_text(encoding="utf-8")) if saved.exists() else {}
+    emit("config", **config_fields.describe(meta, overrides))
+    emit("done", status="succeeded", exit_code=EXIT_OK)
+    return EXIT_OK
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
     from .stage2_job import rebuild_replay
 
     return rebuild_replay(Path(args.run_dir))
+
+
+def cmd_monte_carlo(args: argparse.Namespace) -> int:
+    from .stage3_job import run_monte_carlo_job
+
+    return run_monte_carlo_job(Path(args.run_dir), args.runs, args.device, args.workers, args.seed)
+
+
+def cmd_pack(args: argparse.Namespace) -> int:
+    from .stage3_job import run_pack_job
+
+    return run_pack_job(Path(args.run_dir))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,15 +172,33 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("new-run")
     p.add_argument("phase1_json")
     p.add_argument("--runs-dir", required=True)
+    p.add_argument("--copy-from", default=None,
+                   help="Run folder this one copies (its input is phase1_json); keeps its planner settings")
+    p.add_argument("--overrides-json", default=None, help="Planner settings for the new run (instead of the copied ones)")
     p.set_defaults(fn=cmd_new_run)
     p = sub.add_parser("stage2")
     p.add_argument("run_dir")
     p.add_argument("--overrides", default=None, help="JSON file passed as optional_config_overrides")
+    p.add_argument("--overrides-json", default=None, help="The same as a JSON string (what the Studio sends)")
     p.set_defaults(fn=cmd_stage2)
+    p = sub.add_parser("config")
+    p.add_argument("run_dir")
+    p.set_defaults(fn=cmd_config)
     p = sub.add_parser("replay")
     p.add_argument("run_dir")
     p.set_defaults(fn=cmd_replay)
+    p = sub.add_parser("monte_carlo")
+    p.add_argument("run_dir")
+    p.add_argument("--runs", type=int, default=100)
+    p.add_argument("--device", default="cpu", help="Warp device: cpu or cuda:N")
+    p.add_argument("--workers", type=int, default=1, help="Parallel processes (CPU device only)")
+    p.add_argument("--seed", type=int, default=None, help="Base seed (default: the runner's)")
+    p.set_defaults(fn=cmd_monte_carlo)
+    p = sub.add_parser("pack")
+    p.add_argument("run_dir")
+    p.set_defaults(fn=cmd_pack)
     args = parser.parse_args(argv)
+    reserve_stdout()
     try:
         return args.fn(args)
     except Exception as exc:

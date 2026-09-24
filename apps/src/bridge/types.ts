@@ -25,6 +25,38 @@ export interface Transition {
   duration_sec: number;
 }
 
+/** run.json's stage3.monte_carlo / stage3.pack (tools/studio_bridge/stage3_job.py). */
+export interface Stage3Part {
+  status: RunStatus;
+  started_at?: string;
+  ended_at?: string | null;
+  message?: string | null;
+  wall_time_sec?: number | null;
+  /** Stage 2's ended_at when this ran; differs from stage2.ended_at once Stage 2 was run again. */
+  stage2_ended_at?: string | null;
+}
+
+export interface MonteCarloPart extends Stage3Part {
+  config?: { runs: number; device: string; workers: number; seed: number };
+  passed?: boolean;
+  crash_rate?: number;
+  worst_min_separation_m?: number | null;
+  worst_final_soc?: number | null;
+}
+
+export interface PackSummary {
+  fleet_size: number;
+  files: number;
+  verified_files: number;
+  records_per_file: number;
+  file_size_bytes: number;
+  sampling_dt_ms: number;
+  total_bytes: number;
+  verify_message: string;
+}
+
+export type PackPart = Stage3Part & Partial<PackSummary>;
+
 export interface RunRecord {
   run_id: string;
   run_dir: string;
@@ -40,7 +72,101 @@ export interface RunRecord {
     worst_separation_m?: number;
     required_separation_m?: number;
     transition?: Transition;
+    /** Planner settings of the last Stage 2 run that made it less safe than its baseline. */
+    config_warnings?: ConfigWarning[];
   };
+  /** Set on a run made with "Copy to a new run": the run it copies. */
+  copied_from?: string;
+  stage3?: { monte_carlo?: MonteCarloPart; pack?: PackPart };
+}
+
+/** One Stage 2 planner setting (tools/studio_bridge/config_fields.py). `path` is dotted, e.g.
+ *  "solver.continuous_gatekeeper.min_allowable_distance_m". */
+export interface ConfigField {
+  path: string;
+  label: string;
+  help: string;
+  kind: "number" | "integer" | "boolean" | "choice";
+  group: string;
+  /** The direction that makes the setting less safe. */
+  risky: "lower" | "higher" | "off" | null;
+  min: number | null;
+  choices: string[] | null;
+  default: number | boolean | string;
+  /** What this run uses without an override: default, or the Phase 1 file's motion limits. */
+  baseline: number | boolean | string;
+}
+
+export interface ConfigWarning {
+  path: string;
+  label: string;
+  message: string;
+}
+
+/** optional_config_overrides: a nested object shaped like core_config.json. */
+export type Overrides = { [key: string]: Overrides | number | boolean | string };
+
+/** Two drones' closest approach in one simulated flight. */
+export interface McPair {
+  drone_a: number;
+  drone_b: number;
+  min_distance_m: number;
+  time_sec: number;
+}
+
+/** One Monte Carlo flight (monte_carlo_runner.evaluate_run); run -1 is the undisturbed nominal flight. */
+export interface McRecord {
+  run: number;
+  seed: number;
+  passed: boolean;
+  scenario: { mean_wind_mps: number; gust_peak_mps: number; ambient_c: number };
+  min_separation_m: number | null;
+  crash_pairs: McPair[];
+  warning_pairs: McPair[];
+  min_final_soc: number;
+  low_soc_drones: number[];
+  brownout_drones: number[];
+  min_voltage_v: number;
+  max_tracking_error_m: number;
+  sim_duration_sec: number;
+  wall_time_sec: number;
+  realtime_factor: number;
+}
+
+export interface McSummary {
+  runs: number;
+  passed: boolean;
+  crash_rate: number;
+  crash_runs: number[];
+  low_soc_runs: number[];
+  warning_runs: number[];
+  brownout_runs: number[];
+  worst_min_separation_m: number | null;
+  worst_final_soc: number | null;
+  worst_tracking_error_m: number | null;
+  mean_realtime_factor: number | null;
+  nominal?: McRecord;
+}
+
+/** stage3/monte_carlo_report.json (the part the UI reads). */
+export interface McReport {
+  device: string;
+  fleet_size: number;
+  show_duration_sec: number;
+  criteria: { d_crash_m: number; d_warning_m: number; min_landing_soc: number };
+  summary: McSummary;
+  wall_time_sec: number;
+  runs: McRecord[];
+}
+
+/** stage3/bin/manifest.json, written by pack_to_binary. */
+export interface PackManifest {
+  source: string;
+  fleet_size: number;
+  sampling_dt_ms: number;
+  records_per_file: number;
+  file_size_bytes: number;
+  files: { drone_id: number; file: string; size_bytes: number; crc32: string; verified: boolean }[];
 }
 
 export interface Issue {
@@ -69,6 +195,16 @@ export interface ValidationSummary {
     max_height: number;
     grid_spacing_m: number;
     layers: number;
+    /** Phase 1's layout rules applied to the declared area (tools/studio_bridge/validate.py). */
+    capacity: {
+      per_layer: number;
+      max_layers: number;
+      capacity: number;
+      layers_used: number;
+      widened: boolean;
+      width_used_m: number;
+    };
+    gatekeeper_floor_m: number | null;
   };
   first_formation_targets_in_holding_area: number;
 }
@@ -153,11 +289,17 @@ export type BridgeEvent =
   | { type: "progress"; stage: string; done: number; total: number }
   | ({ type: "solve_progress" } & SolveProgress)
   | { type: "validation"; ok: boolean; errors: Issue[]; warnings: Issue[]; summary: ValidationSummary | null }
-  | { type: "doctor"; repo_root: string; extension_dir: string; checks: DoctorCheck[] }
+  | { type: "doctor"; repo_root: string; extension_dir: string; checks: DoctorCheck[]; devices?: string[] }
   | { type: "run_created"; run_id: string; run_dir: string }
   | { type: "stage2_result"; wall_time_sec: number; total_duration_sec: number; fleet_size: number }
   | ({ type: "stage2_failure"; message: string; wall_time_sec: number } & Omit<FailureSummary, "violations">)
   | { type: "replay_ready"; frames: number; fleet_size: number }
+  | { type: "mc_start"; runs: number; device: string; workers: number; seed: number }
+  | ({ type: "mc_run" } & McRecord)
+  | { type: "mc_result"; summary: McSummary; device: string; wall_time_sec: number }
+  | ({ type: "pack_result"; ok: boolean } & PackSummary)
+  | { type: "config"; fields: ConfigField[]; overrides: Overrides; warnings: ConfigWarning[] }
+  | { type: "config_warnings"; warnings: ConfigWarning[] }
   | { type: "error"; code: string; message: string }
   | { type: "done"; status: RunStatus; exit_code: number }
   | { type: "stdout"; line: string };

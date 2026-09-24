@@ -794,6 +794,335 @@ button.link:hover:not(:disabled) {
   touch-action: none;
 }
 
+/* Planner settings (Stage 2) */
+.outcome-controls {
+  margin-top: 1.75rem;
+}
+.planner {
+  max-width: 56rem;
+}
+.planner-settings {
+  border-top: 1px solid var(--rule);
+  padding-top: 0.9rem;
+}
+.planner-settings > summary {
+  cursor: pointer;
+  font-size: var(--step-1);
+  font-weight: 600;
+  font-stretch: 87.5%;
+}
+.planner-settings > summary .muted {
+  font-size: var(--step-0);
+  font-weight: 400;
+  font-stretch: normal;
+}
+.planner-about {
+  margin: 0.5rem 0 0.25rem;
+  max-width: 62ch;
+}
+.settings-table {
+  margin-top: 1rem;
+}
+.settings-table caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.4rem 0;
+  color: var(--text);
+}
+.settings-table th[scope="row"] {
+  font-weight: 400;
+  width: 45%;
+  padding-left: 0.6rem;
+  border-left: 3px solid transparent;
+}
+.settings-table tr.is-changed th[scope="row"] {
+  border-left-color: var(--warn);
+}
+.settings-table td:last-child {
+  width: 3.5rem;
+}
+.setting-help {
+  display: block;
+  color: var(--muted);
+  font-size: var(--step--1);
+}
+.settings-table input,
+.settings-table select {
+  width: 9rem;
+  height: 2.1rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--night);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.settings-table input:focus,
+.settings-table select:focus {
+  border-color: var(--warn);
+}
+.settings-table input[aria-invalid="true"],
+.settings-table .is-worse {
+  border-color: var(--bad);
+}
+.settings-advanced {
+  margin-top: 1.25rem;
+}
+.settings-advanced > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.settings-advanced > summary .muted {
+  font-weight: 400;
+}
+.planner-warnings ul {
+  margin: 0.4rem 0 0.6rem;
+  padding-left: 1.2rem;
+}
+.notice ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+/* Compare */
+.compare-pick select {
+  width: min(32rem, 100%);
+  height: 2.4rem;
+  padding: 0.3rem 0.5rem;
+}
+.compare-chart {
+  max-width: 56rem;
+  margin: 1.25rem 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.compare-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.4rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.compare-canvas {
+  display: block;
+  width: 100%;
+  height: 240px;
+  cursor: crosshair;
+}
+.series-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 0.45rem;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+.compare-table {
+  max-width: 56rem;
+  margin-top: 0.5rem;
+}
+.compare-table th[scope="row"] {
+  font-weight: 400;
+  color: var(--muted);
+  width: 30%;
+}
+
+/* Holding-area capacity: one block per layer the area may stack. */
+.capacity {
+  max-width: 50rem;
+  margin: 0.5rem 0 1.5rem;
+}
+.capacity h3 {
+  margin: 0 0 0.6rem;
+}
+.capacity-gauge {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 0.5rem;
+}
+.capacity-layer {
+  flex: 1;
+  height: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.capacity-fill {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+.capacity-over {
+  background: var(--warn);
+}
+
+/* Stage 3 */
+.stage3-section {
+  max-width: 56rem;
+  padding: 1.5rem 0 1.75rem;
+  border-top: 1px solid var(--rule);
+}
+.stage3-section + .stage3-section {
+  margin-top: 0.5rem;
+}
+.stage3-title {
+  font-size: var(--step-2);
+  margin-bottom: 0.35rem;
+}
+.stage3-about {
+  max-width: 62ch;
+  margin-bottom: 1.1rem;
+}
+.mc-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem 1.25rem;
+}
+.mc-settings .field input,
+.mc-settings .field select {
+  width: 8.5rem;
+  height: 2.4rem;
+}
+.mc-settings button {
+  height: 2.4rem;
+}
+.field select {
+  padding: 0.5rem 0.65rem;
+  background: var(--night);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.field input:disabled {
+  opacity: 0.5;
+}
+.mc-running {
+  flex-wrap: wrap;
+  padding: 0.9rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+.mc-verdict {
+  margin-top: 1.5rem;
+}
+.pack-verdict {
+  margin-top: 1.25rem;
+}
+
+/* The run grid: one lamp per simulated flight, lit as each one lands. */
+.run-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 18px);
+  gap: 6px;
+  margin: 1.25rem 0 0.5rem;
+  max-width: 50rem;
+}
+.run-cell {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+  background: transparent;
+}
+.run-cell:disabled {
+  opacity: 1;
+}
+.run-cell:hover:not(:disabled) {
+  border-color: var(--text);
+}
+.tone-cell-ok {
+  background: var(--ok);
+  border-color: var(--ok);
+  box-shadow: 0 0 6px rgb(79 209 165 / 0.45);
+}
+.tone-cell-warn {
+  background: var(--warn);
+  border-color: var(--warn);
+  box-shadow: 0 0 6px rgb(242 169 59 / 0.45);
+}
+.tone-cell-bad {
+  background: var(--bad);
+  border-color: var(--bad);
+  box-shadow: 0 0 8px rgb(255 90 78 / 0.6);
+}
+/* Calm air: a ring around the lamp so it reads as the reference, not one of the numbered flights. */
+.run-cell-nominal {
+  outline: 1px solid var(--muted);
+  outline-offset: 2px;
+  margin-right: 6px;
+}
+.run-cell.is-selected {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.run-grid-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  margin-bottom: 1rem;
+}
+.run-cell-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 0.6rem;
+  vertical-align: middle;
+}
+.run-cell-key:first-child {
+  margin-left: 0;
+}
+.run-cell-key.run-cell-nominal {
+  margin-right: 0;
+}
+
+.table-scroll {
+  max-height: 24rem;
+  overflow-y: auto;
+  max-width: 56rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.table-scroll .table {
+  max-width: none;
+}
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--night);
+}
+.mc-table tbody tr {
+  cursor: pointer;
+}
+.mc-table tbody tr.is-selected td {
+  background: var(--raised);
+}
+.manifest {
+  margin-top: 0.75rem;
+}
+.manifest summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.stage3-stopped {
+  margin-top: 1rem;
+}
+.replay-note {
+  margin-top: 0.3rem;
+  color: var(--warn);
+  font-size: var(--step--1);
+  max-width: 32ch;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .light-busy,
   .bar-indeterminate > span {

@@ -1,8 +1,9 @@
 // Run Stage 2 and read its outcome (docs/5-studio_gui.md §6.2).
 
 import { useEffect, useState } from "react";
-import { readRunJson, readRunText } from "../bridge/api";
-import type { FailureSummary, JobExit, RunRecord } from "../bridge/types";
+import { readRunJson, readRunText, runJob } from "../bridge/api";
+import type { FailureSummary, JobExit, Overrides, RunRecord } from "../bridge/types";
+import { PlannerSettings } from "./PlannerSettings";
 import {
   cancelStage2,
   solveFraction,
@@ -11,15 +12,19 @@ import {
   type SolveState,
   type Stage2Job,
 } from "../app/stage2Jobs";
+import { isStage3Running } from "../app/stage3Jobs";
 import { clock, duration, STATUS } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
 import type { Separation } from "../replay/types";
 
 interface Props {
   run: RunRecord;
+  runsDir: string;
   onChanged: () => void;
   onFinished: (runId: string, exit: JobExit) => void;
   onShowInReplay: (time: number, drones: number[]) => void;
+  /** A copy of this run was made ("Try these settings in a new run"). */
+  onCreated: (runId: string) => void;
 }
 
 const PHASE_TEXT: Record<string, string> = {
@@ -29,15 +34,15 @@ const PHASE_TEXT: Record<string, string> = {
   replay: "Preparing the 3D replay",
 };
 
-export function Stage2View({ run, onChanged, onFinished, onShowInReplay }: Props) {
+export function Stage2View({ run, runsDir, onChanged, onFinished, onShowInReplay, onCreated }: Props) {
   const job = useStage2Job(run.run_id);
   const running = !!job && !job.exit;
   const status = running ? "running" : run.stage2.status;
   const [startError, setStartError] = useState<string | null>(null);
 
-  async function start() {
+  async function start(overrides: Overrides) {
     setStartError(null);
-    const promise = startStage2(run.run_id, run.run_dir, (exit) => onFinished(run.run_id, exit));
+    const promise = startStage2(run.run_id, run.run_dir, overrides, (exit) => onFinished(run.run_id, exit));
     // run.json flips to "running" as soon as the bridge starts; refresh the sidebar shortly after.
     setTimeout(onChanged, 800);
     promise.catch((e) => setStartError(String(e)));
@@ -63,7 +68,40 @@ export function Stage2View({ run, onChanged, onFinished, onShowInReplay }: Props
       {running ? (
         <RunningPanel job={job!} fleet={run.input.fleet_size} runId={run.run_id} />
       ) : (
-        <Outcome run={run} status={status} job={job} onRun={start} onShowInReplay={onShowInReplay} />
+        <Outcome
+          run={run}
+          status={status}
+          job={job}
+          controls={
+            <PlannerSettings
+              run={run}
+              runLabel={status === "not_run" ? "Run Stage 2" : "Run Stage 2 again"}
+              primary={status === "not_run"}
+              // Stage 3 reads this run's Stage 2 output; re-planning would change it underneath.
+              blocked={isStage3Running(run.run_id) ? "Wait for Stage 3 to finish first." : null}
+              onRun={start}
+              onCopy={async (overrides) => {
+                const { events } = await runJob([
+                  "new-run",
+                  `${run.run_dir}/input/phase1.json`,
+                  "--runs-dir",
+                  runsDir,
+                  "--copy-from",
+                  run.run_dir,
+                  "--overrides-json",
+                  JSON.stringify(overrides),
+                ]);
+                const created = events.find((e) => e.type === "run_created");
+                if (!created || created.type !== "run_created") {
+                  const err = events.find((e) => e.type === "error");
+                  throw new Error(err && err.type === "error" ? err.message : "The copy wasn't created.");
+                }
+                onCreated(created.run_id);
+              }}
+            />
+          }
+          onShowInReplay={onShowInReplay}
+        />
       )}
     </div>
   );
@@ -161,27 +199,51 @@ interface OutcomeProps {
   run: RunRecord;
   status: RunRecord["stage2"]["status"];
   job: Stage2Job | null;
-  onRun: () => void;
+  /** Planner settings and the run buttons, shown under the result. */
+  controls: React.ReactNode;
   onShowInReplay: (time: number, drones: number[]) => void;
 }
 
-function Outcome({ run, status, job, onRun, onShowInReplay }: OutcomeProps) {
-  const again = (
-    <button className={status === "not_run" ? "primary" : ""} onClick={onRun}>
-      {status === "not_run" ? "Run Stage 2" : "Run Stage 2 again"}
-    </button>
-  );
-
+function Outcome({ run, status, job, controls, onShowInReplay }: OutcomeProps) {
   if (status === "not_run") {
     return (
       <section className="outcome">
         <p>This run hasn't been through Stage 2 yet.</p>
-        <div className="actions">{again}</div>
+        {run.copied_from && (
+          <p className="muted">A copy of {run.copied_from}, to try other planner settings on the same show.</p>
+        )}
+        {controls}
       </section>
     );
   }
-  if (status === "succeeded") return <Passed run={run} again={again} />;
-  if (status === "failed_safety") return <Rejected run={run} again={again} onShowInReplay={onShowInReplay} />;
+  const again = <div className="outcome-controls">{controls}</div>;
+  const weaker = run.stage2.config_warnings ?? [];
+  const note = weaker.length > 0 && (status === "succeeded" || status === "failed_safety") && (
+    <div className="notice notice-warn">
+      <p>
+        <strong>This result used weaker safety settings than the defaults:</strong>
+      </p>
+      <ul>
+        {weaker.map((w, i) => (
+          <li key={i}>{w.message}</li>
+        ))}
+      </ul>
+    </div>
+  );
+  if (status === "succeeded")
+    return (
+      <>
+        {note}
+        <Passed run={run} again={again} />
+      </>
+    );
+  if (status === "failed_safety")
+    return (
+      <>
+        {note}
+        <Rejected run={run} again={again} onShowInReplay={onShowInReplay} />
+      </>
+    );
   return <Stopped run={run} status={status} job={job} again={again} />;
 }
 
@@ -211,7 +273,7 @@ function Passed({ run, again }: { run: RunRecord; again: React.ReactNode }) {
           <dd>{duration(run.stage2.wall_time_sec)}</dd>
         </div>
       </dl>
-      <div className="actions">{again}</div>
+      {again}
     </section>
   );
 }
@@ -309,7 +371,7 @@ function Rejected({
         </tbody>
       </table>
       <p className="muted small">Planning took {duration(run.stage2.wall_time_sec)}.</p>
-      <div className="actions">{again}</div>
+      {again}
     </section>
   );
 }
@@ -365,7 +427,7 @@ function Stopped({
         </p>
       )}
       <LogPane lines={logTail} />
-      <div className="actions">{again}</div>
+      {again}
     </section>
   );
 }

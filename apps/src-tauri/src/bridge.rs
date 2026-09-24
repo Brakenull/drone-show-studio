@@ -24,6 +24,8 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 struct Job {
     pid: u32,
     run_dir: Option<PathBuf>,
+    /// The run.json section this job owns (JSON pointer from runs::section); "" without a run_dir.
+    pointer: &'static str,
     cancelled: bool,
 }
 
@@ -42,20 +44,20 @@ impl Jobs {
     /// On app exit: Windows doesn't end child processes with their parent, so a solve would keep
     /// running unseen. Kill every job and mark its run cancelled.
     pub fn kill_all(&self) {
-        let jobs: Vec<(u32, Option<PathBuf>)> = self
+        let jobs: Vec<(u32, Option<PathBuf>, &str)> = self
             .live
             .lock()
             .unwrap()
             .values_mut()
             .map(|j| {
                 j.cancelled = true;
-                (j.pid, j.run_dir.clone())
+                (j.pid, j.run_dir.clone(), j.pointer)
             })
             .collect();
-        for (pid, run_dir) in jobs {
+        for (pid, run_dir, pointer) in jobs {
             let _ = kill_tree(pid);
             if let Some(dir) = run_dir {
-                let _ = runs::mark_stage2_cancelled(&dir);
+                let _ = runs::mark_cancelled(&dir, pointer);
             }
         }
     }
@@ -110,20 +112,27 @@ fn append_log(path: &Option<PathBuf>, entry: &Value) {
 }
 
 /// `args` are the bridge's own arguments (e.g. ["stage2", "<run_dir>"]). `run_dir` ties the job to a
-/// run folder: its events are appended to `stage2/log.ndjson` there and a cancel marks the run cancelled.
+/// run folder and `section` ("stage2", "monte_carlo" or "pack") to one part of its run.json: events are
+/// appended to that section's log file, and a cancel marks that section cancelled.
 #[tauri::command]
 pub fn start_job(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     args: Vec<String>,
     run_dir: Option<String>,
+    section: Option<String>,
 ) -> Result<u64, String> {
     let cfg = settings::load(&app);
     if cfg.repo_root.is_empty() {
         return Err("repo root is not set".into());
     }
     let run_dir = run_dir.map(PathBuf::from);
-    let log_path = run_dir.as_ref().map(|d| d.join("stage2").join("log.ndjson"));
+    let (pointer, log_rel) = match (&run_dir, section.as_deref()) {
+        (Some(_), Some(name)) => runs::section(name)?,
+        (Some(_), None) => return Err("a job tied to a run folder needs a section".into()),
+        (None, _) => ("", ""),
+    };
+    let log_path = run_dir.as_ref().map(|d| d.join(log_rel));
     if let Some(p) = &log_path {
         let _ = std::fs::create_dir_all(p.parent().unwrap());
     }
@@ -144,7 +153,7 @@ pub fn start_job(
     let job_id = jobs.next_id.fetch_add(1, Ordering::SeqCst) + 1;
     jobs.live.lock().unwrap().insert(
         job_id,
-        Job { pid: child.id(), run_dir: run_dir.clone(), cancelled: false },
+        Job { pid: child.id(), run_dir: run_dir.clone(), pointer, cancelled: false },
     );
 
     let stdout = child.stdout.take().unwrap();
@@ -174,10 +183,8 @@ pub fn start_job(
         let _ = err_thread.join();
         let job = live.lock().unwrap().remove(&job_id);
         let cancelled = job.as_ref().map(|j| j.cancelled).unwrap_or(false);
-        if cancelled {
-            if let Some(dir) = job.and_then(|j| j.run_dir) {
-                let _ = runs::mark_stage2_cancelled(&dir);
-            }
+        if let Some(Job { run_dir: Some(dir), pointer, cancelled: true, .. }) = job {
+            let _ = runs::mark_cancelled(&dir, pointer);
         }
         let code = status.ok().and_then(|s| s.code());
         let _ = app.emit("bridge-exit", BridgeExit { job_id, code, cancelled });

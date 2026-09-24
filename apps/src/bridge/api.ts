@@ -57,13 +57,24 @@ export interface Job {
   done: Promise<JobExit>;
 }
 
-/** Start `python -m tools.studio_bridge <args>`; `runDir` ties it to a run folder (log + cancel state). */
+/** A part of run.json a job owns; it picks the log file and what a cancel marks cancelled. */
+export type RunSection = "stage2" | "monte_carlo" | "pack";
+
+/** Start `python -m tools.studio_bridge <args>`; `run` ties it to a run folder section (log + cancel state). */
 export async function startJob(
   args: string[],
-  opts: { runDir?: string; onEvent?: (e: BridgeEvent) => void; onLog?: (line: string) => void } = {},
+  opts: {
+    run?: { dir: string; section: RunSection };
+    onEvent?: (e: BridgeEvent) => void;
+    onLog?: (line: string) => void;
+  } = {},
 ): Promise<Job> {
   await ensureListening();
-  const id = await invoke<number>("start_job", { args, runDir: opts.runDir ?? null });
+  const id = await invoke<number>("start_job", {
+    args,
+    runDir: opts.run?.dir ?? null,
+    section: opts.run?.section ?? null,
+  });
   const done = new Promise<JobExit>((resolve) => {
     handlers.set(id, { onEvent: opts.onEvent, onLog: opts.onLog, resolve });
   });
@@ -84,7 +95,8 @@ export const cancelJob = (jobId: number) => invoke<void>("cancel_job", { jobId }
 export const getSettings = () => invoke<Settings>("get_settings");
 export const saveSettings = (settings: Settings) => invoke<Settings>("save_settings", { settings });
 export const listRuns = () => invoke<RunRecord[]>("list_runs");
-export const openRunFolder = (runId: string) => invoke<void>("open_run_folder", { runId });
+export const openRunFolder = (runId: string, rel?: string) =>
+  invoke<void>("open_run_folder", { runId, rel: rel ?? null });
 export const stashImport = (name: string, text: string) => invoke<string>("stash_import", { name, text });
 
 export async function readRunJson<T>(runId: string, rel: string): Promise<T | null> {

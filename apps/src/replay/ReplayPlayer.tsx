@@ -130,6 +130,7 @@ export function ReplayPlayer({ data, focus, label }: Props) {
         <div className="replay-canvas" ref={hostRef} />
         <aside className="replay-panel" ref={panelRef}>
           <p className="replay-kind">{label}</p>
+          {focus?.note && <p className="replay-note">{focus.note}</p>}
           <dl className="facts">
             <div>
               <dt>Drones</dt>

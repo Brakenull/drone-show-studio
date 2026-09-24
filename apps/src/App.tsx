@@ -3,30 +3,36 @@ import { getSettings, listRuns, runJob } from "./bridge/api";
 import type { DoctorCheck, RunRecord, Settings } from "./bridge/types";
 import { STATUS, runName } from "./app/format";
 import { isStage2Running } from "./app/stage2Jobs";
+import { isStage3Running, useStage3Job } from "./app/stage3Jobs";
 import { Sidebar } from "./features/Sidebar";
 import { NewRun } from "./features/NewRun";
 import { InputView } from "./features/InputView";
 import { Stage2View } from "./features/Stage2View";
+import { Stage3View } from "./features/Stage3View";
 import { ReplayView } from "./features/ReplayView";
+import { CompareView } from "./features/CompareView";
 import { SettingsView } from "./features/SettingsView";
 import type { ReplayFocus } from "./replay/types";
 import "./styles.css";
 
 type View = "new" | "run" | "settings";
-type Tab = "input" | "stage2" | "replay";
+type Tab = "input" | "stage2" | "stage3" | "replay" | "compare";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "input", label: "Input" },
   { id: "stage2", label: "Stage 2" },
+  { id: "stage3", label: "Stage 3" },
   { id: "replay", label: "Replay" },
+  { id: "compare", label: "Compare" },
 ];
 
 const runTone = (run: RunRecord) =>
-  (isStage2Running(run.run_id) ? STATUS.running : STATUS[run.stage2.status]).tone;
+  (isStage2Running(run.run_id) || isStage3Running(run.run_id) ? STATUS.running : STATUS[run.stage2.status]).tone;
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
+  const [devices, setDevices] = useState<string[]>(["cpu"]);
   const [doctorError, setDoctorError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [view, setView] = useState<View>("new");
@@ -48,7 +54,10 @@ export default function App() {
     try {
       const { events } = await runJob(["doctor"]);
       const d = events.find((e) => e.type === "doctor");
-      if (d && d.type === "doctor") setChecks(d.checks);
+      if (d && d.type === "doctor") {
+        setChecks(d.checks);
+        setDevices(d.devices?.length ? d.devices : ["cpu"]);
+      }
       else setDoctorError("The component check produced no result.");
     } catch (e) {
       setDoctorError(String(e));
@@ -62,6 +71,9 @@ export default function App() {
   }, [refreshRuns, runDoctor]);
 
   const run = runs.find((r) => r.run_id === selected) ?? null;
+  // Re-render when the selected run's Stage 3 jobs start or stop, so its status light follows them.
+  useStage3Job(selected, "monte_carlo");
+  useStage3Job(selected, "pack");
   const missing = checks?.filter((c) => !c.ok && ["stage2", "validate", "replay", "all"].includes(c.required_for));
 
   function openRun(runId: string, nextTab: Tab = "stage2") {
@@ -150,6 +162,11 @@ export default function App() {
               {tab === "stage2" && (
                 <Stage2View
                   run={run}
+                  runsDir={settings?.runs_dir ?? ""}
+                  onCreated={async (id) => {
+                    await refreshRuns();
+                    openRun(id, "stage2");
+                  }}
                   onChanged={refreshRuns}
                   onFinished={() => void refreshRuns()}
                   onShowInReplay={(time, drones) => {
@@ -158,7 +175,19 @@ export default function App() {
                   }}
                 />
               )}
+              {tab === "stage3" && (
+                <Stage3View
+                  run={run}
+                  devices={devices}
+                  onFinished={() => void refreshRuns()}
+                  onShowInReplay={(time, drones, note) => {
+                    setFocus({ time, drones, note, key: Date.now() });
+                    setTab("replay");
+                  }}
+                />
+              )}
               {tab === "replay" && <ReplayView run={run} focus={focus} />}
+              {tab === "compare" && <CompareView key={run.run_id} run={run} runs={runs} />}
             </div>
           </div>
         )}

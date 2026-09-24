@@ -80,9 +80,9 @@ def _failure_summary(report: dict[str, Any]) -> dict[str, Any]:
     return {k: report[k] for k in keys}
 
 
-def run_stage2(run_dir: Path, overrides_path: Path | None) -> int:
+def run_stage2(run_dir: Path, overrides: dict[str, Any]) -> int:
     try:
-        return _run_stage2(run_dir, overrides_path)
+        return _run_stage2(run_dir, overrides)
     except Exception as exc:
         # Never leave run.json saying "running" for a job that is gone.
         try:
@@ -92,17 +92,32 @@ def run_stage2(run_dir: Path, overrides_path: Path | None) -> int:
             raise
 
 
-def _run_stage2(run_dir: Path, overrides_path: Path | None) -> int:
+def _run_stage2(run_dir: Path, overrides: dict[str, Any]) -> int:
+    from . import config_fields
+
     stage_dir = run_dir / "stage2"
     stage_dir.mkdir(exist_ok=True)
     for stale in (CONTRACT_JSON, CONTRACT_ARROW, FAILURE_FILE):
         (stage_dir / stale).unlink(missing_ok=True)
-    overrides = _load_json(overrides_path) if overrides_path else {}
     write_json_atomic(stage_dir / "config_overrides.json", overrides)
 
+    # drone_core ignores unknown keys; refuse them so a typo can't pass for an applied setting.
+    errors = config_fields.override_errors(overrides)
+    if errors:
+        message = "Planner settings rejected: " + "; ".join(errors)
+        emit("error", code="input", message=message)
+        update_run(run_dir, "stage2", status="failed_input", started_at=now_iso(), ended_at=now_iso(), pid=None,
+                   message=message, wall_time_sec=None, config_warnings=[])
+        emit("done", status="failed_input", exit_code=EXIT_INPUT)
+        return EXIT_INPUT
+
+    phase1_meta = _load_json(run_dir / "input" / "phase1.json")["project_metadata"]
+    warnings = config_fields.safety_warnings(config_fields.baseline(phase1_meta), overrides)
+    if warnings:
+        emit("config_warnings", warnings=warnings)
     started = now_iso()
     update_run(run_dir, "stage2", status="running", started_at=started, ended_at=None, pid=os.getpid(),
-               message=None, wall_time_sec=None)
+               message=None, wall_time_sec=None, config_warnings=warnings)
     emit("phase", name="loading", detail="importing drone_core")
 
     def finish(status: str, code: int, **fields: Any) -> int:

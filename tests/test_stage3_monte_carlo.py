@@ -42,6 +42,49 @@ def test_run_monte_carlo_report_passes_for_safe_show():
     assert report["fleet_size"] == 4
 
 
+def test_on_record_gets_nominal_then_each_run_in_order():
+    seen = []
+
+    def record(r):
+        seen.append(r)
+        r["crash_pairs"].append("mutated")  # a copy: must not reach the report
+
+    report = mc.run_monte_carlo(short_show(), cfg=mc.StressConfig(runs=2, tail_sec=0.5), device="cpu",
+                                on_record=record)
+    for r in seen:
+        r["crash_pairs"].remove("mutated")
+    assert seen == [report["summary"]["nominal"], *report["runs"]]
+    assert [r["run"] for r in seen] == [-1, 0, 1]
+    assert report["summary"]["passed"]
+
+
+def test_on_record_exception_stops_the_test():
+    class Stop(Exception):
+        pass
+
+    def stop_after_first_run(r):
+        if r["run"] == 0:
+            raise Stop
+
+    with pytest.raises(Stop):
+        mc.run_monte_carlo(short_show(), cfg=mc.StressConfig(runs=3, tail_sec=0.5), device="cpu",
+                           on_record=stop_after_first_run)
+
+
+def test_on_record_with_worker_processes(tmp_path):
+    source = tmp_path / "trajectory_splines.json"
+    source.write_text(json.dumps(short_show()))
+    seen = []
+    cfg = mc.StressConfig(runs=2, tail_sec=0.5)
+    report = mc.run_monte_carlo(source, cfg=cfg, device="cpu", workers=2, on_record=seen.append)
+    assert [r["run"] for r in seen] == [-1, 0, 1]
+    assert seen[1:] == report["runs"]
+    # Same seeds -> same records as a single-process run (wall-clock fields aside).
+    single = mc.run_monte_carlo(source, cfg=cfg, device="cpu")
+    strip = lambda r: {k: v for k, v in r.items() if k not in ("wall_time_sec", "realtime_factor")}  # noqa: E731
+    assert [strip(r) for r in report["runs"]] == [strip(r) for r in single["runs"]]
+
+
 def test_unsafe_show_fails_with_crash_pair():
     a = [make_segment(0, 0.0, 6.0, line_control_points([-6, 0.1, 5], [6, 0.1, 5], 8))]
     b = [make_segment(0, 0.0, 6.0, line_control_points([6, -0.1, 5], [-6, -0.1, 5], 8))]

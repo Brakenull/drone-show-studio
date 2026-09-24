@@ -11,6 +11,22 @@ use crate::settings;
 
 const RUN_FILE: &str = "run.json";
 
+/// The run.json sections a job can own: (name the UI passes, JSON pointer, log file in the run folder).
+const SECTIONS: [(&str, &str, &str); 3] = [
+    ("stage2", "/stage2", "stage2/log.ndjson"),
+    ("monte_carlo", "/stage3/monte_carlo", "stage3/monte_carlo_log.ndjson"),
+    ("pack", "/stage3/pack", "stage3/pack_log.ndjson"),
+];
+
+/// (JSON pointer, log file) for a section name.
+pub fn section(name: &str) -> Result<(&'static str, &'static str), String> {
+    SECTIONS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, pointer, log)| (*pointer, *log))
+        .ok_or_else(|| format!("unknown run section {name}"))
+}
+
 /// UTC ISO-8601 (the bridge writes local-offset ISO; both parse in JS). Avoids a date-time crate.
 fn now_iso() -> String {
     let secs = std::time::SystemTime::now()
@@ -43,17 +59,18 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-pub fn mark_stage2_cancelled(run_dir: &Path) -> Result<(), String> {
+/// Rewrite the section at `pointer` (e.g. "/stage3/pack") from "running" to "cancelled".
+pub fn mark_cancelled(run_dir: &Path, pointer: &str) -> Result<(), String> {
     let path = run_dir.join(RUN_FILE);
     let mut record: Value =
         serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    if let Some(stage2) = record.get_mut("stage2").and_then(Value::as_object_mut) {
-        if stage2.get("status").and_then(Value::as_str) == Some("running") {
-            stage2.insert("status".into(), "cancelled".into());
-            stage2.insert("ended_at".into(), now_iso().into());
-            stage2.insert("pid".into(), Value::Null);
-            stage2.insert("message".into(), "cancelled".into());
+    if let Some(part) = record.pointer_mut(pointer).and_then(Value::as_object_mut) {
+        if part.get("status").and_then(Value::as_str) == Some("running") {
+            part.insert("status".into(), "cancelled".into());
+            part.insert("ended_at".into(), now_iso().into());
+            part.insert("pid".into(), Value::Null);
+            part.insert("message".into(), "cancelled".into());
         }
     }
     write_json_atomic(&path, &record)
@@ -77,10 +94,16 @@ pub fn list_runs(app: AppHandle, jobs: State<'_, Jobs>) -> Result<Vec<Value>, St
         let run_dir = entry.path();
         let Ok(text) = fs::read_to_string(run_dir.join(RUN_FILE)) else { continue };
         let Ok(mut record) = serde_json::from_str::<Value>(&text) else { continue };
-        let running = record.pointer("/stage2/status").and_then(Value::as_str) == Some("running");
         let attached = run_dir.canonicalize().map(|p| busy.contains(&p)).unwrap_or(false);
-        if running && !attached {
-            mark_stage2_cancelled(&run_dir)?;
+        let stale: Vec<&str> = SECTIONS
+            .iter()
+            .map(|(_, pointer, _)| *pointer)
+            .filter(|p| record.pointer(&format!("{p}/status")).and_then(Value::as_str) == Some("running"))
+            .collect();
+        if !attached && !stale.is_empty() {
+            for pointer in stale {
+                mark_cancelled(&run_dir, pointer)?;
+            }
             record = serde_json::from_str(&fs::read_to_string(run_dir.join(RUN_FILE)).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
         }
@@ -138,9 +161,10 @@ pub fn stash_import(app: AppHandle, name: String, text: String) -> Result<String
     Ok(path.display().to_string())
 }
 
+/// Opens the run folder, or a folder inside it (`rel`, e.g. "stage3/bin").
 #[tauri::command]
-pub fn open_run_folder(app: AppHandle, run_id: String) -> Result<(), String> {
-    let path = run_file(&app, &run_id, ".")?;
+pub fn open_run_folder(app: AppHandle, run_id: String, rel: Option<String>) -> Result<(), String> {
+    let path = run_file(&app, &run_id, rel.as_deref().filter(|r| !r.is_empty()).unwrap_or("."))?;
     #[cfg(windows)]
     std::process::Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
     #[cfg(not(windows))]

@@ -3,7 +3,7 @@
 
 import { useSyncExternalStore } from "react";
 import { cancelJob, startJob } from "../bridge/api";
-import type { BridgeEvent, JobExit, SolveProgress } from "../bridge/types";
+import type { BridgeEvent, JobExit, Overrides, SolveProgress } from "../bridge/types";
 
 /** Where the solver is, from drone_core's progress events (docs/5-studio_gui.md §5.2). */
 export interface SolveState {
@@ -105,9 +105,11 @@ function append(runId: string, line: string) {
   if (current) set(runId, { log: [...current.log, line].slice(-MAX_LOG) });
 }
 
+/** `overrides` go to drone_core as optional_config_overrides; empty means the defaults. */
 export async function startStage2(
   runId: string,
   runDir: string,
+  overrides: Overrides,
   onFinished: (exit: JobExit) => void,
 ): Promise<void> {
   const onEvent = (e: BridgeEvent) => {
@@ -138,7 +140,12 @@ export async function startStage2(
   subscribers.forEach((fn) => fn());
   let job;
   try {
-    job = await startJob(["stage2", runDir], { runDir, onEvent, onLog: (line) => append(runId, line) });
+    const args = ["stage2", runDir, "--overrides-json", JSON.stringify(overrides)];
+    job = await startJob(args, {
+      run: { dir: runDir, section: "stage2" },
+      onEvent,
+      onLog: (line) => append(runId, line),
+    });
   } catch (err) {
     const exit = { code: null, cancelled: false };
     set(runId, { exit, errors: [String(err)] });
