@@ -717,8 +717,18 @@ struct SingleStageResult {
     double min_separation = std::numeric_limits<double>::infinity();
 };
 
+// docs/5-studio_gui.md B2: the caller's progress callback plus the attempt /
+// sub-stage fields of the ScpIteration events solve_single_stage() emits.
+// Passed as a pointer that is null when no callback is set, so the no-callback
+// path builds no event at all.
+struct IterationProgress {
+    const ProgressCallback* callback = nullptr;
+    ProgressEvent event;  // kind, attempt, max_attempts, duration_sec, substage, substage_count preset
+};
+
 SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& problems, double duration,
-                                      const CoreConfig& config, int forced_num_control_points = 0) {
+                                      const CoreConfig& config, int forced_num_control_points = 0,
+                                      const IterationProgress* progress = nullptr) {
     const int num_drones = static_cast<int>(problems.size());
 
     double d_max = 0.0;
@@ -982,7 +992,18 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             for (int i = 0; i < num_drones; ++i) best_control_points[i] = workspaces[i].control_points;
         }
 
-        if (max_delta < config.solver.convergence_tol) {
+        const bool converged = max_delta < config.solver.convergence_tol;
+        if (progress) {
+            ProgressEvent e = progress->event;
+            e.iteration = iter + 1;
+            e.max_iterations = config.solver.max_scp_iterations;
+            e.conflict_pairs = static_cast<int>(conflict_edges.size());
+            e.max_delta_m = max_delta;
+            e.min_separation_m = iter_min_separation;
+            e.converged = converged;
+            (*progress->callback)(e);
+        }
+        if (converged) {
             break;
         }
     }
@@ -1068,15 +1089,21 @@ struct TransitionSolveResult {
     double min_separation = std::numeric_limits<double>::infinity();
 };
 
+// `progress` is null when no callback is set; otherwise its event carries this
+// attempt's fields and gets the sub-stage fields filled in here.
 TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionProblem>& problems, double duration,
-                                             const CoreConfig& config) {
+                                             const CoreConfig& config, IterationProgress* progress = nullptr) {
     const int num_drones = static_cast<int>(problems.size());
     TransitionSolveResult result;
     result.trajectories.resize(num_drones);
     for (int i = 0; i < num_drones; ++i) result.trajectories[i].drone_id = problems[i].drone_id;
 
     if (duration <= kMegaClusterThresholdS) {
-        const SingleStageResult stage_result = solve_single_stage(problems, duration, config);
+        if (progress) {
+            progress->event.substage = 1;
+            progress->event.substage_count = 1;
+        }
+        const SingleStageResult stage_result = solve_single_stage(problems, duration, config, 0, progress);
         for (int i = 0; i < num_drones; ++i) {
             result.trajectories[i].stages.push_back(
                 DroneTrajectorySolution::Stage{stage_result.control_points[i], duration});
@@ -1152,8 +1179,12 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             substage_problems[i] = DroneTransitionProblem{problems[i].drone_id, waypoints[i][stage],
                                                             waypoints[i][stage + 1]};
         }
-        const SingleStageResult stage_result =
-            solve_single_stage(substage_problems, substage_duration, config, whole_transition_num_control_points);
+        if (progress) {
+            progress->event.substage = stage + 1;
+            progress->event.substage_count = num_substages;
+        }
+        const SingleStageResult stage_result = solve_single_stage(
+            substage_problems, substage_duration, config, whole_transition_num_control_points, progress);
         for (int i = 0; i < num_drones; ++i) {
             result.trajectories[i].stages.push_back(
                 DroneTrajectorySolution::Stage{stage_result.control_points[i], substage_duration});
@@ -1385,7 +1416,7 @@ double evaluate_worst_case_separation_over_stages(
 // named N=40 ring-swap acceptance benchmark this comment used to fail by
 // ~7x now passes.
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
-                                            const CoreConfig& config) {
+                                            const CoreConfig& config, const ProgressCallback& progress) {
     const auto& gatekeeper = config.solver.continuous_gatekeeper;
     const double enforced_min_distance =
         config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
@@ -1398,8 +1429,23 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
     double attempt_duration = duration;
     std::vector<GatekeeperAttempt> attempt_history;
 
+    // Retries only happen with auto_retry_with_expansion; see the give-up test below.
+    const int max_attempts = gatekeeper.auto_retry_with_expansion ? gatekeeper.max_retry_count + 1 : 1;
+
     for (int attempt = 0;; ++attempt) {
-        TransitionSolveResult result = solve_transition_once(problems, attempt_duration, attempt_config);
+        std::optional<IterationProgress> iteration_progress;
+        if (progress) {
+            ProgressEvent e;
+            e.kind = ProgressEvent::Kind::AttemptStart;
+            e.attempt = attempt + 1;
+            e.max_attempts = max_attempts;
+            e.duration_sec = attempt_duration;
+            progress(e);
+            e.kind = ProgressEvent::Kind::ScpIteration;
+            iteration_progress = IterationProgress{&progress, e};
+        }
+        TransitionSolveResult result = solve_transition_once(
+            problems, attempt_duration, attempt_config, iteration_progress ? &*iteration_progress : nullptr);
 
         // Violations are collected on every attempt (cheap: bounded by the
         // number of violating pairs) but only the rejected final attempt's
@@ -1423,6 +1469,17 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             stage_offset += stage_duration;
         }
         attempt_history.push_back(GatekeeperAttempt{attempt_duration, worst_continuous_distance});
+        if (progress) {
+            ProgressEvent e;
+            e.kind = ProgressEvent::Kind::AttemptEnd;
+            e.attempt = attempt + 1;
+            e.max_attempts = max_attempts;
+            e.duration_sec = attempt_duration;
+            e.worst_separation_m = worst_continuous_distance;
+            e.required_separation_m = gatekeeper.min_allowable_distance_m;
+            e.passed = worst_continuous_distance >= gatekeeper.min_allowable_distance_m;
+            progress(e);
+        }
 
         if (worst_continuous_distance >= gatekeeper.min_allowable_distance_m) {
             return result.trajectories;

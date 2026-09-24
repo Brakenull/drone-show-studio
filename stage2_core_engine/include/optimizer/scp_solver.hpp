@@ -8,6 +8,7 @@
 #include <Eigen/Dense>
 
 #include "config.hpp"
+#include "progress.hpp"
 #include "trajectory/quintic_bspline.hpp"
 
 // Cluster-based Gauss-Seidel Sequential Convex Programming optimizer
@@ -164,8 +165,12 @@ private:
 // its retry budget. pipeline.cpp adds transition context and rethrows it as
 // io::PipelineSafetyError, which the binding maps to
 // drone_core.SafetyViolationError (a Python RuntimeError subclass).
+//
+// `progress` (docs/5-studio_gui.md B2), when set, receives AttemptStart /
+// ScpIteration / AttemptEnd events with only the attempt, sub-stage and
+// iteration fields filled; pipeline.cpp adds the transition fields.
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
-                                            const CoreConfig& config);
+                                            const CoreConfig& config, const ProgressCallback& progress = {});
 
 // Staggered Wave Takeoff cross-row race check (docs/2-phase_2.md section
 // 1.7; fixed 2026-09-18): pipeline.cpp re-times each launch row's

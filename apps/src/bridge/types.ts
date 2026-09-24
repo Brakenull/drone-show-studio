@@ -113,9 +113,45 @@ export interface FailureSummary {
   violations: Violation[];
 }
 
+interface SolveTransition {
+  transition: number; // 0 = holding area -> first formation
+  transition_count: number;
+  from_keyframe: string;
+  to_keyframe: string;
+}
+
+interface SolveAttempt extends SolveTransition {
+  attempt: number; // 1-based
+  max_attempts: number;
+  duration_sec: number;
+}
+
+/** drone_core progress_callback events (docs/5-studio_gui.md §5.2), forwarded as `solve_progress`. */
+export type SolveProgress =
+  | (SolveTransition & { event: "transition_start" | "transition_end"; show_time_sec: number })
+  | (SolveAttempt & { event: "attempt_start" })
+  | (SolveAttempt & {
+      event: "scp_iteration";
+      substage: number;
+      substage_count: number;
+      iteration: number;
+      max_iterations: number;
+      conflict_pairs: number;
+      max_delta_m: number;
+      min_separation_m: number | null;
+      converged: boolean;
+    })
+  | (SolveAttempt & {
+      event: "attempt_end";
+      worst_separation_m: number | null;
+      required_separation_m: number;
+      passed: boolean;
+    });
+
 export type BridgeEvent =
   | { type: "phase"; name: string; detail: string }
   | { type: "progress"; stage: string; done: number; total: number }
+  | ({ type: "solve_progress" } & SolveProgress)
   | { type: "validation"; ok: boolean; errors: Issue[]; warnings: Issue[]; summary: ValidationSummary | null }
   | { type: "doctor"; repo_root: string; extension_dir: string; checks: DoctorCheck[] }
   | { type: "run_created"; run_id: string; run_dir: string }

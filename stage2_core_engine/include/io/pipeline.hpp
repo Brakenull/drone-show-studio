@@ -10,6 +10,7 @@
 #include "config.hpp"
 #include "io/project_loader.hpp"
 #include "optimizer/scp_solver.hpp"
+#include "progress.hpp"
 #include "types.hpp"
 
 // Orchestrates the full show: holding area -> keyframe[0] -> keyframe[1] ->
@@ -68,6 +69,10 @@ private:
 
 // Throws PipelineSafetyError when a transition fails the continuous
 // gatekeeper; other errors stay std::runtime_error.
-PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config);
+//
+// `progress` (docs/5-studio_gui.md B2), when set, receives every
+// ProgressEvent kind with the transition fields filled in.
+PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config,
+                            const ProgressCallback& progress = {});
 
 }  // namespace drone_core::io

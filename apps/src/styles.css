@@ -394,6 +394,9 @@ button.link:hover:not(:disabled) {
 .notice-bad {
   border-left-color: var(--bad);
 }
+.notice-warn {
+  border-left-color: var(--warn);
+}
 
 /* Drop zone: the launch grid, waiting for a show. */
 .dropzone {
@@ -533,6 +536,12 @@ button.link:hover:not(:disabled) {
 .running-phase {
   font-size: var(--step-1);
   font-weight: 600;
+}
+.solve-status {
+  margin-top: 1rem;
+}
+.solve-status .notice {
+  margin: 0.6rem 0 0;
 }
 .bar {
   position: relative;

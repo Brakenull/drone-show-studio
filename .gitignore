@@ -20,3 +20,6 @@ CMakeFiles/
 CMakeCache.txt
 # Python virtual environment
 .venv/
+
+# Studio run folders (docs/5-studio_gui.md §3)
+runs/

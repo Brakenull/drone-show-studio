@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cmath>
 #include <exception>
 #include <filesystem>
 #include <optional>
@@ -8,6 +9,7 @@
 #include "config.hpp"
 #include "io/pipeline.hpp"
 #include "io/project_loader.hpp"
+#include "progress.hpp"
 #include "py_json_convert.hpp"
 
 #ifndef DRONE_CORE_CONFIG_DIR
@@ -140,6 +142,52 @@ py::dict safety_failure_to_py(const drone_core::io::TransitionSafetyFailure& f) 
     return report;
 }
 
+// progress_callback's argument (docs/5-studio_gui.md B2; the key list per
+// "event" is in docs/2-phase_2.md section 5, "Progress events"). Only the keys
+// that mean something for the event's kind are set; +infinity becomes None.
+py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
+    using Kind = drone_core::ProgressEvent::Kind;
+    const auto finite_or_none = [](double v) -> py::object {
+        return std::isfinite(v) ? py::object(py::float_(v)) : py::object(py::none());
+    };
+
+    py::dict d;
+    switch (e.kind) {
+        case Kind::TransitionStart: d["event"] = "transition_start"; break;
+        case Kind::AttemptStart: d["event"] = "attempt_start"; break;
+        case Kind::ScpIteration: d["event"] = "scp_iteration"; break;
+        case Kind::AttemptEnd: d["event"] = "attempt_end"; break;
+        case Kind::TransitionEnd: d["event"] = "transition_end"; break;
+    }
+    d["transition"] = e.transition_index;
+    d["transition_count"] = e.transition_count;
+    d["from_keyframe"] = e.from_keyframe;
+    d["to_keyframe"] = e.to_keyframe;
+
+    if (e.kind == Kind::TransitionStart || e.kind == Kind::TransitionEnd) {
+        d["show_time_sec"] = e.show_time_sec;
+        return d;
+    }
+    d["attempt"] = e.attempt;
+    d["max_attempts"] = e.max_attempts;
+    d["duration_sec"] = e.duration_sec;
+    if (e.kind == Kind::ScpIteration) {
+        d["substage"] = e.substage;
+        d["substage_count"] = e.substage_count;
+        d["iteration"] = e.iteration;
+        d["max_iterations"] = e.max_iterations;
+        d["conflict_pairs"] = e.conflict_pairs;
+        d["max_delta_m"] = e.max_delta_m;
+        d["min_separation_m"] = finite_or_none(e.min_separation_m);
+        d["converged"] = e.converged;
+    } else if (e.kind == Kind::AttemptEnd) {
+        d["worst_separation_m"] = finite_or_none(e.worst_separation_m);
+        d["required_separation_m"] = e.required_separation_m;
+        d["passed"] = e.passed;
+    }
+    return d;
+}
+
 // Output schema (docs/2-phase_2.md Rev 2.3 section 5): matches Phase 3's
 // arrow_loader.py / spline_evaluator.py contract.
 //
@@ -151,8 +199,8 @@ py::dict safety_failure_to_py(const drone_core::io::TransitionSafetyFailure& f) 
 //                     "start_time_sec", "end_time_sec", "knot_vector",
 //                     "control_points", "color_keyframes"}, ...]}, ...]
 // }
-py::dict optimize_trajectories(const py::dict& phase1_intermediate_json,
-                                const py::dict& optional_config_overrides) {
+py::dict optimize_trajectories(const py::dict& phase1_intermediate_json, const py::dict& optional_config_overrides,
+                                const py::object& progress_callback) {
     const nlohmann::json phase1_json = drone_core::bindings::py_to_json(phase1_intermediate_json);
     const nlohmann::json overrides_json = drone_core::bindings::py_to_json(optional_config_overrides);
 
@@ -162,7 +210,23 @@ py::dict optimize_trajectories(const py::dict& phase1_intermediate_json,
     const drone_core::CoreConfig config = drone_core::resolve_core_config(
         std::optional<nlohmann::json>(project.metadata.raw), overrides_json, default_config_path);
 
-    const drone_core::io::PipelineResult pipeline_result = drone_core::io::run_pipeline(project, config);
+    // The solve runs without the GIL so other Python threads keep running
+    // during a long show; the callback takes it back for each event. An
+    // exception raised by the callback propagates out of run_pipeline() as
+    // py::error_already_set (never from inside an OpenMP region; see
+    // progress.hpp) and aborts the solve.
+    drone_core::ProgressCallback progress;
+    if (!progress_callback.is_none()) {
+        progress = [&progress_callback](const drone_core::ProgressEvent& e) {
+            py::gil_scoped_acquire gil;
+            progress_callback(progress_event_to_py(e));
+        };
+    }
+    drone_core::io::PipelineResult pipeline_result;
+    {
+        py::gil_scoped_release no_gil;
+        pipeline_result = drone_core::io::run_pipeline(project, config, progress);
+    }
 
     py::dict out;
     out["metadata"] = metadata_to_py(pipeline_result.metadata);
@@ -200,8 +264,11 @@ PYBIND11_MODULE(drone_core, m) {
     });
 
     m.def("optimize_trajectories", &optimize_trajectories, py::arg("phase1_intermediate_json"),
-          py::arg("optional_config_overrides") = py::dict(),
+          py::arg("optional_config_overrides") = py::dict(), py::arg("progress_callback") = py::none(),
           "Assigns drones scene-to-scene and solves collision-free, kinematically-bounded quintic "
           "B-spline trajectories for the whole show. Raises drone_core.SafetyViolationError (a "
-          "RuntimeError) with a `report` dict when a transition fails the continuous gatekeeper.");
+          "RuntimeError) with a `report` dict when a transition fails the continuous gatekeeper. "
+          "`progress_callback`, if given, is called with one dict per progress event (transition "
+          "start/end, gatekeeper attempt start/end, SCP iteration); an exception it raises aborts "
+          "the solve and is re-raised.");
 }

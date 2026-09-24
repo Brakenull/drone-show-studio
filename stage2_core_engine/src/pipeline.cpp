@@ -65,7 +65,7 @@ Eigen::MatrixXd build_hold_segment_control_points(const trajectory::BoundaryCond
 
 }  // namespace
 
-PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config) {
+PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config, const ProgressCallback& progress) {
     const int n = project.metadata.fleet_size;
     PipelineResult result;
     result.metadata.fleet_size = n;
@@ -146,6 +146,25 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
     for (size_t kf_index = 0; kf_index < project.keyframes.size(); ++kf_index) {
         const Keyframe& kf = project.keyframes[kf_index];
         const bool is_final_keyframe = (kf_index + 1 == project.keyframes.size());
+        const std::string from_keyframe = kf_index == 0 ? "holding_area" : project.keyframes[kf_index - 1].shape_name;
+
+        // docs/5-studio_gui.md B2: stamps this transition onto every event,
+        // including the solver's. Empty (no cost) when there is no callback.
+        ProgressCallback transition_progress;
+        if (progress) {
+            transition_progress = [&, kf_index](const ProgressEvent& solver_event) {
+                ProgressEvent e = solver_event;
+                e.transition_index = static_cast<int>(kf_index);
+                e.transition_count = static_cast<int>(project.keyframes.size());
+                e.from_keyframe = from_keyframe;
+                e.to_keyframe = kf.shape_name;
+                progress(e);
+            };
+            ProgressEvent e;
+            e.kind = ProgressEvent::Kind::TransitionStart;
+            e.show_time_sec = t_cursor;
+            transition_progress(e);
+        }
 
         const Eigen::MatrixXd Q = points_by_index(kf, n);
         const Eigen::MatrixXi Q_colors = colors_by_index(kf, n);
@@ -227,7 +246,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
 
         std::vector<optimizer::DroneTrajectorySolution> solutions;
         try {
-            solutions = optimizer::solve(problems, duration, config);
+            solutions = optimizer::solve(problems, duration, config, transition_progress);
         } catch (const optimizer::SafetyViolationError& e) {
             // docs/5-studio_gui.md B1: put the rejection in show context
             // (which transition, show time, the rejected splines next to the
@@ -236,7 +255,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
             TransitionSafetyFailure failure;
             failure.solver = report;
             failure.transition_index = static_cast<int>(kf_index);
-            failure.from_keyframe = kf_index == 0 ? "holding_area" : project.keyframes[kf_index - 1].shape_name;
+            failure.from_keyframe = from_keyframe;
             failure.to_keyframe = kf.shape_name;
             failure.transition_start_time_sec = t_start;
             failure.transition_duration_sec = report.attempts.empty() ? duration : report.attempts.back().duration_sec;
@@ -464,6 +483,13 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         actual_color = next_actual_color;
         drone_id_by_slot = std::move(next_drone_id_by_slot);
         t_cursor = t_end;
+
+        if (transition_progress) {
+            ProgressEvent e;
+            e.kind = ProgressEvent::Kind::TransitionEnd;
+            e.show_time_sec = t_end;
+            transition_progress(e);
+        }
     }
 
     // The actual, possibly auto-scaled total show duration, not the nominal

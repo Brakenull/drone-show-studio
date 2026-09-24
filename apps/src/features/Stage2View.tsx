@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { readRunJson, readRunText } from "../bridge/api";
 import type { FailureSummary, JobExit, RunRecord } from "../bridge/types";
-import { cancelStage2, startStage2, useStage2Job, type Stage2Job } from "../app/stage2Jobs";
+import {
+  cancelStage2,
+  solveFraction,
+  startStage2,
+  useStage2Job,
+  type SolveState,
+  type Stage2Job,
+} from "../app/stage2Jobs";
 import { clock, duration, STATUS } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
 import type { Separation } from "../replay/types";
@@ -69,7 +76,12 @@ function RunningPanel({ job, fleet, runId }: { job: Stage2Job; fleet: number; ru
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-  const pct = job.progress ? Math.round((job.progress.done / Math.max(job.progress.total, 1)) * 100) : null;
+  const solving = job.phase === "solving" && job.solve ? job.solve : null;
+  const pct = solving
+    ? Math.round(solveFraction(solving) * 100)
+    : job.progress
+      ? Math.round((job.progress.done / Math.max(job.progress.total, 1)) * 100)
+      : null;
 
   return (
     <section className="running" aria-live="polite">
@@ -89,8 +101,10 @@ function RunningPanel({ job, fleet, runId }: { job: Stage2Job; fleet: number; ru
           {job.cancelling ? "Cancelling…" : "Cancel run"}
         </button>
       </div>
+      {solving && <SolveStatus solve={solving} />}
       <div
         className={`bar ${pct === null ? "bar-indeterminate" : ""}`}
+        title={solving ? "Approximate: a pass that converges early or a retry moves it in jumps" : undefined}
         role="progressbar"
         aria-valuenow={pct ?? undefined}
         aria-valuemin={0}
@@ -105,6 +119,31 @@ function RunningPanel({ job, fleet, runId }: { job: Stage2Job; fleet: number; ru
       {cancelError && <p className="notice notice-bad">{cancelError}</p>}
       <LogPane lines={job.log} />
     </section>
+  );
+}
+
+const place = (name: string) => (name === "holding_area" ? "holding area" : name);
+
+function SolveStatus({ solve }: { solve: SolveState }) {
+  const steps = [
+    solve.attempt > 1 && `retry ${solve.attempt - 1} of ${solve.maxAttempts - 1}`,
+    solve.substageCount > 1 && `part ${solve.substage} of ${solve.substageCount}`,
+    solve.iteration > 0 && `refining pass ${solve.iteration} (up to ${solve.maxIterations})`,
+  ].filter(Boolean);
+  return (
+    <div className="solve-status">
+      <p>
+        Transition <span className="num">{solve.transition + 1}</span> of{" "}
+        <span className="num">{solve.transitionCount}</span>: {place(solve.from)} → {place(solve.to)}
+      </p>
+      {steps.length > 0 && <p className="muted small">{steps.join(" · ")}</p>}
+      {solve.rejected.map((r) => (
+        <p key={r.attempt} className="notice notice-warn small">
+          Try {r.attempt} failed the safety check: two drones came within {metres(r.worst)} (needs{" "}
+          {metres(r.required)}). Trying again with more time for this transition.
+        </p>
+      ))}
+    </div>
   );
 }
 
