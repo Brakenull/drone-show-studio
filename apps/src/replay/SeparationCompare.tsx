@@ -1,4 +1,4 @@
-// Two runs' closest-pair distance over show time, overlaid (docs/5-studio_gui.md M3).
+// Two runs' closest-pair distance over show time, overlaid (docs/5-studio_gui.md §6.5).
 // No Tauri imports: it takes the two separation series like the rest of src/replay.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -17,8 +17,8 @@ interface Props {
 }
 
 // Series colours stay out of the status palette (teal / amber / red mean safe / attention / violation).
-export const SERIES_COLORS = ["#e6eaf2", "#6cb4ff"] as const;
-const COLORS = { bg: "#0e1a2b", grid: "#1f2e44", axis: "#8c9ab3", floor: "#f2a93b", bad: "#ff5a4e" };
+export const SERIES_COLORS = ["#f5f5f5", "#00d9ff"] as const;
+const COLORS = { bg: "#0f0f0f", grid: "#222222", axis: "#a0a0a0", floor: "#facc15", bad: "#ef4444" };
 const PAD = { left: 56, right: 16, top: 14, bottom: 22 };
 
 function niceStep(span: number, target: number): number {
@@ -63,7 +63,7 @@ export function SeparationCompare({ a, b }: Props) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, size.w, size.h);
-    ctx.font = "12px Bahnschrift, 'Segoe UI', sans-serif";
+    ctx.font = "12px Inter, system-ui, 'Segoe UI', sans-serif";
 
     const dStep = niceStep(yMax, 4);
     ctx.fillStyle = COLORS.axis;

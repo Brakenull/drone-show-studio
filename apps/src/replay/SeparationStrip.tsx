@@ -16,14 +16,14 @@ interface Props {
 }
 
 const COLORS = {
-  bg: "#0e1a2b",
-  grid: "#1f2e44",
-  axis: "#8c9ab3",
-  line: "#4fd1a5",
-  bad: "#ff5a4e",
-  floor: "#f2a93b",
-  span: "rgba(255, 90, 78, 0.07)",
-  playhead: "#f2a93b",
+  bg: "#0f0f0f",
+  grid: "#222222",
+  axis: "#a0a0a0",
+  line: "#4ade80",
+  bad: "#ef4444",
+  floor: "#facc15",
+  span: "rgba(239, 68, 68, 0.07)",
+  playhead: "#ffa34d",
 };
 
 const PAD = { left: 56, right: 16, top: 14, bottom: 22 };
@@ -69,7 +69,7 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, size.w, size.h);
-    ctx.font = "12px Bahnschrift, 'Segoe UI', sans-serif";
+    ctx.font = "12px Inter, system-ui, 'Segoe UI', sans-serif";
     ctx.textBaseline = "middle";
 
     if (span) {

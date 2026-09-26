@@ -7,13 +7,13 @@ import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer
 import { locate, positionAt } from "./sampling";
 import type { ReplayData, V3 } from "./types";
 
-const NIGHT = 0x0e1a2b;
-const GRID_MAJOR = 0x2a3b55;
-const GRID_MINOR = 0x1c2a40;
-const PAD = 0x3d5273;
-const AMBER = 0xf2a93b;
-const RED = 0xff5a4e;
-const LED_OFF = new THREE.Color(0x5a6a85); // drone body when its LEDs are dark
+const NIGHT = 0x0f0f0f;
+const GRID_MAJOR = 0x2d2d2d;
+const GRID_MINOR = 0x1c1c1c;
+const PAD = 0x4a4a4a;
+const AMBER = 0xffa34d; // SkySync primary: selection and the closest pair
+const RED = 0xef4444;
+const LED_OFF = new THREE.Color(0x5c5c5c); // drone body when its LEDs are dark
 
 const toThree = (p: V3, out = new THREE.Vector3()) => out.set(p[0], p[2], -p[1]);
 

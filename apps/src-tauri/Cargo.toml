@@ -1,7 +1,7 @@
 [package]
 name = "studio-desktop"
-version = "0.1.0"
-description = "A Tauri App"
+version = "1.0.0"
+description = "A software pipeline that takes a drone light show from an animation to verified"
 authors = ["you"]
 edition = "2021"
 
