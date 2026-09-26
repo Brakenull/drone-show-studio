@@ -1,0 +1,20 @@
+# Python packages for Drone Show Studio (tested with Python 3.14).
+# Install into the repo's .venv:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+# setup.ps1 does this for you.
+
+# Stage 2 build: stage2_core_engine/CMakeLists.txt takes pybind11 from this environment.
+pybind11==3.1.0
+
+# All stages and the Studio bridge
+numpy==2.5.3
+
+# Stage 3 digital twin (CPU, or GPU with an NVIDIA driver)
+warp-lang==1.17.0
+
+# Studio: validation and replay
+jsonschema==4.26.0
+scipy==1.18.1
+
+# Optional outputs: .arrow copy of the Stage 2 result, MessagePack export in the Blender add-on
+pyarrow==25.0.1
+msgpack==1.2.2

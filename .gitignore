@@ -10,7 +10,8 @@ __pycache__/
 dist/
 _smoke_export_test.json
 
-# C++ (stage2_core_engine)
+# C++ (stage2_core_engine, stage3_simulation_packer)
+vcpkg_installed/
 build/
 out/
 *.pyd

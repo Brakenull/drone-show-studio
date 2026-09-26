@@ -1,0 +1,128 @@
+# Drone Show Studio
+
+Takes a drone light show from a Blender animation to verified flight files, one per drone.
+
+| Stage | Folder | What it does |
+| --- | --- | --- |
+| 1. Design | `stage1_designer/` | Blender add-on: turns animated 3D shapes into one point per drone, checks the motion, exports the show as JSON. |
+| 2. Path planning | `stage2_core_engine/` | C++ engine (`drone_core`): assigns drones to points and plans smooth, collision-free paths. A separate check at 100 Hz rejects any show where two drones come too close. |
+| 3. Digital twin | `stage3_simulation_packer/` | Simulates the fleet in wind, gusts and positioning noise (NVIDIA Warp; CPU or GPU) and packs each drone's path into a checked binary flight file. |
+| Desktop app | `apps/` | Drone Show Studio: runs stages 2 and 3 on a show file and shows the results — progress, why a show was rejected, 3D replay, stress test, flight files, run comparison. |
+
+Windows 10/11 x64 is the supported platform.
+
+---
+
+## Setup
+
+### 1. Install the prerequisites
+
+| Tool | Notes |
+| --- | --- |
+| [Visual Studio 2022 or later](https://visualstudio.microsoft.com/downloads/) (Community or Build Tools) | Workload **Desktop development with C++**. It includes the compiler, CMake, Ninja and vcpkg; no separate vcpkg install is needed. |
+| [Python 3.14](https://www.python.org/downloads/), 64-bit | Used to create the project's `.venv`. The Stage 2 engine is built for this exact Python version. |
+| [Node.js](https://nodejs.org/) 20 or later (LTS) | For the desktop app. |
+| [Rust](https://rustup.rs/) | For the desktop app (Tauri). |
+| [Git](https://git-scm.com/download/win) | vcpkg downloads its package definitions with it. |
+| [Blender](https://www.blender.org/download/) 4.0 or later | Only to design shows (stage 1). |
+
+An NVIDIA GPU is optional: without one, the stage 3 simulation runs on the CPU. With one, only the NVIDIA driver is needed, not the CUDA toolkit.
+
+### 2. Run the setup script
+
+In PowerShell, from the repository folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+It checks the prerequisites (and lists anything missing, with links; it never installs them), then:
+
+1. creates `.venv` and installs the Python packages (`requirements-dev.txt`);
+2. builds and tests the stage 2 and stage 3 engines; the first run also builds the C++ libraries from `vcpkg.json`, which takes a few minutes;
+3. checks that the pipeline is complete and runs a 4-drone test show through stage 2;
+4. installs the desktop app's npm packages.
+
+It is safe to run again, for example after pulling changes.
+
+| Option | Effect |
+| --- | --- |
+| `-Python <path>` | Python 3.14 to create `.venv` with (default: `py -3.14`) |
+| `-SkipApp` | Skip the desktop app; Node.js and Rust are then not needed |
+| `-SkipTests` | Skip the unit tests and the test show |
+| `-FullTests` | Also run the full Python test suite (about 5 minutes) |
+| `-Clean` | Reconfigure both engines from scratch |
+
+### 3. Start the app
+
+```powershell
+cd apps
+npm run tauri dev
+```
+
+The app finds the repository, `.venv` and the built engines by itself when it runs from this folder. Runs are saved in `runs\`.
+
+`npm run tauri build` makes a Windows installer (`apps\src-tauri\target\release\bundle\`). The installed app still uses this repository for all computation: set the repository folder once on its **Settings** page.
+
+### 4. Install the Blender add-on (optional)
+
+```powershell
+.venv\Scripts\python.exe tools\scripts\build_blender_addon.py
+```
+
+In Blender: *Edit → Preferences → Add-ons*, then *Install* (Blender 4.0–4.1) or *Install from Disk* in the menu at the top right (4.2 and later), and choose `dist\stage1_designer.zip`.
+
+Blender ships NumPy but not SciPy, which the add-on needs for sampling; msgpack is needed only for MessagePack export. Install them into Blender's own Python (adjust the path to your Blender version):
+
+```powershell
+& "C:\Program Files\Blender Foundation\Blender 4.2\4.2\python\bin\python.exe" -m pip install scipy msgpack
+```
+
+---
+
+## Building by hand
+
+From a **Developer PowerShell for VS** (Start menu), in `stage2_core_engine\` or `stage3_simulation_packer\`:
+
+```powershell
+cmake --preset release
+cmake --build --preset release
+ctest --preset release
+```
+
+* The presets install the C++ libraries listed in `vcpkg.json` into `vcpkg_installed\` (shared by both engines). They use the vcpkg in `VCPKG_ROOT`, which the developer shell sets to Visual Studio's own copy; set it yourself to use another vcpkg.
+* Stage 2 takes Python and pybind11 from `.venv`, so create it first (`python -m venv .venv`, then `.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`). Pass `-DPython_EXECUTABLE=<python.exe>` to build for a different Python.
+* Close the app before rebuilding stage 2: Windows can't replace `drone_core*.pyd` while it is loaded.
+
+## Tests
+
+```powershell
+.venv\Scripts\python.exe -m pytest                                  # Python tests for all stages and the app's bridge
+.venv\Scripts\python.exe tools\scripts\smoke_test_stage2.py         # 4-drone show through stage 2, checked independently
+ctest --preset release                                              # C++ tests (developer shell, in an engine folder)
+```
+
+## Command-line use without the app
+
+```powershell
+# Stage 2: plan a show exported from Blender (writes trajectory_splines.json and .arrow)
+.venv\Scripts\python.exe tools\scripts\export_stage2_trajectories.py <show.json> out\
+
+# Stage 3: stress test in simulated weather, then pack and verify flight files
+.venv\Scripts\python.exe -m stage3_simulation_packer.warp_sim.monte_carlo_runner out\trajectory_splines.json --runs 100
+stage3_simulation_packer\build\pack_to_binary.exe out\trajectory_splines.json out\bin
+stage3_simulation_packer\build\pack_to_binary.exe --verify out\bin
+```
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| `running scripts is disabled on this system` | Start the script with `powershell -ExecutionPolicy Bypass -File .\setup.ps1`. |
+| Setup reports Visual Studio missing although it is installed | Open the Visual Studio Installer, *Modify*, and add the **Desktop development with C++** workload. |
+| `No module named 'drone_core'` | Stage 2 isn't built, or was built for another Python. Run `setup.ps1` again (with `-Clean` if needed). |
+| `.venv` has the wrong Python version | Delete the `.venv` folder and run `setup.ps1` again. |
+| vcpkg fails to download packages | vcpkg needs internet access and Git on the first build. |
+| Stage 3 is slow | Without an NVIDIA GPU the simulation runs on the CPU; in the app, raise "flights at once". |

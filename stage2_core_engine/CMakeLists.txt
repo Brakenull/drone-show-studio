@@ -10,14 +10,49 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Requires a vcpkg toolchain (or otherwise discoverable installs) providing:
-#   eigen3, osqp, nlohmann-json, pybind11
-# e.g. configure with:
+#   eigen3, osqp, nlohmann-json
+# and a Python with pybind11 installed (pip install pybind11), by default the
+# repo's .venv. e.g. configure with:
 #   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(osqp CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+
+# drone_core must be built for the Python that imports it (its ABI tag, e.g.
+# cp314, has to match), so both the interpreter and pybind11 come from the
+# repo's .venv unless -DPython_EXECUTABLE / -Dpybind11_DIR say otherwise.
+if(NOT Python_EXECUTABLE)
+  if(WIN32)
+    set(_venv_python "${CMAKE_CURRENT_SOURCE_DIR}/../.venv/Scripts/python.exe")
+  else()
+    set(_venv_python "${CMAKE_CURRENT_SOURCE_DIR}/../.venv/bin/python")
+  endif()
+  if(NOT EXISTS "${_venv_python}")
+    message(FATAL_ERROR "No Python found at ${_venv_python}. Create the repo's .venv, "
+                        "or pass -DPython_EXECUTABLE=<python with pybind11 installed>.")
+  endif()
+  get_filename_component(_venv_python "${_venv_python}" ABSOLUTE)
+  set(Python_EXECUTABLE "${_venv_python}" CACHE FILEPATH "Python that drone_core is built for and imported by")
+endif()
+
+if(NOT pybind11_DIR)
+  execute_process(
+    COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+    OUTPUT_VARIABLE _pybind11_cmakedir
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _pybind11_result
+    ERROR_QUIET)
+  if(NOT _pybind11_result EQUAL 0)
+    message(FATAL_ERROR "pybind11 is not installed for ${Python_EXECUTABLE}. "
+                        "Run: \"${Python_EXECUTABLE}\" -m pip install pybind11")
+  endif()
+  set(pybind11_DIR "${_pybind11_cmakedir}" CACHE PATH "pybind11 CMake package directory")
+endif()
+
+set(PYBIND11_FINDPYTHON ON)
 find_package(pybind11 CONFIG REQUIRED)
+message(STATUS "drone_core: Python ${Python_VERSION} at ${Python_EXECUTABLE}, pybind11 ${pybind11_VERSION}")
 
 add_library(drone_core_lib STATIC
     src/lap_auction.cpp

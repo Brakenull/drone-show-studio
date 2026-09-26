@@ -36,6 +36,7 @@ def find_extension_dir(explicit: str | None) -> Path:
     if explicit:
         candidates.append(Path(explicit))
     candidates += [
+        REPO_ROOT / "stage2_core_engine" / "build",
         REPO_ROOT / "build" / "Release",
         REPO_ROOT / "build" / "Debug",
         REPO_ROOT / "build",
@@ -44,10 +45,10 @@ def find_extension_dir(explicit: str | None) -> Path:
         if list(candidate.glob("drone_core*.pyd")) or list(candidate.glob("drone_core*.so")):
             return candidate
     raise SystemExit(
-        "Could not find the built drone_core extension. Build it first:\n"
-        "  cmake -B build -S stage2_core_engine "
-        "-DCMAKE_TOOLCHAIN_FILE=<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake\n"
-        "  cmake --build build --config Release\n"
+        "Could not find the built drone_core extension. Build it first (setup.ps1 does this),\n"
+        "or from a Visual Studio developer shell in stage2_core_engine/:\n"
+        "  cmake --preset release\n"
+        "  cmake --build --preset release\n"
         "or pass --extension-dir explicitly."
     )
 
