@@ -56,6 +56,38 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
     metadata["total_duration_sec"] = meta.total_duration_sec;
     metadata["coordinate_system"] = meta.coordinate_system;
     metadata["min_distance_enforced_m"] = meta.min_distance_enforced_m;
+    // Planned vs flown time per transition (bug-report P2-03).
+    py::list transitions;
+    for (const auto& t : meta.transitions) {
+        py::dict d;
+        d["index"] = t.index;
+        d["from_keyframe"] = t.from_keyframe;
+        d["to_keyframe"] = t.to_keyframe;
+        d["start_time_sec"] = t.start_time_sec;
+        d["end_time_sec"] = t.end_time_sec;
+        d["planned_duration_sec"] = t.planned_duration_sec;
+        d["flown_duration_sec"] = t.flown_duration_sec;
+        d["attempts"] = t.attempts;
+        transitions.append(d);
+    }
+    metadata["transitions"] = transitions;
+    // Only for Phase 1 files with `legs` (schema 1.6.0, 1-phase_1.md section 3.8).
+    if (meta.takeoff_leg || meta.return_leg) {
+        auto leg_to_py = [](const std::optional<drone_core::io::LegTiming>& leg) -> py::object {
+            if (!leg) return py::none();  // e.g. a rejection before the return leg was flown
+            py::dict d;
+            d["start_time_sec"] = leg->start_time_sec;
+            d["end_time_sec"] = leg->end_time_sec;
+            d["duration_sec"] = leg->end_time_sec - leg->start_time_sec;
+            d["target_duration_sec"] =
+                leg->target_duration_sec ? py::object(py::float_(*leg->target_duration_sec)) : py::object(py::none());
+            return d;
+        };
+        py::dict legs;
+        legs["takeoff"] = leg_to_py(meta.takeoff_leg);
+        legs["return"] = leg_to_py(meta.return_leg);
+        metadata["legs"] = legs;
+    }
     return metadata;
 }
 
@@ -194,7 +226,12 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
 // {
 //   "metadata": {"version", "fleet_size", "spline_degree", "continuity",
 //                "total_duration_sec", "coordinate_system",
-//                "min_distance_enforced_m"},
+//                "min_distance_enforced_m",
+//                "transitions": [{"index", "from_keyframe", "to_keyframe", "start_time_sec",
+//                                 "end_time_sec", "planned_duration_sec", "flown_duration_sec",
+//                                 "attempts"}, ...],
+//                "legs" (only for Phase 1 files with legs): {"takeoff", "return"}:
+//                  {"start_time_sec", "end_time_sec", "duration_sec", "target_duration_sec"}},
 //   "trajectories": [{"drone_id", "segments": [{"segment_index",
 //                     "start_time_sec", "end_time_sec", "knot_vector",
 //                     "control_points", "color_keyframes"}, ...]}, ...]

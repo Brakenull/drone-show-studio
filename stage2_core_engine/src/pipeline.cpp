@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <stdexcept>
 
 #include "assignment/lap_auction.hpp"
@@ -143,10 +144,59 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
     std::map<int, DroneTrajectory> trajectories_by_drone;
     for (int i = 0; i < n; ++i) trajectories_by_drone[i].drone_id = i;
 
-    for (size_t kf_index = 0; kf_index < project.keyframes.size(); ++kf_index) {
-        const Keyframe& kf = project.keyframes[kf_index];
-        const bool is_final_keyframe = (kf_index + 1 == project.keyframes.size());
-        const std::string from_keyframe = kf_index == 0 ? "holding_area" : project.keyframes[kf_index - 1].shape_name;
+    // One entry per transition: holding area -> keyframes[0] -> ... ->
+    // keyframes[last], then, when the Phase 1 file has `legs` (schema 1.6.0,
+    // 1-phase_1.md section 3.8), the return leg keyframes[last] -> holding
+    // area. Without `legs` this is exactly the pre-1.6.0 behavior.
+    struct TransitionSpec {
+        Eigen::MatrixXd targets;        // row = target slot
+        Eigen::MatrixXi target_colors;  // LED color on arrival
+        std::string from_name;
+        std::string to_name;
+        double keyframe_time_sec = 0.0;  // nominal arrival time (keyframe transitions)
+        bool is_takeoff = false;         // departs from the holding area: staggered takeoff applies
+        bool is_leg = false;             // timed by a leg target instead of the keyframe timeline
+        std::optional<double> target_duration_sec;  // leg target; nullopt = Auto (T_min)
+        bool ends_at_rest = false;       // Formation Hold / landing (v = 0) vs fly-through
+    };
+    const ShowLegs& legs = project.metadata.legs;
+    std::vector<TransitionSpec> specs;
+    specs.reserve(project.keyframes.size() + 1);
+    for (size_t k = 0; k < project.keyframes.size(); ++k) {
+        const Keyframe& kf = project.keyframes[k];
+        TransitionSpec spec;
+        spec.targets = points_by_index(kf, n);
+        spec.target_colors = colors_by_index(kf, n);
+        spec.from_name = k == 0 ? "holding_area" : project.keyframes[k - 1].shape_name;
+        spec.to_name = kf.shape_name;
+        spec.keyframe_time_sec = kf.time_sec;
+        spec.is_takeoff = (k == 0);
+        spec.is_leg = legs.present && k == 0;
+        spec.target_duration_sec = spec.is_leg ? legs.takeoff_duration_sec : std::nullopt;
+        // The last formation is always held (drones stop), with or without a
+        // return leg after it, so the return starts from rest.
+        spec.ends_at_rest = (k + 1 == project.keyframes.size());
+        specs.push_back(std::move(spec));
+    }
+    if (legs.present) {
+        // Return leg: land on the holding-area slots, any free slot (the
+        // auction picks), LEDs fading to off as they are while parked.
+        TransitionSpec ret;
+        ret.targets = compute_holding_positions(n, project.metadata.holding_area,
+                                                project.metadata.holding_area.grid_spacing_m);
+        ret.target_colors = Eigen::MatrixXi::Zero(n, 3);
+        ret.from_name = project.keyframes.back().shape_name;
+        ret.to_name = "holding_area";
+        ret.is_leg = true;
+        ret.target_duration_sec = legs.return_duration_sec;
+        ret.ends_at_rest = true;
+        specs.push_back(std::move(ret));
+    }
+
+    for (size_t kf_index = 0; kf_index < specs.size(); ++kf_index) {
+        const TransitionSpec& spec = specs[kf_index];
+        const bool is_final_keyframe = spec.ends_at_rest;
+        const std::string& from_keyframe = spec.from_name;
 
         // docs/5-studio_gui.md B2: stamps this transition onto every event,
         // including the solver's. Empty (no cost) when there is no callback.
@@ -155,9 +205,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
             transition_progress = [&, kf_index](const ProgressEvent& solver_event) {
                 ProgressEvent e = solver_event;
                 e.transition_index = static_cast<int>(kf_index);
-                e.transition_count = static_cast<int>(project.keyframes.size());
+                e.transition_count = static_cast<int>(specs.size());
                 e.from_keyframe = from_keyframe;
-                e.to_keyframe = kf.shape_name;
+                e.to_keyframe = spec.to_name;
                 progress(e);
             };
             ProgressEvent e;
@@ -166,8 +216,8 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
             transition_progress(e);
         }
 
-        const Eigen::MatrixXd Q = points_by_index(kf, n);
-        const Eigen::MatrixXi Q_colors = colors_by_index(kf, n);
+        const Eigen::MatrixXd& Q = spec.targets;
+        const Eigen::MatrixXi& Q_colors = spec.target_colors;
 
         assignment::AssignmentInput ain;
         ain.P = P;
@@ -185,11 +235,16 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         }
 
         const double t_start = t_cursor;
-        const double nominal_t_end = kf.time_sec + time_stretch_offset;
+        // A keyframe transition ends at its keyframe's time (shifted by any
+        // earlier stretch); a leg lasts its target, or just T_min when Auto.
+        // Legs always get the T_min floor: "Auto" means the minimum, and a
+        // target is flown as max(target, T_min) (1-phase_1.md section 3.8).
+        const double nominal_t_end = spec.is_leg ? t_start + spec.target_duration_sec.value_or(0.0)
+                                                 : spec.keyframe_time_sec + time_stretch_offset;
         const double nominal_duration = std::max(nominal_t_end - t_start, 1e-6);
 
         double duration = nominal_duration;
-        if (config.solver.auto_scale_transition_time) {
+        if (config.solver.auto_scale_transition_time || spec.is_leg) {
             const double t_min = trajectory::compute_min_transition_time(
                 d_max, v_limit_axis, a_limit_axis, j_limit_axis, config.solver.kinematic_slack_fraction);
             duration = std::max(nominal_duration, t_min);
@@ -204,7 +259,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         // build_slot_outcomes() below has run and, if the staggered
         // configuration turns out unsafe, fallen back to the unstaggered
         // span — see that block.
-        const bool apply_stagger = stagger_takeoff && kf_index == 0;
+        const bool apply_stagger = stagger_takeoff && spec.is_takeoff;
 
         // Formation Hold (final keyframe): drones stop, matching how the
         // show ends. Fly-Through Waypoint (every other keyframe): drones
@@ -245,8 +300,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         };
 
         std::vector<optimizer::DroneTrajectorySolution> solutions;
+        optimizer::SolveStats solve_stats;
         try {
-            solutions = optimizer::solve(problems, duration, config, transition_progress);
+            solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
         } catch (const optimizer::SafetyViolationError& e) {
             // docs/5-studio_gui.md B1: put the rejection in show context
             // (which transition, show time, the rejected splines next to the
@@ -256,7 +312,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
             failure.solver = report;
             failure.transition_index = static_cast<int>(kf_index);
             failure.from_keyframe = from_keyframe;
-            failure.to_keyframe = kf.shape_name;
+            failure.to_keyframe = spec.to_name;
             failure.transition_start_time_sec = t_start;
             failure.transition_duration_sec = report.attempts.empty() ? duration : report.attempts.back().duration_sec;
             failure.metadata = result.metadata;
@@ -301,6 +357,12 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
             throw PipelineSafetyError(e.what(), std::move(failure));
         }
 
+        // bug-report P2-03: `solutions` is the attempt that passed. After a
+        // gatekeeper retry it is longer than `duration`, and everything below
+        // (end time, next transition's start, LED fade, staggered-launch holds
+        // and their re-check, leg times) must follow what is actually flown.
+        const double flown_duration = solve_stats.flown_duration_sec;
+
         // Per-slot output of build_slot_outcomes() below, held before
         // committing to trajectories_by_drone so the Staggered Wave Takeoff
         // race check (see build_slot_outcomes' doc comment) can build,
@@ -333,7 +395,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         auto build_slot_outcomes = [&](bool use_stagger, double* out_t_end) {
             std::vector<SlotOutcome> outcomes(n);
             const double this_stagger_span_s = use_stagger ? max_launch_row * config.solver.staggered_wave_delay_s : 0.0;
-            const double this_t_end = t_start + duration + this_stagger_span_s;
+            const double this_t_end = t_start + flown_duration + this_stagger_span_s;
             if (out_t_end) *out_t_end = this_t_end;
 
             for (int slot = 0; slot < n; ++slot) {
@@ -379,8 +441,8 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
                     const Eigen::VectorXd knot_vector =
                         trajectory::clamped_knot_vector(num_control_points, trajectory::kDegree, stage.duration);
 
-                    const double frac_start = (stage_t_start - maneuver_t_start) / duration;
-                    const double frac_end = (stage_t_end - maneuver_t_start) / duration;
+                    const double frac_start = (stage_t_start - maneuver_t_start) / flown_duration;
+                    const double frac_end = (stage_t_end - maneuver_t_start) / flown_duration;
 
                     TrajectorySegment segment;
                     segment.start_time_sec = stage_t_start;
@@ -457,7 +519,31 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
                 outcomes = build_slot_outcomes(false, &t_end);
             }
         }
-        time_stretch_offset += (t_end - nominal_t_end);
+        if (spec.is_leg && spec.is_takeoff) {
+            // The show's own timeline starts when the takeoff reaches
+            // keyframes[0]; later keyframes keep their spacing from it.
+            time_stretch_offset = t_end - spec.keyframe_time_sec;
+        } else if (!spec.is_leg) {
+            time_stretch_offset += (t_end - nominal_t_end);
+        }
+        TransitionTiming transition_timing;
+        transition_timing.index = static_cast<int>(kf_index);
+        transition_timing.from_keyframe = spec.from_name;
+        transition_timing.to_keyframe = spec.to_name;
+        transition_timing.start_time_sec = t_start;
+        transition_timing.end_time_sec = t_end;
+        transition_timing.planned_duration_sec = duration;
+        transition_timing.flown_duration_sec = flown_duration;
+        transition_timing.attempts = solve_stats.attempts;
+        result.metadata.transitions.push_back(std::move(transition_timing));
+
+        if (spec.is_leg) {
+            LegTiming timing;
+            timing.start_time_sec = t_start;
+            timing.end_time_sec = t_end;
+            timing.target_duration_sec = spec.target_duration_sec;
+            (spec.is_takeoff ? result.metadata.takeoff_leg : result.metadata.return_leg) = timing;
+        }
 
         Eigen::MatrixXd next_actual_velocity = Eigen::MatrixXd::Zero(n, 3);
         Eigen::MatrixXi next_actual_color = Eigen::MatrixXi::Zero(n, 3);

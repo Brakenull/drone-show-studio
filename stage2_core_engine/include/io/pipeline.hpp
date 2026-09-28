@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -14,7 +15,7 @@
 #include "types.hpp"
 
 // Orchestrates the full show: holding area -> keyframe[0] -> keyframe[1] ->
-// ... , chaining the Point Assignment Module (section 3.1) and the SCP
+// ... (-> holding area, when the Phase 1 file has a return leg), chaining the Point Assignment Module (section 3.1) and the SCP
 // trajectory optimizer (section 3.3) transition-by-transition while tracking
 // each physical drone's persistent identity, outgoing velocity, and current
 // LED color across transitions. This glue is not one of the 4 algorithmic
@@ -22,6 +23,28 @@
 // something end-to-end to call, and to assemble the section 5 output schema.
 
 namespace drone_core::io {
+
+// Actual show-time span of a takeoff or return leg (1-phase_1.md section
+// 3.8), reported only when the Phase 1 file has `legs`.
+struct LegTiming {
+    double start_time_sec = 0.0;
+    double end_time_sec = 0.0;
+    std::optional<double> target_duration_sec;  // the designer's target; nullopt = Auto
+};
+
+// Planned vs flown timing of one transition (bug-report P2-03). A transition
+// that passes only after a gatekeeper retry is flown longer than planned; the
+// show timeline follows the flown duration.
+struct TransitionTiming {
+    int index = 0;
+    std::string from_keyframe;
+    std::string to_keyframe;
+    double start_time_sec = 0.0;
+    double end_time_sec = 0.0;          // start + flown + staggered-launch waves
+    double planned_duration_sec = 0.0;  // max(nominal, T_min) before any retry
+    double flown_duration_sec = 0.0;    // the passing attempt's duration
+    int attempts = 1;
+};
 
 struct ShowMetadata {
     std::string version = "2.4.0";
@@ -31,6 +54,9 @@ struct ShowMetadata {
     double total_duration_sec = 0.0;
     std::string coordinate_system = "ENU";
     double min_distance_enforced_m = 0.0;
+    std::optional<LegTiming> takeoff_leg;  // holding area -> keyframes[0]
+    std::optional<LegTiming> return_leg;   // last keyframe -> holding area
+    std::vector<TransitionTiming> transitions;  // every transition that passed, in order
 };
 
 struct PipelineResult {
@@ -46,7 +72,7 @@ struct TransitionSafetyFailure {
     optimizer::SafetyViolationReport solver;
     int transition_index = 0;          // 0 = holding area -> keyframes[0]
     std::string from_keyframe;         // "holding_area" for transition 0
-    std::string to_keyframe;
+    std::string to_keyframe;           // "holding_area" for the return leg
     double transition_start_time_sec = 0.0;
     double transition_duration_sec = 0.0;  // rejected attempt's (possibly expanded) duration
     ShowMetadata metadata;             // total_duration_sec = end of the rejected attempt

@@ -1416,7 +1416,8 @@ double evaluate_worst_case_separation_over_stages(
 // named N=40 ring-swap acceptance benchmark this comment used to fail by
 // ~7x now passes.
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
-                                            const CoreConfig& config, const ProgressCallback& progress) {
+                                            const CoreConfig& config, const ProgressCallback& progress,
+                                            SolveStats* stats) {
     const auto& gatekeeper = config.solver.continuous_gatekeeper;
     const double enforced_min_distance =
         config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
@@ -1482,6 +1483,10 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
         }
 
         if (worst_continuous_distance >= gatekeeper.min_allowable_distance_m) {
+            if (stats) {
+                stats->attempts = attempt + 1;
+                stats->flown_duration_sec = attempt_duration;
+            }
             return result.trajectories;
         }
         if (!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) {

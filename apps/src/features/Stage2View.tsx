@@ -298,7 +298,7 @@ function Rejected({
   if (loadError) return <p className="notice notice-bad">{loadError}</p>;
   if (!failure) return <p className="status-line">Loading the failure report…</p>;
   const t = failure.transition;
-  const from = t.from_keyframe === "holding_area" ? "the holding area" : t.from_keyframe;
+  const where = (name: string) => (name === "holding_area" ? "the holding area" : name);
   return (
     <section className="outcome">
       <div className="verdict verdict-bad">
@@ -306,7 +306,7 @@ function Rejected({
         <h2>Stage 2 rejected this show</h2>
       </div>
       <p className="verdict-detail">
-        Flying from {from} to {t.to_keyframe}, two drones come within{" "}
+        Flying from {where(t.from_keyframe)} to {where(t.to_keyframe)}, two drones come within{" "}
         <strong className="tone-bad">{metres(failure.worst_separation_m, 3)}</strong> of each other. The safety check
         requires <strong>{metres(failure.required_separation_m, 2)}</strong>.{" "}
         {failure.violating_pair_count === 1

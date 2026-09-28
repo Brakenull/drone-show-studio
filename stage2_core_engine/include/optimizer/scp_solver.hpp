@@ -169,8 +169,18 @@ private:
 // `progress` (docs/5-studio_gui.md B2), when set, receives AttemptStart /
 // ScpIteration / AttemptEnd events with only the attempt, sub-stage and
 // iteration fields filled; pipeline.cpp adds the transition fields.
+//
+// The returned splines are the attempt that passed, which after a retry is
+// longer than `duration` (x expansion_factor per retry). `stats`, when set,
+// receives that attempt's number and duration: callers must time the
+// transition by `flown_duration_sec`, not by `duration` (bug-report P2-03).
+struct SolveStats {
+    int attempts = 0;                  // 1 = passed first time
+    double flown_duration_sec = 0.0;   // duration of the passing attempt
+};
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
-                                            const CoreConfig& config, const ProgressCallback& progress = {});
+                                            const CoreConfig& config, const ProgressCallback& progress = {},
+                                            SolveStats* stats = nullptr);
 
 // Staggered Wave Takeoff cross-row race check (docs/2-phase_2.md section
 // 1.7; fixed 2026-09-18): pipeline.cpp re-times each launch row's

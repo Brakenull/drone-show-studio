@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,16 @@ struct HoldingArea {
     double layer_spacing_m = 0.0;
 };
 
+// Phase 1 schema 1.6.0's optional project_metadata.legs (1-phase_1.md
+// section 3.8): the takeoff (holding area -> keyframes[0]) and return (last
+// keyframe -> holding area) legs. A duration of nullopt means Auto (fly the
+// leg in its minimum time); a target is flown as max(target, T_min).
+struct ShowLegs {
+    bool present = false;  // false: pre-1.6.0 file, legacy timing and no return leg
+    std::optional<double> takeoff_duration_sec;
+    std::optional<double> return_duration_sec;
+};
+
 struct ProjectMetadata {
     int fleet_size = 0;
     std::string sampling_mode;
@@ -48,6 +59,7 @@ struct ProjectMetadata {
     double min_distance_m = 0.0;
     double heading_offset_deg = 0.0;
     HoldingArea holding_area;
+    ShowLegs legs;
     nlohmann::json raw;  // kept for CoreConfig Tier-1 override lookup
 };
 

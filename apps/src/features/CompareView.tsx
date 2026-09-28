@@ -194,7 +194,7 @@ export function CompareView({ run, runs }: { run: RunRecord; runs: RunRecord[] }
                       {[run, other].map((r) => (
                         <td key={r.run_id}>
                           {r.stage2.transition
-                            ? `${r.stage2.transition.from_keyframe.replace("holding_area", "holding area")} to ${r.stage2.transition.to_keyframe}`
+                            ? `${r.stage2.transition.from_keyframe.replace("holding_area", "holding area")} to ${r.stage2.transition.to_keyframe.replace("holding_area", "holding area")}`
                             : "n/a"}
                         </td>
                       ))}

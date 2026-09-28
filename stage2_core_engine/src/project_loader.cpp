@@ -46,6 +46,22 @@ ProjectData parse_project(const nlohmann::json& root) {
                                                      ? holding_json.at("grid_spacing_m").get<double>()
                                                      : data.metadata.holding_area.layer_spacing_m;
 
+    // Phase 1 schema 1.6.0 (optional): takeoff / return leg targets.
+    if (meta_json.contains("legs") && !meta_json.at("legs").is_null()) {
+        const nlohmann::json& legs_json = meta_json.at("legs");
+        auto read_leg = [&](const char* name) -> std::optional<double> {
+            require(legs_json.contains(name), "project_metadata.legs must have 'takeoff' and 'return'");
+            const nlohmann::json& duration = legs_json.at(name).at("duration_sec");
+            if (duration.is_null()) return std::nullopt;
+            const double value = duration.get<double>();
+            require(value > 0.0, "project_metadata.legs.*.duration_sec must be > 0 or null");
+            return value;
+        };
+        data.metadata.legs.present = true;
+        data.metadata.legs.takeoff_duration_sec = read_leg("takeoff");
+        data.metadata.legs.return_duration_sec = read_leg("return");
+    }
+
     for (const auto& kf_json : root.at("keyframes")) {
         Keyframe kf;
         kf.time_sec = kf_json.at("time_sec").get<double>();
