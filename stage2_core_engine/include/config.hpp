@@ -7,6 +7,7 @@
 //      > core_config.json > compile-time defaults (never read from Phase1).
 // Kept header-only per the file tree in section 5 (no src/config.cpp).
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -32,6 +33,16 @@ struct SolverWeights {
     double w_smoothness_jerk = 0.1;
 };
 
+// Holding-area keep-out zone (docs/2-phase_2.md section 1.14): drones flying
+// the show keep at least `clearance_m` from the holding region box [lo, hi]
+// (ENU). Drones taking off, landing or parked in that transition are exempt
+// (DroneTransitionProblem::keep_out = false).
+struct KeepOutZone {
+    std::array<double, 3> lo{};
+    std::array<double, 3> hi{};
+    double clearance_m = 0.0;
+};
+
 struct SafetyConfig {
     double safety_radius_m = 0.75;
     double min_distance_m = 1.5;
@@ -40,6 +51,9 @@ struct SafetyConfig {
     // io::run_pipeline() from the Phase 1 file's project_metadata.ground_z_m;
     // unset (no floor) for files that don't declare a ground. Not a JSON key.
     std::optional<double> altitude_floor_m;
+    // Set per run by io::run_pipeline() from the Phase 1 file's
+    // holding_area.show_clearance_m; unset (no zone) otherwise. Not a JSON key.
+    std::optional<KeepOutZone> keep_out;
 };
 
 // APF Warm-Start Seeding (docs/2-phase_2.md Rev 2.8 sections 1.2/3.2):

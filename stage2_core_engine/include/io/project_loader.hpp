@@ -39,6 +39,19 @@ struct HoldingArea {
     // field (see parse_project()).
     double grid_spacing_m = 0.0;
     double layer_spacing_m = 0.0;
+    // Phase 1 schema 1.6.0 (optional): the designer's "Safe Distance to Show"
+    // (1-phase_1.md section 3.2.2). When set, show drones keep at least this
+    // far from the holding region (docs/2-phase_2.md section 1.14).
+    std::optional<double> show_clearance_m;
+};
+
+// The holding region (1-phase_1.md section 3.2, a port of Phase 1's
+// holding_region_bounds()): the declared volume (footprint, widened if the
+// fleet needed it, from center z up to max_height) together with the parked
+// slot grid padded by half a grid step on every side. ENU, axis-aligned.
+struct HoldingRegion {
+    Eigen::Vector3d lo = Eigen::Vector3d::Zero();
+    Eigen::Vector3d hi = Eigen::Vector3d::Zero();
 };
 
 // Phase 1 schema 1.6.0's optional project_metadata.legs (1-phase_1.md
@@ -86,5 +99,7 @@ Eigen::MatrixXd compute_holding_positions(int fleet_size, const HoldingArea& hol
 // compute_holding_positions() lays out) — returned in the same slot order
 // as compute_holding_positions()'s rows.
 std::vector<int> compute_holding_row_indices(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
+
+HoldingRegion compute_holding_region(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
 
 }  // namespace drone_core::io

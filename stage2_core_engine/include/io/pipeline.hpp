@@ -58,6 +58,7 @@ struct ShowMetadata {
     std::optional<LegTiming> return_leg;   // last keyframe -> holding area
     std::vector<TransitionTiming> transitions;  // every transition that passed, in order
     std::optional<double> altitude_floor_m;     // the file's ground_z_m, when it declares one
+    std::optional<double> holding_clearance_m;  // the file's show_clearance_m, when it declares one
 };
 
 struct PipelineResult {

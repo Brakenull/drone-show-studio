@@ -45,6 +45,11 @@ ProjectData parse_project(const nlohmann::json& root) {
     data.metadata.holding_area.grid_spacing_m = holding_json.contains("grid_spacing_m")
                                                      ? holding_json.at("grid_spacing_m").get<double>()
                                                      : data.metadata.holding_area.layer_spacing_m;
+    if (holding_json.contains("show_clearance_m") && !holding_json.at("show_clearance_m").is_null()) {
+        const double clearance = holding_json.at("show_clearance_m").get<double>();
+        require(clearance >= 0.0, "holding_area.show_clearance_m must be >= 0");
+        data.metadata.holding_area.show_clearance_m = clearance;
+    }
 
     // Phase 1 schema 1.6.0 (optional): the ground level.
     if (meta_json.contains("ground_z_m") && !meta_json.at("ground_z_m").is_null()) {
@@ -186,6 +191,22 @@ std::vector<int> compute_holding_row_indices(int fleet_size, const HoldingArea& 
         }
     }
     return row_indices;
+}
+
+HoldingRegion compute_holding_region(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m) {
+    const Eigen::Vector3d& c = holding_area.center;
+    const HoldingLayout layout = compute_holding_layout(std::max(fleet_size, 0), holding_area, grid_spacing_m);
+    HoldingRegion region;
+    region.lo = Eigen::Vector3d(c.x() - layout.width / 2.0, c.y() - holding_area.size.y() / 2.0, c.z());
+    region.hi = Eigen::Vector3d(c.x() + layout.width / 2.0, c.y() + holding_area.size.y() / 2.0,
+                                std::max(holding_area.max_height, c.z()));
+    const Eigen::MatrixXd slots = compute_holding_positions(fleet_size, holding_area, grid_spacing_m);
+    if (slots.rows() > 0) {
+        const Eigen::Vector3d pad = Eigen::Vector3d::Constant(grid_spacing_m / 2.0);
+        region.lo = region.lo.cwiseMin(Eigen::Vector3d(slots.colwise().minCoeff().transpose()) - pad);
+        region.hi = region.hi.cwiseMax(Eigen::Vector3d(slots.colwise().maxCoeff().transpose()) + pad);
+    }
+    return region;
 }
 
 }  // namespace drone_core::io

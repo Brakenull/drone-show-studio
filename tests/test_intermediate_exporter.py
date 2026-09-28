@@ -166,3 +166,16 @@ def test_ground_level_is_exported_and_optional():
     assert _schema_errors(data) == []
     del data["project_metadata"]["ground_z_m"]
     assert _schema_errors(data) == []
+
+
+def test_safe_distance_is_exported_in_the_holding_area():
+    data = _sample_data()
+    assert "show_clearance_m" not in data["project_metadata"]["holding_area"]  # optional, absent when not given
+    data["project_metadata"] = build_project_metadata(
+        fleet_size=2, sampling_mode="KEYFRAME_ONLY", total_duration_sec=15.0, heading_offset_deg=0.0,
+        origin_gps=(10.0, 106.0, 15.0), holding_area={**HOLDING_AREA, "show_clearance_m": 5},
+    )
+    assert data["project_metadata"]["holding_area"]["show_clearance_m"] == 5.0
+    assert _schema_errors(data) == []
+    data["project_metadata"]["holding_area"]["show_clearance_m"] = -1.0
+    assert _schema_errors(data)

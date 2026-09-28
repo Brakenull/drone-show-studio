@@ -73,8 +73,28 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     // design's ground, when the file declares one.
     CoreConfig config = base_config;
     config.safety.altitude_floor_m = project.metadata.ground_z_m;
+    // Holding-area keep-out zone (docs/2-phase_2.md section 1.14): the
+    // designer's safe distance around the holding region, when declared.
+    const HoldingRegion holding_region = compute_holding_region(n, project.metadata.holding_area,
+                                                                project.metadata.holding_area.grid_spacing_m);
+    if (project.metadata.holding_area.show_clearance_m) {
+        KeepOutZone zone;
+        for (int axis = 0; axis < 3; ++axis) {
+            zone.lo[axis] = holding_region.lo(axis);
+            zone.hi[axis] = holding_region.hi(axis);
+        }
+        zone.clearance_m = *project.metadata.holding_area.show_clearance_m;
+        config.safety.keep_out = zone;
+    }
+    // A point inside the holding region is a launch slot or a parked drone:
+    // drones starting or ending a transition there are exempt from the zone.
+    auto in_holding_region = [&](const Eigen::Vector3d& p) {
+        return (p.array() >= holding_region.lo.array() - 1e-6).all() &&
+               (p.array() <= holding_region.hi.array() + 1e-6).all();
+    };
     PipelineResult result;
     result.metadata.altitude_floor_m = config.safety.altitude_floor_m;
+    if (config.safety.keep_out) result.metadata.holding_clearance_m = config.safety.keep_out->clearance_m;
     result.metadata.fleet_size = n;
     result.metadata.spline_degree = trajectory::kDegree;
     result.metadata.min_distance_enforced_m =
@@ -181,6 +201,26 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         };
         check_below(P, "the holding area");
         for (const Keyframe& kf : project.keyframes) check_below(points_by_index(kf, n), "keyframe '" + kf.shape_name + "'");
+    }
+    // Formation points must already keep the safe distance (the add-on
+    // refuses to export otherwise, 1-phase_1.md section 3.2.2): a pinned
+    // target inside the zone can't be planned around. Points inside the
+    // region itself are parked drones and don't count.
+    if (config.safety.keep_out) {
+        const KeepOutZone& zone = *config.safety.keep_out;
+        for (const Keyframe& kf : project.keyframes) {
+            const Eigen::MatrixXd pts = points_by_index(kf, n);
+            for (int i = 0; i < pts.rows(); ++i) {
+                const Eigen::Vector3d p = pts.row(i).transpose();
+                if (in_holding_region(p)) continue;
+                const double d = optimizer::distance_to_keep_out_region(p, zone);
+                if (d < zone.clearance_m - 1e-9) {
+                    throw std::runtime_error("keyframe '" + kf.shape_name + "' has a point " + std::to_string(d) +
+                                             " m from the holding area, closer than the safe distance of " +
+                                             std::to_string(zone.clearance_m) + " m");
+                }
+            }
+        }
     }
 
     const ShowLegs& legs = project.metadata.legs;
@@ -318,6 +358,11 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 problem.end.velocity = optimizer::floor_safe_velocity(problem.end.position, problem.end.velocity, config);
             }
             problem.end.acceleration = Eigen::Vector3d::Zero();
+            // Section 1.14: only drones flying the show keep out of the zone;
+            // taking off, landing or parked (start or end in the holding
+            // region) are exempt.
+            problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
+                               !in_holding_region(problem.end.position);
             problems[slot] = problem;
         }
 
@@ -382,6 +427,15 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             failure.solver.rejected_solutions.clear();
 
             throw PipelineSafetyError(e.what(), std::move(failure));
+        } catch (const optimizer::KeepOutViolationError& e) {
+            const optimizer::KeepOutViolation& v = e.violation();
+            throw std::runtime_error(
+                "Holding-area clearance violated in transition " + std::to_string(kf_index) + " (" + from_keyframe +
+                " -> " + spec.to_name + "): drone " + std::to_string(v.drone_id) + " comes within " +
+                std::to_string(v.distance_m) + " m of the holding area at show time " +
+                std::to_string(t_start + v.time_sec) + " s (required " +
+                std::to_string(config.safety.keep_out->clearance_m) + " m), after " + std::to_string(e.attempts()) +
+                " attempt(s)");
         }
 
         // bug-report P2-03: `solutions` is the attempt that passed. After a

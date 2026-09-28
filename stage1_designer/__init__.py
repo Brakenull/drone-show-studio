@@ -408,6 +408,7 @@ if _HAS_BPY:
                     "max_height": settings.holding_area.max_height,
                     "grid_spacing_m": settings.holding_area.grid_spacing_m,
                     "layer_spacing_m": settings.holding_area.grid_spacing_m,
+                    "show_clearance_m": settings.holding_area.show_clearance_m,
                 },
                 fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,
                 safety_radius_m=settings.safety_radius_m,

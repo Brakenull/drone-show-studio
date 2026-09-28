@@ -87,6 +87,9 @@ struct DroneTransitionProblem {
     int drone_id = 0;
     trajectory::BoundaryConditions start;
     trajectory::BoundaryConditions end;
+    // Flies the show in this transition: keep out of config.safety.keep_out
+    // (section 1.14). False for drones taking off, landing or parked.
+    bool keep_out = false;
 };
 
 // Rev 2.6 section 1.7: a transition longer than the mega-cluster threshold
@@ -146,6 +149,31 @@ inline constexpr int kMaxReportedViolations = 200;
 // Thrown by solve() below. what() keeps the exact pre-B1 message so callers
 // matching on the text are unaffected; the report is shared (not copied) so
 // the exception stays cheap and nothrow-copyable.
+// Holding-area keep-out zone (docs/2-phase_2.md section 1.14): Euclidean
+// distance from `p` to the zone's region box (0 inside it).
+double distance_to_keep_out_region(const Eigen::Vector3d& p, const KeepOutZone& zone);
+
+// A transition whose separation passed but whose show drones still came
+// closer than the clearance to the holding region after every retry.
+// Times are transition-local; pipeline.cpp adds the transition context.
+struct KeepOutViolation {
+    int drone_id = 0;
+    double time_sec = 0.0;
+    double distance_m = 0.0;  // to the holding region
+    Eigen::Vector3d position = Eigen::Vector3d::Zero();
+};
+class KeepOutViolationError : public std::runtime_error {
+public:
+    KeepOutViolationError(const std::string& message, KeepOutViolation violation, int attempts)
+        : std::runtime_error(message), violation_(violation), attempts_(attempts) {}
+    const KeepOutViolation& violation() const noexcept { return violation_; }
+    int attempts() const noexcept { return attempts_; }
+
+private:
+    KeepOutViolation violation_;
+    int attempts_ = 0;
+};
+
 class SafetyViolationError : public std::runtime_error {
 public:
     SafetyViolationError(const std::string& message, SafetyViolationReport report)

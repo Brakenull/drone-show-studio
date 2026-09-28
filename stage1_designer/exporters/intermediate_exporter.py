@@ -56,6 +56,11 @@ def build_project_metadata(
             "max_height": float(holding_area["max_height"]),
             "grid_spacing_m": float(holding_area["grid_spacing_m"]),
             "layer_spacing_m": float(holding_area["layer_spacing_m"]),
+            **(
+                {"show_clearance_m": float(holding_area["show_clearance_m"])}
+                if holding_area.get("show_clearance_m") is not None
+                else {}
+            ),
         },
         "kinematic_constraints": (
             {

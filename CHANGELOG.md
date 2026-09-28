@@ -16,6 +16,8 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 
 - **Path planning — planned vs flown time:** the output lists every transition with its start and end show time, planned and flown duration, and the number of attempts (`metadata.transitions`).
 
+- **Path planning — holding-area keep-out zone:** the add-on now exports its **Safe Distance to Show** (`holding_area.show_clearance_m`). Stage 2 routes the show's flight paths around the holding area at that distance, and checks it 100 times per second. Drones taking off, landing or parked are exempt. A show it can't route safely, or whose formations are inside the safe distance, is refused with the transition, drone, time and distance. Files without the setting plan as before.
+
 ### Fixed
 
 - **Path planning — paths below the ground (P2-02):** Stage 2 now uses the design's ground level (`ground_z_m`) as an altitude floor. No point of any planned path goes below it, including takeoff, formations passed near the ground and the return. A show whose formations or holding area are below the ground is refused before planning. Files that declare no ground are planned as before.

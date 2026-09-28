@@ -80,7 +80,11 @@
             },
             "max_height": { "type": "number", "exclusiveMinimum": 0 },
             "grid_spacing_m": { "type": "number", "minimum": 1.8 },
-            "layer_spacing_m": { "type": "number", "exclusiveMinimum": 0 }
+            "layer_spacing_m": { "type": "number", "exclusiveMinimum": 0 },
+            "show_clearance_m": {
+              "description": "The designer's Safe Distance to Show (added in 1.6.0, optional). When present, Stage 2 keeps show drones at least this far from the holding region. See 1-phase_1.md section 3.2.2 and 2-phase_2.md section 1.14.",
+              "type": "number", "minimum": 0
+            }
           }
         },
         "kinematic_constraints": {
