@@ -18,6 +18,7 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 
 ### Fixed
 
+- **Path planning — paths below the ground (P2-02):** Stage 2 now uses the design's ground level (`ground_z_m`) as an altitude floor. No point of any planned path goes below it, including takeoff, formations passed near the ground and the return. A show whose formations or holding area are below the ground is refused before planning. Files that declare no ground are planned as before.
 - **Path planning — timing after a safety retry (P2-03):** a transition that passed only on a retry was flown longer than the timeline said. The next transition then started while it was still being flown, LED fades overshot, and the show's reported length (and the desktop app's replay) ended early. Every transition is now timed by the attempt that actually passed.
 
 ### Changed

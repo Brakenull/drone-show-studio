@@ -443,6 +443,20 @@ Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, doub
             if (r.coeffs.cwiseAbs().sum() > 1e-12) kinematic_rows.push_back(std::move(r));
         }
     }
+    // Altitude floor (section 1.13): z of every free control point >= floor.
+    // Hard, like the kinematic box; the convex hull property then keeps the
+    // whole spline above it (the pinned control points are floor-safe by
+    // construction, see floor_safe_velocity()).
+    if (config.safety.altitude_floor_m) {
+        for (int i = 0; i < num_free; ++i) {
+            LinearRow r;
+            r.coeffs = Eigen::RowVectorXd::Zero(dim);
+            r.coeffs(2 * num_free + i) = 1.0;
+            r.lower = *config.safety.altitude_floor_m;
+            r.upper = OSQP_INFTY;
+            kinematic_rows.push_back(std::move(r));
+        }
+    }
     // Kinematic box rows are also unaffected by tier 2's jitter: their free
     // coefficients come from the structural D-matrix and their constant
     // offset comes from the (untouched) pinned boundary control points.
@@ -759,6 +773,14 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     for (int i = 0; i < num_drones; ++i) {
         workspaces[i].drone_id = problems[i].drone_id;
         workspaces[i].control_points = seeded_control_points[i];
+        if (config.safety.altitude_floor_m) {
+            // Lift a seed that dips below the floor onto it, so the first
+            // iteration's trust region already contains a floor-feasible point.
+            for (int idx = map.free_begin; idx < map.free_end; ++idx) {
+                double& z = workspaces[i].control_points(idx, 2);
+                z = std::max(z, *config.safety.altitude_floor_m);
+            }
+        }
         workspaces[i].ops = trajectory::build_derivative_operators(n, duration);
         rebuild_spline(workspaces[i], duration);
     }
@@ -1165,9 +1187,13 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
         for (int i = 0; i < num_drones; ++i) {
             trajectory::BoundaryConditions wp;
             wp.position = positions[i];
+            if (config.safety.altitude_floor_m) {
+                wp.position.z() = std::max(wp.position.z(), *config.safety.altitude_floor_m);
+            }
             wp.velocity = remaining_time > 1e-6
                               ? Eigen::Vector3d((problems[i].end.position - wp.position) / remaining_time)
                               : Eigen::Vector3d::Zero();
+            wp.velocity = floor_safe_velocity(wp.position, wp.velocity, config);
             wp.acceleration = Eigen::Vector3d::Zero();
             waypoints[i][k] = wp;
         }
@@ -1415,6 +1441,26 @@ double evaluate_worst_case_separation_over_stages(
 // and duration were incidentally large, took ~60s) — but the specific,
 // named N=40 ring-swap acceptance benchmark this comment used to fail by
 // ~7x now passes.
+double max_pinned_lead_time_s(const CoreConfig& config) {
+    // Longest stage: a single stage is at most kMegaClusterThresholdS long,
+    // a mega-cluster sub-stage at most max_substage_duration_s; every stage
+    // has >= num_control_points_min control points, i.e. >= n-5 knot spans.
+    const double longest_stage_s = std::max(kMegaClusterThresholdS, config.solver.max_substage_duration_s);
+    const int spans = std::max(1, config.solver.num_control_points_min - trajectory::kDegree);
+    const double max_knot_span_s = longest_stage_s / spans;
+    return 3.0 * max_knot_span_s / 5.0;  // the farther pinned point, p + v*3h/5
+}
+
+Eigen::Vector3d floor_safe_velocity(const Eigen::Vector3d& position, const Eigen::Vector3d& velocity,
+                                    const CoreConfig& config) {
+    if (!config.safety.altitude_floor_m) return velocity;
+    const double clearance = position.z() - *config.safety.altitude_floor_m;
+    if (std::abs(velocity.z()) * max_pinned_lead_time_s(config) <= clearance) return velocity;
+    Eigen::Vector3d level = velocity;
+    level.z() = 0.0;
+    return level;
+}
+
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
                                             const CoreConfig& config, const ProgressCallback& progress,
                                             SolveStats* stats) {
@@ -1470,6 +1516,21 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             stage_offset += stage_duration;
         }
         attempt_history.push_back(GatekeeperAttempt{attempt_duration, worst_continuous_distance});
+
+        // Altitude floor safety net (section 1.13): the QP rows and the
+        // floor-safe boundaries make this hold by construction; a result
+        // that still dips below (e.g. an all-tiers-infeasible jittered
+        // iterate) is not accepted. Checked on the control points: by the
+        // convex hull property their lowest z bounds the whole path.
+        double lowest_control_point_z = std::numeric_limits<double>::infinity();
+        for (const auto& traj : result.trajectories) {
+            for (const auto& st : traj.stages) {
+                lowest_control_point_z = std::min(lowest_control_point_z, st.control_points.col(2).minCoeff());
+            }
+        }
+        constexpr double kFloorToleranceM = 1e-3;  // OSQP's own feasibility tolerance is well below this
+        const bool floor_ok = !config.safety.altitude_floor_m ||
+                              lowest_control_point_z >= *config.safety.altitude_floor_m - kFloorToleranceM;
         if (progress) {
             ProgressEvent e;
             e.kind = ProgressEvent::Kind::AttemptEnd;
@@ -1478,16 +1539,24 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             e.duration_sec = attempt_duration;
             e.worst_separation_m = worst_continuous_distance;
             e.required_separation_m = gatekeeper.min_allowable_distance_m;
-            e.passed = worst_continuous_distance >= gatekeeper.min_allowable_distance_m;
+            e.passed = worst_continuous_distance >= gatekeeper.min_allowable_distance_m && floor_ok;
             progress(e);
         }
 
-        if (worst_continuous_distance >= gatekeeper.min_allowable_distance_m) {
+        if (worst_continuous_distance >= gatekeeper.min_allowable_distance_m && floor_ok) {
             if (stats) {
                 stats->attempts = attempt + 1;
                 stats->flown_duration_sec = attempt_duration;
             }
             return result.trajectories;
+        }
+        if ((!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) &&
+            worst_continuous_distance >= gatekeeper.min_allowable_distance_m) {
+            // Separation is fine; only the floor failed, on every attempt.
+            throw std::runtime_error("Altitude floor violated: a planned path goes down to z = " +
+                                     std::to_string(lowest_control_point_z) + " m, below the ground at z = " +
+                                     std::to_string(*config.safety.altitude_floor_m) + " m, after " +
+                                     std::to_string(attempt + 1) + " attempt(s)");
         }
         if (!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) {
             SafetyViolationReport report;

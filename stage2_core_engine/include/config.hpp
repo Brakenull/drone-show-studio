@@ -35,6 +35,11 @@ struct SolverWeights {
 struct SafetyConfig {
     double safety_radius_m = 0.75;
     double min_distance_m = 1.5;
+    // Altitude floor (bug-report P2-02, docs/2-phase_2.md section 1.13): no
+    // point of any planned path may go below this ENU height. Set per run by
+    // io::run_pipeline() from the Phase 1 file's project_metadata.ground_z_m;
+    // unset (no floor) for files that don't declare a ground. Not a JSON key.
+    std::optional<double> altitude_floor_m;
 };
 
 // APF Warm-Start Seeding (docs/2-phase_2.md Rev 2.8 sections 1.2/3.2):

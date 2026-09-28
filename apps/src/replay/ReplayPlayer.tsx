@@ -199,7 +199,8 @@ export function ReplayPlayer({ data, focus, label }: Props) {
               <h3>Below ground</h3>
               <p>
                 {header.below_ground.length} {header.below_ground.length === 1 ? "drone goes" : "drones go"} below
-                z = {header.ground_z_m} m. Stage 2 has no altitude floor yet.
+                z = {header.ground_z_m} m. Stage 2 keeps paths above the ground only when the show file declares
+                one (Blender add-on 1.6.0 or later); re-export the show to apply it.
               </p>
               <ol className="violations">
                 {header.below_ground.slice(0, 20).map((g) => (

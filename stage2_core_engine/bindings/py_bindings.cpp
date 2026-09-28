@@ -71,6 +71,9 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
         transitions.append(d);
     }
     metadata["transitions"] = transitions;
+    // The design's ground as enforced (docs/2-phase_2.md section 1.13); None = no floor.
+    metadata["altitude_floor_m"] =
+        meta.altitude_floor_m ? py::object(py::float_(*meta.altitude_floor_m)) : py::object(py::none());
     // Only for Phase 1 files with `legs` (schema 1.6.0, 1-phase_1.md section 3.8).
     if (meta.takeoff_leg || meta.return_leg) {
         auto leg_to_py = [](const std::optional<drone_core::io::LegTiming>& leg) -> py::object {
@@ -230,6 +233,7 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
 //                "transitions": [{"index", "from_keyframe", "to_keyframe", "start_time_sec",
 //                                 "end_time_sec", "planned_duration_sec", "flown_duration_sec",
 //                                 "attempts"}, ...],
+//                "altitude_floor_m" (the file's ground_z_m, or None: no floor),
 //                "legs" (only for Phase 1 files with legs): {"takeoff", "return"}:
 //                  {"start_time_sec", "end_time_sec", "duration_sec", "target_duration_sec"}},
 //   "trajectories": [{"drone_id", "segments": [{"segment_index",

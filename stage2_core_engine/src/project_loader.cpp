@@ -46,6 +46,11 @@ ProjectData parse_project(const nlohmann::json& root) {
                                                      ? holding_json.at("grid_spacing_m").get<double>()
                                                      : data.metadata.holding_area.layer_spacing_m;
 
+    // Phase 1 schema 1.6.0 (optional): the ground level.
+    if (meta_json.contains("ground_z_m") && !meta_json.at("ground_z_m").is_null()) {
+        data.metadata.ground_z_m = meta_json.at("ground_z_m").get<double>();
+    }
+
     // Phase 1 schema 1.6.0 (optional): takeoff / return leg targets.
     if (meta_json.contains("legs") && !meta_json.at("legs").is_null()) {
         const nlohmann::json& legs_json = meta_json.at("legs");

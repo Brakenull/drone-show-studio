@@ -60,6 +60,9 @@ struct ProjectMetadata {
     double heading_offset_deg = 0.0;
     HoldingArea holding_area;
     ShowLegs legs;
+    // Phase 1 schema 1.6.0 (optional): ENU height of the ground (1-phase_1.md
+    // section 3.9). nullopt for files that don't declare one.
+    std::optional<double> ground_z_m;
     nlohmann::json raw;  // kept for CoreConfig Tier-1 override lookup
 };
 

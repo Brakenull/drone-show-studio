@@ -174,6 +174,19 @@ private:
 // longer than `duration` (x expansion_factor per retry). `stats`, when set,
 // receives that attempt's number and duration: callers must time the
 // transition by `flown_duration_sec`, not by `duration` (bug-report P2-03).
+// Altitude floor (docs/2-phase_2.md section 1.13). A quintic B-spline stays
+// inside the convex hull of its control points, so "every control point at or
+// above the floor" guarantees the whole path is. The free control points get a
+// hard QP row for it; the pinned boundary ones follow from the boundary
+// state: with v = start velocity and a = 0 they sit at p + v*h/5 and
+// p + v*3h/5 (h = knot span), mirrored at the end. floor_safe_velocity()
+// levels a boundary velocity (drops its vertical part) whenever that lead
+// could reach below the floor, using the longest knot span any stage can
+// have. Callers must apply it to every non-rest boundary they create.
+double max_pinned_lead_time_s(const CoreConfig& config);
+Eigen::Vector3d floor_safe_velocity(const Eigen::Vector3d& position, const Eigen::Vector3d& velocity,
+                                    const CoreConfig& config);
+
 struct SolveStats {
     int attempts = 0;                  // 1 = passed first time
     double flown_duration_sec = 0.0;   // duration of the passing attempt

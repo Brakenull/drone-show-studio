@@ -33,8 +33,12 @@ D_CRASH_M = 0.5  # stage3 monte_carlo_runner's crash distance, drawn as a refere
 # Ground height when the Phase 1 file doesn't declare one (schema < 1.6.0):
 # the ENU origin plane. 1.6.0 files carry project_metadata.ground_z_m
 # (1-phase_1.md section 3.9), passed in as overlays["ground_z_m"]. Only used
-# to flag drones that go below it (Stage 2 has no altitude floor, P2-02).
+# to flag drones that go below it. Stage 2 enforces it as an altitude floor
+# only for files that declare it (2-phase_2.md section 1.13).
 GROUND_Z_M = 0.0
+# Stage 2 accepts a path this far under its floor (its solver tolerance); a
+# drone on the floor must not be listed as below ground.
+BELOW_GROUND_TOLERANCE_M = 1e-3
 
 
 def join_failure_show(report: dict[str, Any]) -> dict[str, Any]:
@@ -137,7 +141,7 @@ def build_replay(contract: dict[str, Any], out_dir: Path, *, overlays: dict[str,
         "overlays": overlays or {},
         "below_ground": [
             {"drone": int(d), "min_z_m": float(lowest_z[d]), "time_sec": float(lowest_t[d])}
-            for d in np.argsort(lowest_z) if lowest_z[d] < ground_z
+            for d in np.argsort(lowest_z) if lowest_z[d] < ground_z - BELOW_GROUND_TOLERANCE_M
         ],
         "ground_z_m": ground_z,
     }

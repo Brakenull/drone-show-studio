@@ -66,9 +66,15 @@ Eigen::MatrixXd build_hold_segment_control_points(const trajectory::BoundaryCond
 
 }  // namespace
 
-PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config, const ProgressCallback& progress) {
+PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_config,
+                            const ProgressCallback& progress) {
     const int n = project.metadata.fleet_size;
+    // Altitude floor (docs/2-phase_2.md section 1.13, bug-report P2-02): the
+    // design's ground, when the file declares one.
+    CoreConfig config = base_config;
+    config.safety.altitude_floor_m = project.metadata.ground_z_m;
     PipelineResult result;
+    result.metadata.altitude_floor_m = config.safety.altitude_floor_m;
     result.metadata.fleet_size = n;
     result.metadata.spline_degree = trajectory::kDegree;
     result.metadata.min_distance_enforced_m =
@@ -159,6 +165,24 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
         std::optional<double> target_duration_sec;  // leg target; nullopt = Auto (T_min)
         bool ends_at_rest = false;       // Formation Hold / landing (v = 0) vs fly-through
     };
+    // Every fixed point of the show must already be on or above the floor:
+    // the solver can bend paths, not move formation points or launch slots.
+    // (The Blender add-on refuses to export such a design; this catches
+    // hand-edited or older files.)
+    if (config.safety.altitude_floor_m) {
+        const double floor_z = *config.safety.altitude_floor_m;
+        auto check_below = [&](const Eigen::MatrixXd& points, const std::string& where) {
+            for (int i = 0; i < points.rows(); ++i) {
+                if (points(i, 2) < floor_z - 1e-9) {
+                    throw std::runtime_error(where + " has a point at z = " + std::to_string(points(i, 2)) +
+                                             " m, below the ground at z = " + std::to_string(floor_z) + " m");
+                }
+            }
+        };
+        check_below(P, "the holding area");
+        for (const Keyframe& kf : project.keyframes) check_below(points_by_index(kf, n), "keyframe '" + kf.shape_name + "'");
+    }
+
     const ShowLegs& legs = project.metadata.legs;
     std::vector<TransitionSpec> specs;
     specs.reserve(project.keyframes.size() + 1);
@@ -289,6 +313,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config
                     travel_norm > 1e-6
                         ? Eigen::Vector3d(travel / travel_norm * (kFlyThroughSpeedFraction * config.kinematics.v_max_mps))
                         : Eigen::Vector3d::Zero();
+                // Near the floor, pass through level so neither this path's
+                // end nor the next one's start can dip below it (section 1.13).
+                problem.end.velocity = optimizer::floor_safe_velocity(problem.end.position, problem.end.velocity, config);
             }
             problem.end.acceleration = Eigen::Vector3d::Zero();
             problems[slot] = problem;
