@@ -106,3 +106,63 @@ def test_export_msgpack_roundtrip(tmp_path):
     with filepath.open("rb") as f:
         loaded = msgpack.unpackb(f.read(), raw=False)
     assert loaded["project_metadata"]["fleet_size"] == data["project_metadata"]["fleet_size"]
+
+
+def _schema_errors(data):
+    jsonschema = pytest.importorskip("jsonschema")
+    from pathlib import Path
+
+    schema_path = Path(__file__).resolve().parents[1] / "schemas" / "project_intermediate.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    return [e.message for e in jsonschema.Draft7Validator(schema).iter_errors(data)]
+
+
+def test_legs_default_to_auto_and_match_schema():
+    data = _sample_data()
+    assert data["project_metadata"]["legs"] == {
+        "takeoff": {"duration_sec": None},
+        "return": {"duration_sec": None},
+    }
+    assert _schema_errors(data) == []
+
+
+def test_leg_targets_are_exported_and_match_schema():
+    data = _sample_data()
+    data["project_metadata"] = build_project_metadata(
+        fleet_size=2, sampling_mode="KEYFRAME_ONLY", total_duration_sec=15.0, heading_offset_deg=0.0,
+        origin_gps=(10.0, 106.0, 15.0), holding_area=HOLDING_AREA,
+        takeoff_duration_sec=40, return_duration_sec=25.5,
+    )
+    assert data["project_metadata"]["legs"]["takeoff"]["duration_sec"] == 40.0
+    assert data["project_metadata"]["legs"]["return"]["duration_sec"] == 25.5
+    assert _schema_errors(data) == []
+    assert validate_intermediate_data(data) == []
+
+
+def test_non_positive_leg_target_is_rejected():
+    data = _sample_data()
+    data["project_metadata"]["legs"]["return"]["duration_sec"] = 0.0
+    assert any("legs.return" in e for e in validate_intermediate_data(data))
+    assert _schema_errors(data)
+
+
+def test_pre_1_6_file_without_legs_is_still_valid():
+    data = _sample_data()
+    del data["project_metadata"]["legs"]
+    del data["project_metadata"]["ground_z_m"]
+    data["project_metadata"]["version"] = "1.5.0"
+    assert _schema_errors(data) == []
+    assert validate_intermediate_data(data) == []
+
+
+def test_ground_level_is_exported_and_optional():
+    data = _sample_data()
+    assert data["project_metadata"]["ground_z_m"] == 0.0
+    data["project_metadata"] = build_project_metadata(
+        fleet_size=2, sampling_mode="KEYFRAME_ONLY", total_duration_sec=15.0, heading_offset_deg=0.0,
+        origin_gps=(10.0, 106.0, 15.0), holding_area=HOLDING_AREA, ground_z_m=-2.5,
+    )
+    assert data["project_metadata"]["ground_z_m"] == -2.5
+    assert _schema_errors(data) == []
+    del data["project_metadata"]["ground_z_m"]
+    assert _schema_errors(data) == []

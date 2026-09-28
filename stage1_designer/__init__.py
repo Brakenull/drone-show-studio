@@ -11,7 +11,7 @@ remain importable - and unit-testable with pytest - outside Blender.
 bl_info = {
     "name": "Drone Show Studio - Designer",
     "author": "Drone Show Studio",
-    "version": (1, 5, 0),
+    "version": (1, 6, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Drone Show",
     "description": (
@@ -34,9 +34,9 @@ if _HAS_BPY:
     import numpy as np
 
     from . import config
-    from .core import color_extractor, holding_area, kinematic_validator, sampler, timeline_sampler
+    from .core import color_extractor, holding_area, kinematic_validator, sampler, show_legs, timeline_sampler
     from .exporters import intermediate_exporter
-    from .ui import compass_gizmo, panel, viewport_drawer
+    from .ui import compass_gizmo, ground_scene, holding_area_scene, panel, viewport_drawer
 
     _redraw_timer_running = False
 
@@ -105,9 +105,10 @@ if _HAS_BPY:
             all_positions = enu_points
             all_colors = list(colors)
 
-        return intermediate_exporter.build_keyframe_entry(
+        entry = intermediate_exporter.build_keyframe_entry(
             time_sec, shape_name, all_positions, all_colors
         )
+        return entry, enu_points
 
     def _shape_name_for_frame(scene, frame: int) -> str:
         for marker in scene.timeline_markers:
@@ -116,26 +117,36 @@ if _HAS_BPY:
         return f"Shape_{frame}"
 
     def _configured_v_max(settings) -> float:
-        if settings.kinematic_constraints.enabled:
-            return settings.kinematic_constraints.v_max_mps
-        return config.DEFAULT_KINEMATIC_CONSTRAINTS["v_max_mps"]
+        return panel.configured_v_max(settings)
 
     def _sample_all_keyframes_for_validation(settings, obj, scene, times, shape_name_fn):
         """Sample every keyframe exactly as Export would (same function, same
         holding-area padding) and return (keyframe_entries, transitions) so
         Export, Check Kinematics and Auto-Fix all validate against identical
-        data — there's only one code path that decides what v_req actually is."""
+        data — there's only one code path that decides what v_req actually is.
+
+        Also refreshes the panel's formation cache (each keyframe's sampled
+        ENU points, parked drones excluded) for the holding-area clearance
+        check (spec section 3.2.2), and the first / last keyframe's full
+        positions for the takeoff / return estimates (spec section 3.8)."""
         original_frame = scene.frame_current
         try:
             entries = []
+            formations = []
             for time_sec in times:
                 frame = int(round(time_sec * (scene.render.fps / scene.render.fps_base)))
                 shape_name = shape_name_fn(scene, frame)
-                entries.append(_build_keyframe_for_time(settings, obj, scene, time_sec, shape_name))
+                entry, formation_points = _build_keyframe_for_time(settings, obj, scene, time_sec, shape_name)
+                entries.append(entry)
+                formations.append((shape_name, formation_points))
         finally:
             scene.frame_set(original_frame)
 
+        panel.set_formation_cache(formations)
         positions = [np.array([p["pos"] for p in kf["points"]]) for kf in entries]
+        panel.set_leg_cache(positions[0], positions[-1], float(times[-1] - times[0]))
+        ground_scene.set_show_extent([pts for _name, pts in formations])
+        ground_scene.sync(scene)
         transitions = kinematic_validator.evaluate_transitions(list(times), positions, _configured_v_max(settings))
         return entries, transitions
 
@@ -347,6 +358,32 @@ if _HAS_BPY:
                         )
                 return {"CANCELLED"}
 
+            # Holding-area clearance gate (spec section 3.2.2): same rule as
+            # above - _sample_all_keyframes_for_validation just refreshed the
+            # formation cache, so this checks the show being exported now.
+            cautions = panel.clearance_cautions(settings)
+            if cautions:
+                for r in cautions:
+                    self.report({"ERROR"}, panel.clearance_message(r, settings.holding_area.show_clearance_m))
+                self.report(
+                    {"ERROR"},
+                    f"Export blocked: {len(cautions)} formation(s) closer than "
+                    f"{settings.holding_area.show_clearance_m:g} m to the holding area",
+                )
+                return {"CANCELLED"}
+
+            # Ground gate (spec section 3.9): formation points (freshly
+            # sampled above) and parked drones below the ground.
+            below_ground = panel.ground_warnings(settings)
+            if below_ground:
+                for msg in below_ground:
+                    self.report({"ERROR"}, msg)
+                self.report(
+                    {"ERROR"},
+                    f"Export blocked: drones below the ground (z = {settings.ground_z_m:g} m)",
+                )
+                return {"CANCELLED"}
+
             kinematic_constraints = None
             if settings.kinematic_constraints.enabled:
                 kinematic_constraints = {
@@ -376,6 +413,13 @@ if _HAS_BPY:
                 safety_radius_m=settings.safety_radius_m,
                 min_distance_m=settings.min_distance_m,
                 kinematic_constraints=kinematic_constraints,
+                takeoff_duration_sec=show_legs.target_duration(
+                    settings.legs.takeoff_mode, settings.legs.takeoff_duration_sec
+                ),
+                return_duration_sec=show_legs.target_duration(
+                    settings.legs.return_mode, settings.legs.return_duration_sec
+                ),
+                ground_z_m=settings.ground_z_m,
             )
 
             data = intermediate_exporter.build_intermediate_data(metadata, keyframe_entries)
@@ -391,7 +435,16 @@ if _HAS_BPY:
             else:
                 intermediate_exporter.export_msgpack(data, filepath)
 
-            self.report({"INFO"}, f"Exported {len(keyframe_entries)} keyframes to {filepath}")
+            # Leg targets below the estimated minimum (spec section 3.8): a
+            # warning only - the estimate is rough and Stage 2 stretches the
+            # leg to its real minimum anyway.
+            short_legs = panel.short_leg_messages(settings)
+            for msg in short_legs:
+                self.report({"WARNING"}, msg)
+            self.report(
+                {"WARNING"} if short_legs else {"INFO"},
+                f"Exported {len(keyframe_entries)} keyframes to {filepath}",
+            )
             return {"FINISHED"}
 
     _CLASSES = (
@@ -407,6 +460,7 @@ if _HAS_BPY:
         for cls in _CLASSES:
             bpy.utils.register_class(cls)
         compass_gizmo.register()
+        holding_area_scene.register()
         if not bpy.app.timers.is_registered(_blink_timer):
             bpy.app.timers.register(_blink_timer, first_interval=0.1)
             _redraw_timer_running = True
@@ -420,6 +474,8 @@ if _HAS_BPY:
         if _redraw_timer_running and bpy.app.timers.is_registered(_blink_timer):
             bpy.app.timers.unregister(_blink_timer)
             _redraw_timer_running = False
+        holding_area_scene.unregister()
+        ground_scene.remove()
         compass_gizmo.unregister()
         viewport_drawer.unregister()
         for cls in reversed(_CLASSES):

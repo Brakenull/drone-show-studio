@@ -26,7 +26,13 @@ def build_project_metadata(
     safety_radius_m: float = 0.75,
     min_distance_m: float = 1.5,
     kinematic_constraints: Optional[dict] = None,
+    takeoff_duration_sec: Optional[float] = None,
+    return_duration_sec: Optional[float] = None,
+    ground_z_m: float = 0.0,
 ) -> dict:
+    """`takeoff_duration_sec` / `return_duration_sec`: the legs' target
+    durations (spec section 3.8), None meaning Auto (Stage 2's minimum).
+    `ground_z_m`: ENU height of the ground (spec section 3.9)."""
     lat, lon, alt = origin_gps
     return {
         "version": SCHEMA_VERSION,
@@ -38,6 +44,7 @@ def build_project_metadata(
         "min_distance_m": float(min_distance_m),
         "coordinate_system": COORDINATE_SYSTEM,
         "heading_offset_deg": float(heading_offset_deg),
+        "ground_z_m": float(ground_z_m),
         "origin_gps": {
             "latitude": float(lat),
             "longitude": float(lon),
@@ -59,7 +66,15 @@ def build_project_metadata(
             if kinematic_constraints
             else None
         ),
+        "legs": {
+            "takeoff": {"duration_sec": _optional_float(takeoff_duration_sec)},
+            "return": {"duration_sec": _optional_float(return_duration_sec)},
+        },
     }
+
+
+def _optional_float(value: Optional[float]) -> Optional[float]:
+    return None if value is None else float(value)
 
 
 def build_keyframe_entry(
@@ -104,11 +119,17 @@ def validate_intermediate_data(data: dict) -> List[str]:
       - every keyframe has exactly fleet_size points
       - point indices are 0..fleet_size-1 with no duplicates
       - no pair of points in a keyframe violates min_distance_m
+      - a leg's target duration, when set, is positive (section 3.8)
     """
     errors: List[str] = []
     metadata = data.get("project_metadata", {})
     fleet_size = metadata.get("fleet_size")
     min_distance_m = metadata.get("min_distance_m")
+
+    for leg_name, leg in (metadata.get("legs") or {}).items():
+        duration = (leg or {}).get("duration_sec")
+        if duration is not None and not duration > 0.0:
+            errors.append(f"[legs.{leg_name}] duration_sec must be > 0 or null (Auto), got {duration}")
 
     for kf in data.get("keyframes", []):
         shape_name = kf.get("shape_name", "<unknown>")

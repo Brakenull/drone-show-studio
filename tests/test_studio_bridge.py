@@ -206,3 +206,18 @@ def test_failure_show_join_keeps_completed_segments_first():
     }
     joined = join_failure_show(copy.deepcopy(report))
     assert [s["segment_index"] for s in joined["trajectories"][0]["segments"]] == [0, 1]
+
+
+def test_replay_uses_the_designs_ground_level(tmp_path):
+    from stage3_helpers import grid_show
+
+    from tools.studio_bridge.replay_builder import build_replay
+
+    show = grid_show(2, climb=10.0, duration=4.0, hold=0.0)  # every drone starts at z = 0, climbs to 10
+    default = build_replay(show, tmp_path / "a", fps=10.0)
+    assert default["ground_z_m"] == 0.0 and default["below_ground"] == []
+
+    raised = build_replay(show, tmp_path / "b", overlays={"ground_z_m": 1.0}, fps=10.0)
+    assert raised["ground_z_m"] == 1.0
+    assert len(raised["below_ground"]) == 4  # all four start below a ground raised to 1 m
+    assert all(g["min_z_m"] == pytest.approx(0.0, abs=1e-6) for g in raised["below_ground"])

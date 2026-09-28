@@ -2,6 +2,21 @@
 
 All notable changes to Drone Show Studio are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Blender add-on — holding area in the scene:** a **Create in Scene** toggle in the Holding Area box builds the takeoff area as real objects: a wire box for the volume and a sphere per launch slot for the whole fleet, placed where the drones will really be (heading offset included). Grab the box to move the holding area; the panel settings follow. The panel also shows the slot grid and warns when the area had to be widened.
+- **Blender add-on — show clearance caution:** a **Safe Distance to Show** setting (default 5 m) in the Holding Area box. Check Kinematics, Auto-Fix and Export now check every formation against the holding area and show a caution, per formation, for points inside it or closer than the safe distance. **Export is locked** while any caution stands, like a kinematic error. With **Create in Scene** on, a yellow wire box shows the safe-distance zone.
+
+- **Blender add-on — takeoff and return legs:** a **Takeoff & Return** box sets each leg to **Auto** (as fast as safe) or a **target time**. The panel estimates each leg's minimum time (the longest flight at top speed, with the same margin as Auto-Fix, plus the row-by-row takeoff waves), warns when a target is below it, and sums up takeoff + show + return. The export carries the targets in a new optional `legs` field (schema **1.6.0**; 1.5.0 files stay valid). Stage 2 doesn't use them yet.
+
+- **Blender add-on — ground level:** a **Ground** box sets the ground height (default z = 0). The panel warns about formation points and parked drones below it, and **Export is locked** until nothing is below the ground. **Show Ground in Scene** draws a wire grid at that height under the show and the holding area. The ground is exported as `ground_z_m` (schema 1.6.0), and the desktop app's replay uses it for its "below ground" list instead of a fixed z = 0.
+
+### Changed
+
+- The holding area now counts as its whole declared volume plus the parked grid (padded by half a grid step), in both the add-on and the desktop app's "formation overlaps the holding area" warning. Before, the app only counted the parked grid, which a small fleet fills only partly.
+
 ## [1.0.0] — 2026-09-26
 
 First release. Drone Show Studio takes a drone light show from a Blender animation to verified, per-drone flight files, and is distributed as source code with a one-step setup.

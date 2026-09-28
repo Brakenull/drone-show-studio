@@ -30,8 +30,10 @@ from .runs import write_json_atomic
 REPLAY_FPS = 20.0
 CHUNK_FRAMES = 400
 D_CRASH_M = 0.5  # stage3 monte_carlo_runner's crash distance, drawn as a reference line
-# ENU origin plane. No spec defines the ground yet (bug-report P2-02); this is
-# only used to flag drones that go below it.
+# Ground height when the Phase 1 file doesn't declare one (schema < 1.6.0):
+# the ENU origin plane. 1.6.0 files carry project_metadata.ground_z_m
+# (1-phase_1.md section 3.9), passed in as overlays["ground_z_m"]. Only used
+# to flag drones that go below it (Stage 2 has no altitude floor, P2-02).
 GROUND_Z_M = 0.0
 
 
@@ -76,6 +78,7 @@ def build_replay(contract: dict[str, Any], out_dir: Path, *, overlays: dict[str,
     sep_min = np.empty(frames)
     sep_a = np.empty(frames, dtype=np.int32)
     sep_b = np.empty(frames, dtype=np.int32)
+    ground_z = float((overlays or {}).get("ground_z_m", GROUND_Z_M))
     lowest_z = np.full(n, np.inf)  # per drone, for the below-ground warning (bug-report P2-02)
     lowest_t = np.zeros(n)
 
@@ -134,9 +137,9 @@ def build_replay(contract: dict[str, Any], out_dir: Path, *, overlays: dict[str,
         "overlays": overlays or {},
         "below_ground": [
             {"drone": int(d), "min_z_m": float(lowest_z[d]), "time_sec": float(lowest_t[d])}
-            for d in np.argsort(lowest_z) if lowest_z[d] < GROUND_Z_M
+            for d in np.argsort(lowest_z) if lowest_z[d] < ground_z
         ],
-        "ground_z_m": GROUND_Z_M,
+        "ground_z_m": ground_z,
     }
     write_json_atomic(out_dir / "replay.json", header)
     return header

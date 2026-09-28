@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from stage1_designer.core.timeline_sampler import enu_transform
+from stage1_designer.core.timeline_sampler import blender_from_enu, enu_transform
 
 
 def test_zero_heading_is_identity():
@@ -50,3 +50,10 @@ def test_z_axis_untouched():
     points = np.array([[1.0, 2.0, 42.0]])
     result = enu_transform(points, 123.0)
     assert result[0, 2] == pytest.approx(42.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("heading_deg", [0.0, 37.0, 90.0, 215.5])
+def test_blender_from_enu_inverts_enu_transform(heading_deg):
+    points = np.array([[0.0, -30.0, 5.0], [12.5, 3.0, -1.0]])
+    np.testing.assert_allclose(enu_transform(blender_from_enu(points, heading_deg), heading_deg), points, atol=1e-9)
+    np.testing.assert_allclose(blender_from_enu(enu_transform(points, heading_deg), heading_deg), points, atol=1e-9)

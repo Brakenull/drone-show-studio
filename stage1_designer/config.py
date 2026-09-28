@@ -4,7 +4,7 @@ Values mirror the defaults defined in `.claude/docs/1-phase_1.md` section 3.1-3.
 and the intermediate schema at `schemas/project_intermediate.schema.json`.
 """
 
-SCHEMA_VERSION = "1.5.0"
+SCHEMA_VERSION = "1.6.0"  # 1.6.0: optional project_metadata.legs (section 3.8)
 
 # --- Safety distance (section 3.1) ---
 SAFETY_RADIUS_M = 0.75          # R_safe
@@ -36,6 +36,25 @@ DEFAULT_HOLDING_AREA = {
     "layer_spacing_m": DEFAULT_GRID_SPACING_M,
 }
 Z_HOLD_MAX_DEFAULT = 15.0
+# Minimum distance from any formation point to the holding region (the
+# parked grid padded by half a grid step) before the add-on raises a caution.
+# Drones leaving the upper layers need room to climb out past the formation;
+# P1-01's failing file had targets ~2 m from the parked grid.
+DEFAULT_SHOW_CLEARANCE_M = 5.0
+
+# --- Ground level (section 3.9) ---
+# ENU height of the ground. The heading offset only rotates about Z, so this is
+# also Blender Z. 0.0 = the ENU origin plane (origin_gps.altitude_amsl).
+DEFAULT_GROUND_Z_M = 0.0
+
+# --- Takeoff and return legs (section 3.8) ---
+LEG_MODE_AUTO = "AUTO"      # Stage 2 flies the leg in its own minimum time
+LEG_MODE_TARGET = "TARGET"  # Stage 2 flies max(target, its minimum)
+DEFAULT_LEG_DURATION_SEC = 30.0
+# Mirrors stage2_core_engine/config/core_config.json (solver.enable_staggered_takeoff
+# = true, solver.staggered_wave_delay_s = 1.2), used only for the panel's takeoff
+# estimate. Stage 2's own config is what actually applies.
+STAGE2_STAGGER_WAVE_DELAY_S = 1.2
 
 # --- Kinematic pre-validator (section 3.5) ---
 # Status thresholds as a fraction of v_max, and the same slack fraction /
@@ -68,3 +87,4 @@ COLOR_VALID_RGBA = (0.0, 1.0, 0.0, 1.0)
 COLOR_VIOLATION_RGBA = (1.0, 0.0, 0.0, 1.0)
 COLOR_HOLDING_RGBA = (0.2, 0.6, 1.0, 1.0)  # parked/holding-area drones (guaranteed collision-free)
 COLOR_KINEMATIC_WARNING_RGBA = (1.0, 0.8, 0.0, 1.0)  # yellow: transition needs attention
+COLOR_GROUND_RGBA = (0.45, 0.35, 0.25, 1.0)  # brown: ground grid

@@ -6,6 +6,21 @@
   "type": "object",
   "required": ["project_metadata", "keyframes"],
   "additionalProperties": false,
+  "definitions": {
+    "leg": {
+      "type": "object",
+      "required": ["duration_sec"],
+      "additionalProperties": false,
+      "properties": {
+        "duration_sec": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "number", "exclusiveMinimum": 0 }
+          ]
+        }
+      }
+    }
+  },
   "properties": {
     "project_metadata": {
       "type": "object",
@@ -38,6 +53,10 @@
         "min_distance_m": { "type": "number", "exclusiveMinimum": 0 },
         "coordinate_system": { "type": "string", "const": "ENU" },
         "heading_offset_deg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+        "ground_z_m": {
+          "description": "ENU height of the ground (added in 1.6.0, optional; absent = 0.0, the ENU origin plane). See 1-phase_1.md section 3.9.",
+          "type": "number"
+        },
         "origin_gps": {
           "type": "object",
           "required": ["latitude", "longitude", "altitude_amsl"],
@@ -78,6 +97,16 @@
               }
             }
           ]
+        },
+        "legs": {
+          "description": "Takeoff (holding area -> first keyframe) and return (last keyframe -> holding area) legs. Added in 1.6.0 and optional, so older files stay valid. duration_sec: target in seconds, or null for Auto (Stage 2's minimum); Stage 2 flies max(target, minimum). See 1-phase_1.md section 3.8.",
+          "type": "object",
+          "required": ["takeoff", "return"],
+          "additionalProperties": false,
+          "properties": {
+            "takeoff": { "$ref": "#/definitions/leg" },
+            "return": { "$ref": "#/definitions/leg" }
+          }
         }
       }
     },

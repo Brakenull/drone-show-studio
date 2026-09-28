@@ -61,10 +61,13 @@ def holding_positions(meta: dict[str, Any]) -> np.ndarray:
 
 
 def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray) -> int:
-    """Targets of a formation inside the parked grid's volume (padded by half a grid step)."""
-    slots = holding_positions(meta)
-    pad = meta["holding_area"]["grid_spacing_m"] / 2.0
-    lo, hi = slots.min(axis=0) - pad, slots.max(axis=0) + pad
+    """Targets of a formation inside the holding area: the declared volume plus the parked grid padded by
+    half a grid step, the same region the Blender add-on checks (holding_region_bounds)."""
+    from stage1_designer.core.holding_area import holding_region_bounds
+
+    ha = meta["holding_area"]
+    lo, hi = holding_region_bounds(meta["fleet_size"], tuple(ha["center"]), tuple(ha["size"]),
+                                   ha["max_height"], ha["grid_spacing_m"])
     return int(np.all((targets >= lo) & (targets <= hi), axis=1).sum())
 
 

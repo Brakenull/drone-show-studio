@@ -40,6 +40,22 @@ def enu_transform(points: np.ndarray, heading_offset_deg: float) -> np.ndarray:
     return pts @ rotation.T
 
 
+def blender_from_enu(points: np.ndarray, heading_offset_deg: float) -> np.ndarray:
+    """Inverse of `enu_transform`: place ENU-space points (e.g. the holding
+    area, which is declared in ENU) back into Blender space."""
+    theta = math.radians(heading_offset_deg)
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    rotation = np.array(
+        [
+            [cos_t, sin_t, 0.0],
+            [-sin_t, cos_t, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    pts = np.atleast_2d(np.asarray(points, dtype=float))
+    return pts @ rotation  # rotation is orthogonal: inverse == transpose
+
+
 # --------------------------------------------------------------------------
 # bpy-dependent readers (only usable inside Blender)
 # --------------------------------------------------------------------------

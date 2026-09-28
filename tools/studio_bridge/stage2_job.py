@@ -11,7 +11,7 @@ from typing import Any
 
 from .events import EXIT_CRITERION, EXIT_INPUT, EXIT_INTERNAL, EXIT_OK, emit, log
 from .paths import REPO_ROOT, find_extension_dir, import_drone_core
-from .replay_builder import build_replay, join_failure_show
+from .replay_builder import GROUND_Z_M, build_replay, join_failure_show
 from .runs import now_iso, read_run, update_run, write_json_atomic
 from .validate import holding_positions
 
@@ -46,6 +46,7 @@ def _overlays(run_dir: Path, failure: dict[str, Any] | None) -> dict[str, Any]:
         "holding_area": {**meta["holding_area"], "slots": holding_positions(meta).round(4).tolist()},
         "keyframes": [{"shape_name": kf["shape_name"]} for kf in phase1["keyframes"]],
         "nominal_min_distance_m": meta["min_distance_m"],
+        "ground_z_m": meta.get("ground_z_m", GROUND_Z_M),
         "gatekeeper_floor_m": failure["required_separation_m"] if failure else gatekeeper_floor(run_dir),
     }
     if failure is not None:
