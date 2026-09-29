@@ -1196,6 +1196,11 @@ input[type="radio"]:focus-visible {
 .mc-settings .field select {
   width: 8.5rem;
 }
+.mc-settings .field-device select {
+  width: auto;
+  min-width: 8.5rem;
+  max-width: 100%;
+}
 .mc-settings button {
   min-height: 44px;
 }

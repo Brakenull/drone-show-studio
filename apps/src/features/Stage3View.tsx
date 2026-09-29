@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openRunFolder, readRunJson, readRunText } from "../bridge/api";
-import type { JobExit, McPair, McRecord, McReport, PackManifest, RunRecord, RunStatus } from "../bridge/types";
+import type {
+  JobExit,
+  McPair,
+  McRecord,
+  McReport,
+  PackManifest,
+  RunRecord,
+  RunStatus,
+  SimDevice,
+} from "../bridge/types";
 import { cancelStage3, secondsLeft, startStage3, useStage3Job, type Stage3Job } from "../app/stage3Jobs";
 import { isStage2Running } from "../app/stage2Jobs";
 import { clock, duration, STATUS } from "../app/format";
@@ -10,7 +19,8 @@ import { formatTime, metres } from "../replay/sampling";
 
 interface Props {
   run: RunRecord;
-  devices: string[];
+  /** From `doctor`; null while it is still checking. */
+  devices: SimDevice[] | null;
   onFinished: (runId: string, exit: JobExit) => void;
   onShowInReplay: (time: number, drones: number[], note: string) => void;
 }
@@ -28,6 +38,37 @@ function bytes(n: number | null | undefined): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** "Intel(R) Iris(R) Xe Graphics" -> "Intel Iris Xe Graphics". */
+const plainName = (name: string) =>
+  name
+    .replace(/\((R|TM|C)\)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** What `auto` picks: the first graphics device, else the first device (the bridge lists GPUs first). */
+const autoDevice = (devices: SimDevice[]) => devices.find((d) => d.kind === "gpu") ?? devices[0];
+
+function deviceLabel(id: string, devices: SimDevice[]): string {
+  if (id === "auto") {
+    const d = autoDevice(devices);
+    return d ? `Automatic (${plainName(d.name)})` : "Automatic";
+  }
+  const d = devices.find((x) => x.id === id);
+  return d ? plainName(d.name) : id;
+}
+
+/** The device an id stands for, by name ("auto" resolved). */
+function deviceName(id: string, devices: SimDevice[]): string {
+  const d = id === "auto" ? autoDevice(devices) : devices.find((x) => x.id === id);
+  return d ? plainName(d.name) : id;
+}
+
+/** A report's device: "Intel(R) Iris(R) Xe Graphics (opencl:0:0)" now, "cpu" or "cuda:0" before OpenCL. */
+function reportDevice(device: string): string {
+  if (device === "cpu") return "the CPU";
+  return plainName(device.replace(/\s*\(opencl:\d+:\d+\)$/, ""));
 }
 
 /** The part was made from an earlier Stage 2 result than the one this run has now. */
@@ -94,10 +135,11 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "r
   const running = !!job && !job.exit;
   const status: RunStatus = running ? "running" : (part?.status ?? "not_run");
 
-  const cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4;
   const [runs, setRuns] = useState(part?.config?.runs ?? 100);
-  const [device, setDevice] = useState(devices.includes(part?.config?.device ?? "") ? part!.config!.device : "cpu");
-  const [workers, setWorkers] = useState(part?.config?.workers ?? Math.max(1, Math.min(8, cores - 2)));
+  // A run's saved device may be gone (or be "cpu" / "cuda:0" from before OpenCL): fall back to automatic.
+  const [chosen, setChosen] = useState(part?.config?.device ?? "auto");
+  const device = devices?.some((d) => d.id === chosen) ? chosen : "auto";
+  const noDevice = devices !== null && devices.length === 0;
   const [startError, setStartError] = useState<string | null>(null);
 
   const [report, setReport] = useState<McReport | null>(null);
@@ -118,7 +160,7 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "r
 
   function start() {
     setStartError(null);
-    const args = ["--runs", String(runs), "--device", device, "--workers", String(device === "cpu" ? workers : 1)];
+    const args = ["--runs", String(runs), "--device", device];
     startStage3(run.run_id, run.run_dir, "monte_carlo", args, (exit) => onFinished(run.run_id, exit)).catch((e) =>
       setStartError(String(e)),
     );
@@ -136,28 +178,23 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "r
           onChange={(e) => setRuns(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
         />
       </label>
-      <label className="field">
+      <label className="field field-device">
         <span className="field-label">Simulate on</span>
-        <select value={device} onChange={(e) => setDevice(e.target.value)}>
-          {devices.map((d) => (
-            <option key={d} value={d}>
-              {d === "cpu" ? "CPU" : `GPU (${d})`}
-            </option>
-          ))}
+        <select value={device} disabled={!devices?.length} onChange={(e) => setChosen(e.target.value)}>
+          {devices === null ? (
+            <option value="auto">Checking…</option>
+          ) : noDevice ? (
+            <option value="auto">No device found</option>
+          ) : (
+            ["auto", ...devices.map((d) => d.id)].map((id) => (
+              <option key={id} value={id}>
+                {deviceLabel(id, devices)}
+              </option>
+            ))
+          )}
         </select>
       </label>
-      <label className="field">
-        <span className="field-label">Flights at once</span>
-        <input
-          type="number"
-          min={1}
-          max={cores}
-          value={device === "cpu" ? workers : 1}
-          disabled={device !== "cpu"}
-          onChange={(e) => setWorkers(Math.max(1, Math.min(cores, Number(e.target.value) || 1)))}
-        />
-      </label>
-      <button className={status === "not_run" ? "primary" : ""} onClick={start}>
+      <button className={status === "not_run" ? "primary" : ""} disabled={noDevice} onClick={start}>
         {status === "not_run" ? "Start stress test" : "Run stress test again"}
       </button>
     </div>
@@ -175,13 +212,19 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "r
       </p>
 
       {startError && <p className="notice notice-bad">Could not start the stress test: {startError}</p>}
+      {!running && noDevice && (
+        <p className="notice notice-bad">
+          No device to simulate on. The stress test runs on the graphics chip through its OpenCL driver, or on the
+          processor with a CPU OpenCL runtime. Install either one, then use Check again on the Settings page.
+        </p>
+      )}
       {!running && isStale(run, part) && (
         <p className="notice notice-warn">
           These results are from an earlier Stage 2 result. Run the stress test again to test the current paths.
         </p>
       )}
 
-      {running ? <McRunning job={job!} runId={run.run_id} /> : settings}
+      {running ? <McRunning job={job!} runId={run.run_id} devices={devices ?? []} /> : settings}
 
       {(running || report) && (
         <McResults
@@ -198,7 +241,7 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "r
   );
 }
 
-function McRunning({ job, runId }: { job: Stage3Job; runId: string }) {
+function McRunning({ job, runId, devices }: { job: Stage3Job; runId: string; devices: SimDevice[] }) {
   const [now, setNow] = useState(Date.now());
   const [cancelError, setCancelError] = useState<string | null>(null);
   useEffect(() => {
@@ -219,9 +262,7 @@ function McRunning({ job, runId }: { job: Stage3Job; runId: string }) {
         <p className="muted">
           Running for <span className="num">{clock(now - job.startedAt)}</span>
           {left !== null && left > 0 && <>, about {duration(left)} left</>}
-          {job.planned && job.planned.device === "cpu" && job.planned.workers > 1 && (
-            <>, {job.planned.workers} at once</>
-          )}
+          {job.planned && <> on {deviceName(job.planned.device, devices)}</>}
         </p>
       </div>
       <button
@@ -303,7 +344,7 @@ function McResults({
             </div>
           </dl>
           <p className="muted small">
-            Tested on {report!.device === "cpu" ? "the CPU" : report!.device} in {duration(report!.wall_time_sec)}.
+            Tested on {reportDevice(report!.device)} in {duration(report!.wall_time_sec)}.
             {(s.warning_runs.length > 0 || s.brownout_runs.length > 0) &&
               s.passed &&
               " Close calls and voltage dips don't fail the test, but they are worth a look in the table below."}
@@ -410,7 +451,7 @@ function McResults({
       {records.length > 0 && (
         <p className="muted small">
           Sim speed is how much faster than real time the simulation ran; below 1× a flight takes longer than the
-          show.
+          show. Flights simulated side by side share their batch's average speed.
         </p>
       )}
     </>

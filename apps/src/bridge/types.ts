@@ -37,7 +37,8 @@ export interface Stage3Part {
 }
 
 export interface MonteCarloPart extends Stage3Part {
-  config?: { runs: number; device: string; workers: number; seed: number };
+  /** `batch` since the OpenCL twin; `workers` in runs made before it (one process per CPU core). */
+  config?: { runs: number; device: string; seed: number; batch?: number; workers?: number };
   passed?: boolean;
   crash_rate?: number;
   worst_min_separation_m?: number | null;
@@ -216,6 +217,15 @@ export interface Validation {
   summary: ValidationSummary | null;
 }
 
+/** An OpenCL device the digital twin can run on (`doctor`); `id` is what `--device` takes. */
+export interface SimDevice {
+  id: string;
+  name: string;
+  kind: "gpu" | "cpu" | "other";
+  compute_units: number;
+  memory_mib: number;
+}
+
 export interface DoctorCheck {
   name: string;
   ok: boolean;
@@ -289,12 +299,19 @@ export type BridgeEvent =
   | { type: "progress"; stage: string; done: number; total: number }
   | ({ type: "solve_progress" } & SolveProgress)
   | { type: "validation"; ok: boolean; errors: Issue[]; warnings: Issue[]; summary: ValidationSummary | null }
-  | { type: "doctor"; repo_root: string; extension_dir: string; checks: DoctorCheck[]; devices?: string[] }
+  | {
+      type: "doctor";
+      repo_root: string;
+      extension_dir: string;
+      checks: DoctorCheck[];
+      devices?: string[];
+      device_info?: SimDevice[];
+    }
   | { type: "run_created"; run_id: string; run_dir: string }
   | { type: "stage2_result"; wall_time_sec: number; total_duration_sec: number; fleet_size: number }
   | ({ type: "stage2_failure"; message: string; wall_time_sec: number } & Omit<FailureSummary, "violations">)
   | { type: "replay_ready"; frames: number; fleet_size: number }
-  | { type: "mc_start"; runs: number; device: string; workers: number; seed: number }
+  | { type: "mc_start"; runs: number; device: string; batch: number; seed: number }
   | ({ type: "mc_run" } & McRecord)
   | { type: "mc_result"; summary: McSummary; device: string; wall_time_sec: number }
   | ({ type: "pack_result"; ok: boolean } & PackSummary)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getSettings, listRuns, runJob } from "./bridge/api";
-import type { DoctorCheck, RunRecord, Settings } from "./bridge/types";
+import type { DoctorCheck, RunRecord, Settings, SimDevice } from "./bridge/types";
 import { STATUS, runName } from "./app/format";
 import { isStage2Running } from "./app/stage2Jobs";
 import { isStage3Running, useStage3Job } from "./app/stage3Jobs";
@@ -32,7 +32,8 @@ const runTone = (run: RunRecord) =>
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
-  const [devices, setDevices] = useState<string[]>(["cpu"]);
+  /** Simulation devices from `doctor`; null until it has answered. */
+  const [devices, setDevices] = useState<SimDevice[] | null>(null);
   const [doctorError, setDoctorError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [view, setView] = useState<View>("new");
@@ -56,7 +57,7 @@ export default function App() {
       const d = events.find((e) => e.type === "doctor");
       if (d && d.type === "doctor") {
         setChecks(d.checks);
-        setDevices(d.devices?.length ? d.devices : ["cpu"]);
+        setDevices(d.device_info ?? []);
       }
       else setDoctorError("The component check produced no result.");
     } catch (e) {

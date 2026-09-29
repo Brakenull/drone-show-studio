@@ -12,7 +12,7 @@ export interface Stage3Job {
   startedAt: number; // ms epoch
   phase: string;
   /** Monte Carlo: the planned run count and the flights finished so far (nominal first, run -1). */
-  planned: { runs: number; workers: number; device: string } | null;
+  planned: { runs: number; device: string } | null;
   records: McRecord[];
   /** When the calm-air (nominal) flight landed, ms epoch: the scenario flights start after it. */
   nominalAt: number | null;
@@ -39,7 +39,7 @@ function onEvent(k: string, e: BridgeEvent) {
   const job = jobs[k];
   if (!job) return;
   if (e.type === "phase") set(k, { phase: e.name });
-  else if (e.type === "mc_start") set(k, { planned: { runs: e.runs, workers: e.workers, device: e.device } });
+  else if (e.type === "mc_start") set(k, { planned: { runs: e.runs, device: e.device } });
   else if (e.type === "mc_run") {
     const { type: _type, ...record } = e;
     set(k, { records: [...job.records, record], ...(record.run < 0 ? { nominalAt: Date.now() } : {}) });
@@ -125,9 +125,8 @@ export function useStage3Job(runId: string | null, part: Stage3Part): Stage3Job 
   );
 }
 
-/** Rough time left from the observed pace since the calm-air flight: parallel flights slow each other
- *  down and workers take a while to start, so a per-flight wall time would be far too optimistic.
- *  Null until the first scenario flight lands. */
+/** Rough time left from the observed pace since the calm-air flight. Flights are simulated in batches
+ *  that land together, so the estimate moves in steps. Null until the first batch lands. */
 export function secondsLeft(job: Stage3Job, now: number): number | null {
   const done = job.records.filter((r) => r.run >= 0).length;
   if (!job.planned || !job.nominalAt || done === 0) return null;
