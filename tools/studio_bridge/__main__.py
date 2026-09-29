@@ -52,21 +52,23 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     check("scipy", "replay", module_version("scipy"))
     check("jsonschema", "validate", jsonschema_check)
     check("pyarrow", "stage2 (Arrow output)", module_version("pyarrow"))
-    check("warp", "stage3", module_version("warp"))
+    check("pyopencl", "stage3", module_version("pyopencl"))
     check("pack_to_binary", "stage3", packer_check)
 
-    devices = ["cpu"]
+    devices: list[dict] = []
 
-    def cuda_check():
-        from .stage3_job import cuda_devices
+    def opencl_check():
+        from .stage3_job import simulation_devices
 
-        found = cuda_devices()
-        devices.extend(found)
-        return ", ".join(found) if found else "no NVIDIA GPU; Monte Carlo runs on the CPU"
+        devices.extend(simulation_devices())
+        if not devices:
+            raise RuntimeError("no OpenCL device: install a GPU driver or a CPU OpenCL runtime")
+        return ", ".join(f"{d['name']} ({d['id']})" for d in devices)
 
-    check("cuda", "stage3 (GPU, optional)", cuda_check)
+    check("opencl", "stage3", opencl_check)
+    # `devices`: ids for --device, the default ("auto": first GPU) first; `device_info` describes each id.
     emit("doctor", repo_root=str(REPO_ROOT), extension_dir=str(find_extension_dir() or ""), checks=checks,
-         devices=devices)
+         devices=["auto", *(d["id"] for d in devices)], device_info=devices)
     emit("done", status="succeeded", exit_code=EXIT_OK)
     return EXIT_OK
 
@@ -153,7 +155,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_monte_carlo(args: argparse.Namespace) -> int:
     from .stage3_job import run_monte_carlo_job
 
-    return run_monte_carlo_job(Path(args.run_dir), args.runs, args.device, args.workers, args.seed)
+    return run_monte_carlo_job(Path(args.run_dir), args.runs, args.device, args.batch, args.seed)
 
 
 def cmd_pack(args: argparse.Namespace) -> int:
@@ -190,8 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("monte_carlo")
     p.add_argument("run_dir")
     p.add_argument("--runs", type=int, default=100)
-    p.add_argument("--device", default="cpu", help="Warp device: cpu or cuda:N")
-    p.add_argument("--workers", type=int, default=1, help="Parallel processes (CPU device only)")
+    p.add_argument("--device", default="auto", help="OpenCL device: auto (first GPU), gpu, cpu or opencl:P:D")
+    p.add_argument("--batch", type=int, default=0, help="Runs simulated together (default: automatic)")
+    # Sent by Studio builds that predate the OpenCL twin (one process per CPU core); runs now batch on
+    # the device instead, so this is accepted and ignored.
+    p.add_argument("--workers", type=int, default=None, help=argparse.SUPPRESS)
     p.add_argument("--seed", type=int, default=None, help="Base seed (default: the runner's)")
     p.set_defaults(fn=cmd_monte_carlo)
     p = sub.add_parser("pack")

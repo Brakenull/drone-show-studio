@@ -141,8 +141,8 @@ def test_stage2_success_writes_contract_and_replay(tmp_path):
     assert header["t1"] == pytest.approx(result["total_duration_sec"])
     assert len(separation["min_m"]) == header["frames"]
     # Replay frames are the contract evaluated independently of the bridge.
-    from stage3_simulation_packer.warp_sim.loaders.arrow_loader import load_trajectories
-    from stage3_simulation_packer.warp_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
+    from stage3_simulation_packer.twin_sim.loaders.arrow_loader import load_trajectories
+    from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
 
     pw = build_piecewise(load_trajectories(run_dir / "stage2" / "trajectory_splines.json"))
     t = np.array(separation["times"])

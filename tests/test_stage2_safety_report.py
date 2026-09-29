@@ -12,8 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from stage3_simulation_packer.warp_sim.loaders.arrow_loader import parse_contract_dict
-from stage3_simulation_packer.warp_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
+from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
 
 REPO = Path(__file__).resolve().parents[1]
 EXT_DIR = REPO / "stage2_core_engine" / "build"

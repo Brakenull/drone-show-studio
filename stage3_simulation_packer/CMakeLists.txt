@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Only the binary packer is C++; the digital twin (warp_sim/) is Python + Nvidia Warp.
+# Only the binary packer is C++; the digital twin (twin_sim/) is Python + OpenCL (pyopencl).
 # Requires nlohmann-json, e.g. via the same vcpkg toolchain as stage2_core_engine:
 #   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 find_package(nlohmann_json CONFIG REQUIRED)

@@ -1,14 +1,16 @@
-"""Digital twin physics checks (Warp CPU device; short shows to keep the suite fast)."""
+"""Digital twin physics checks (default OpenCL device; short shows to keep the suite fast)."""
 
 import numpy as np
 import pytest
 
-pytest.importorskip("warp")
+from stage3_helpers import grid_show, line_control_points, make_contract, make_segment, opencl_available
+from stage3_simulation_packer.twin_sim.loaders.arrow_loader import load_trajectories  # noqa: E402
+from stage3_simulation_packer.twin_sim.profile import load_profile  # noqa: E402
 
-from stage3_helpers import grid_show, line_control_points, make_contract, make_segment  # noqa: E402
-from stage3_simulation_packer.warp_sim.loaders.arrow_loader import load_trajectories  # noqa: E402
-from stage3_simulation_packer.warp_sim.profile import load_profile  # noqa: E402
-from stage3_simulation_packer.warp_sim.simulator import DigitalTwin, Disturbances, SimConfig  # noqa: E402
+pytestmark = pytest.mark.skipif(not opencl_available(), reason="no OpenCL device")
+
+if opencl_available():
+    from stage3_simulation_packer.twin_sim.simulator import DigitalTwin, Disturbances, SimConfig
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +30,7 @@ def hover_show(positions, climb_s=6.0, hold_s=6.0):
 
 def test_nominal_climb_and_hover_tracks_reference(profile):
     show = load_trajectories(grid_show(2, duration=6.0, hold=4.0))
-    twin = DigitalTwin(show, profile, device="cpu")
+    twin = DigitalTwin(show, profile)
     res = twin.run(Disturbances.nominal(profile, 4), SimConfig())
     assert np.all(res.max_tracking_error_m < 0.05)
     np.testing.assert_allclose(res.final_position[:, 2], 10.0, atol=0.02)
@@ -40,7 +42,7 @@ def test_nominal_climb_and_hover_tracks_reference(profile):
 
 def test_parked_drones_stay_disarmed_and_only_draw_idle_current(profile):
     contract = make_contract([[make_segment(0, 0.0, 10.0, [[0, 0, 0]] * 6, colors=[(0.0, [0, 0, 0])])]])
-    twin = DigitalTwin(load_trajectories(contract), profile, device="cpu")
+    twin = DigitalTwin(load_trajectories(contract), profile)
     res = twin.run(Disturbances.nominal(profile, 1), SimConfig())
     np.testing.assert_allclose(res.final_position[0], [0, 0, 0], atol=1e-6)
     drained = 1.0 - res.final_soc[0]
@@ -62,7 +64,7 @@ def test_downwash_makes_the_lower_drone_sag(profile):
 
     errors = []
     for with_upper in (False, True):
-        twin = DigitalTwin(load_trajectories(show(with_upper)), profile, device="cpu")
+        twin = DigitalTwin(load_trajectories(show(with_upper)), profile)
         res = twin.run(Disturbances.nominal(profile, 2), SimConfig(record_hz=20))
         z_low = res.recorded_positions[:, 0, 2]
         hover = res.recorded_times > 7.0
@@ -73,7 +75,7 @@ def test_downwash_makes_the_lower_drone_sag(profile):
 
 def test_wind_increases_tracking_error_but_stays_controlled(profile):
     show = load_trajectories(hover_show([(0, 0, 10)]))
-    twin = DigitalTwin(show, profile, device="cpu")
+    twin = DigitalTwin(show, profile)
     calm = twin.run(Disturbances.nominal(profile, 1), SimConfig())
     windy_dist = Disturbances.nominal(profile, 1)
     windy_dist.mean_wind = np.array([9.0, 0.0, 0.0])
@@ -89,7 +91,7 @@ def test_close_approach_is_detected_as_crash_pair(profile):
     # Two drones planned to pass 0.3 m apart at t = 5 s.
     a = [make_segment(0, 0.0, 10.0, line_control_points([-10, 0.15, 10], [10, 0.15, 10], 8))]
     b = [make_segment(0, 0.0, 10.0, line_control_points([10, -0.15, 10], [-10, -0.15, 10], 8))]
-    twin = DigitalTwin(load_trajectories(make_contract([a, b])), profile, device="cpu")
+    twin = DigitalTwin(load_trajectories(make_contract([a, b])), profile)
     res = twin.run(Disturbances.nominal(profile, 2), SimConfig())
     assert res.min_separation_m.min() < 0.5
     assert res.min_separation_partner.tolist() == [1, 0]
@@ -98,7 +100,7 @@ def test_close_approach_is_detected_as_crash_pair(profile):
 
 def test_depleted_battery_raises_brownout(profile):
     show = load_trajectories(hover_show([(0, 0, 10)], climb_s=4.0, hold_s=8.0))
-    twin = DigitalTwin(show, profile, device="cpu")
+    twin = DigitalTwin(show, profile)
     dist = Disturbances.nominal(profile, 1)
     dist.initial_soc = np.array([0.03])
     res = twin.run(dist, SimConfig())
@@ -109,7 +111,7 @@ def test_depleted_battery_raises_brownout(profile):
 
 def test_cold_battery_sags_more(profile):
     show = load_trajectories(hover_show([(0, 0, 10)], climb_s=4.0, hold_s=4.0))
-    twin = DigitalTwin(show, profile, device="cpu")
+    twin = DigitalTwin(show, profile)
     warm = twin.run(Disturbances.nominal(profile, 1, ambient_c=25.0), SimConfig())
     cold = twin.run(Disturbances.nominal(profile, 1, ambient_c=-5.0), SimConfig())
     assert cold.min_voltage_v[0] < warm.min_voltage_v[0] - 0.05
@@ -119,7 +121,7 @@ def test_show_starting_airborne_is_not_treated_as_ground(profile):
     # Regression: the ground plane used to be inferred from the lowest start
     # altitude, so a show starting at z = 5 m "slid along the ground" there.
     seg = make_segment(0, 0.0, 6.0, line_control_points([-6, 0, 5], [6, 0, 5], 8))
-    twin = DigitalTwin(load_trajectories(make_contract([[seg]])), profile, device="cpu")
+    twin = DigitalTwin(load_trajectories(make_contract([[seg]])), profile)
     assert twin.ground_z == 0.0
     res = twin.run(Disturbances.nominal(profile, 1), SimConfig(tail_sec=1.0))
     assert res.max_tracking_error_m[0] < 0.15

@@ -18,8 +18,8 @@ from typing import Any, Callable
 import numpy as np
 from scipy.spatial import cKDTree
 
-from stage3_simulation_packer.warp_sim.loaders.arrow_loader import parse_contract_dict
-from stage3_simulation_packer.warp_sim.loaders.spline_evaluator import (
+from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import (
     build_piecewise,
     evaluate_colors_numpy,
     evaluate_numpy,

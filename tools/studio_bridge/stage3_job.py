@@ -61,23 +61,23 @@ def _job(run_dir: Path, part: str, body: Callable[[Path, dict[str, Any], Callabl
         return finish("failed_error", EXIT_INTERNAL, message=f"{type(exc).__name__}: {exc}")
 
 
-def run_monte_carlo_job(run_dir: Path, runs: int, device: str, workers: int, seed: int | None) -> int:
+def run_monte_carlo_job(run_dir: Path, runs: int, device: str, batch: int, seed: int | None) -> int:
     def body(source: Path, _record: dict[str, Any], finish: Callable[..., int]) -> int:
-        from stage3_simulation_packer.warp_sim.loaders.arrow_loader import TrajectoryContractError
-        from stage3_simulation_packer.warp_sim.monte_carlo_runner import StressConfig, run_monte_carlo
+        from stage3_simulation_packer.twin_sim.devices import DeviceNotFoundError
+        from stage3_simulation_packer.twin_sim.loaders.arrow_loader import TrajectoryContractError
+        from stage3_simulation_packer.twin_sim.monte_carlo_runner import StressConfig, run_monte_carlo
 
         report_path = run_dir / "stage3" / MC_REPORT
         report_path.unlink(missing_ok=True)
-        n_workers = max(1, min(workers, os.cpu_count() or 1))
         cfg = StressConfig(runs=max(0, runs)) if seed is None else StressConfig(runs=max(0, runs), base_seed=seed)
-        update_stage3(run_dir, "monte_carlo", config={"runs": cfg.runs, "device": device, "workers": n_workers,
+        update_stage3(run_dir, "monte_carlo", config={"runs": cfg.runs, "device": device, "batch": max(0, batch),
                                                       "seed": cfg.base_seed})
         emit("phase", name="simulating", detail="starting the digital twin")
-        emit("mc_start", runs=cfg.runs, device=device, workers=n_workers, seed=cfg.base_seed)
+        emit("mc_start", runs=cfg.runs, device=device, batch=max(0, batch), seed=cfg.base_seed)
         try:
-            report = run_monte_carlo(str(source), cfg=cfg, device=device, workers=n_workers,
+            report = run_monte_carlo(str(source), cfg=cfg, device=device, batch=max(0, batch),
                                      on_record=lambda r: emit("mc_run", **r))
-        except (TrajectoryContractError, FileNotFoundError, ValueError) as exc:
+        except (TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
             emit("error", code="input", message=str(exc))
             return finish("failed_input", EXIT_INPUT, message=str(exc))
 
@@ -152,9 +152,10 @@ def run_pack_job(run_dir: Path) -> int:
     return _job(run_dir, "pack", body)
 
 
-def cuda_devices() -> list[str]:
-    """Warp CUDA devices, e.g. ["cuda:0"]; empty without an NVIDIA GPU. Warp's banner goes to stderr."""
-    import warp as wp
+def simulation_devices() -> list[dict[str, Any]]:
+    """OpenCL devices the digital twin can use, GPUs first: {id, name, kind, compute_units, memory_mib}."""
+    from dataclasses import asdict
 
-    wp.init()
-    return [str(d) for d in wp.get_devices() if d.is_cuda]
+    from stage3_simulation_packer.twin_sim.devices import opencl_devices
+
+    return [asdict(d) for d in opencl_devices()]

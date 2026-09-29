@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from stage3_simulation_packer.warp_sim.profile import (
+from stage3_simulation_packer.twin_sim.profile import (
     DEFAULT_PROFILE_PATH,
     TIER_CLI,
     TIER_CONSTANTS,

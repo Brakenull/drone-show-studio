@@ -22,7 +22,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from stage3_simulation_packer.warp_sim.loaders.arrow_loader import (  # noqa: E402
+from stage3_simulation_packer.twin_sim.loaders.arrow_loader import (  # noqa: E402
     parse_contract_dict,
     write_arrow_ipc,
     write_json,

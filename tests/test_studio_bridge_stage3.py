@@ -11,9 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from stage3_helpers import opencl_available
 from test_studio_bridge import REPO, bridge, build_phase1_json, drone_core_available, first, new_run
 
-pytest.importorskip("warp")
+pytest.importorskip("pyopencl")
 
 PACKER = next((p for p in (REPO / "stage3_simulation_packer" / "build").glob("pack_to_binary*")
                if p.suffix in ("", ".exe")), None)
@@ -47,9 +48,11 @@ def without_timing(value):
 def test_doctor_lists_simulation_devices():
     _, events = bridge("doctor")
     doctor = first(events, "doctor")
-    assert doctor["devices"][0] == "cpu"
-    cuda = next(c for c in doctor["checks"] if c["name"] == "cuda")
-    assert cuda["ok"] and all(d.startswith("cuda:") for d in doctor["devices"][1:])
+    assert doctor["devices"][0] == "auto"
+    assert doctor["devices"][1:] == [d["id"] for d in doctor["device_info"]]
+    assert all(d["id"].startswith("opencl:") and d["kind"] in ("gpu", "cpu", "other") for d in doctor["device_info"])
+    opencl = next(c for c in doctor["checks"] if c["name"] == "opencl")
+    assert opencl["ok"] == opencl_available()
 
 
 def test_stage3_needs_a_passed_stage2(tmp_path):
@@ -61,11 +64,13 @@ def test_stage3_needs_a_passed_stage2(tmp_path):
     assert stage3["monte_carlo"]["status"] == stage3["pack"]["status"] == "not_run"
 
 
+@pytest.mark.skipif(not opencl_available(), reason="no OpenCL device")
 def test_monte_carlo_streams_runs_and_matches_the_cli(passed_run, tmp_path):
-    code, events = bridge("monte_carlo", str(passed_run), "--runs", "2", "--workers", "2")
+    # --workers is what older Studio builds send; it is accepted and ignored.
+    code, events = bridge("monte_carlo", str(passed_run), "--runs", "2", "--batch", "1", "--workers", "2")
     assert code == 0
     start = first(events, "mc_start")
-    assert (start["runs"], start["device"], start["workers"]) == (2, "cpu", 2)
+    assert (start["runs"], start["device"], start["batch"]) == (2, "auto", 1)
     runs = [e for e in events if e["type"] == "mc_run"]
     assert [e["run"] for e in runs] == [-1, 0, 1]  # nominal first, then in order
     result = first(events, "mc_result")
@@ -77,12 +82,12 @@ def test_monte_carlo_streams_runs_and_matches_the_cli(passed_run, tmp_path):
     mc = record(passed_run)["stage3"]["monte_carlo"]
     assert mc["status"] == "succeeded" and mc["pid"] is None
     assert mc["stage2_ended_at"] == record(passed_run)["stage2"]["ended_at"]
-    assert mc["config"] == {"runs": 2, "device": "cpu", "workers": 2, "seed": start["seed"]}
+    assert mc["config"] == {"runs": 2, "device": "auto", "batch": 1, "seed": start["seed"]}
 
     source = passed_run / "stage2" / "trajectory_splines.json"
     cli_report = tmp_path / "cli_report.json"
-    subprocess.run([sys.executable, "-m", "stage3_simulation_packer.warp_sim.monte_carlo_runner", str(source),
-                    "--runs", "2", "--device", "cpu", "--report", str(cli_report)], cwd=REPO, check=True,
+    subprocess.run([sys.executable, "-m", "stage3_simulation_packer.twin_sim.monte_carlo_runner", str(source),
+                    "--runs", "2", "--batch", "1", "--report", str(cli_report)], cwd=REPO, check=True,
                    capture_output=True)
     cli = json.loads(cli_report.read_text(encoding="utf-8"))
     assert without_timing(report) == without_timing(cli)

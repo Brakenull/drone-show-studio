@@ -163,12 +163,12 @@ def _run_stage2(run_dir: Path, overrides: dict[str, Any]) -> int:
         return finish("failed_error", EXIT_INTERNAL, message=str(exc), wall_time_sec=wall)
     wall = round(time.perf_counter() - t0, 1)
 
-    from stage3_simulation_packer.warp_sim.loaders.arrow_loader import parse_contract_dict, write_json
+    from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict, write_json
 
     show = parse_contract_dict(result)
     write_json(show, stage_dir / CONTRACT_JSON)
     try:
-        from stage3_simulation_packer.warp_sim.loaders.arrow_loader import write_arrow_ipc
+        from stage3_simulation_packer.twin_sim.loaders.arrow_loader import write_arrow_ipc
 
         write_arrow_ipc(show, stage_dir / CONTRACT_ARROW)
     except ImportError as exc:

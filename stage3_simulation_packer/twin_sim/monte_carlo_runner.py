@@ -13,9 +13,12 @@ Reported but not failing:
   * Brownout Risk: V <= cutoff for more than 2 s
 
 Usage:
-    python -m stage3_simulation_packer.warp_sim.monte_carlo_runner trajectory_splines.json
-        [--profile my_drone.json] [--runs 100] [--device cuda:0|cpu] [--workers 4]
+    python -m stage3_simulation_packer.twin_sim.monte_carlo_runner trajectory_splines.json
+        [--profile my_drone.json] [--runs 100] [--device auto|gpu|cpu|opencl:P:D] [--batch 0]
         [--report out/monte_carlo_report.json] [--nominal-only]
+
+Runs are simulated in batches on the OpenCL device (`DigitalTwin.run_batch`);
+a run's result does not depend on the batch size.
 
 Exit code: 0 = all criteria passed, 1 = a criterion failed, 2 = bad input.
 """
@@ -26,22 +29,24 @@ import argparse
 import copy
 import json
 import math
-import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 
+from .devices import DeviceNotFoundError
 from .loaders.arrow_loader import TrajectoryContractError, load_trajectories
 from .profile import DroneProfile, load_profile
 
 D_CRASH_M = 0.5
 D_WARNING_M = 1.0
 MIN_LANDING_SOC = 0.15
+# Automatic batch size: about this many simulated drones per launch. Larger
+# batches barely add throughput on an integrated GPU but delay progress.
+BATCH_TARGET_DRONES = 20_000
 
 
 @dataclass
@@ -190,36 +195,21 @@ def summarize(runs: list[dict[str, Any]], nominal: dict[str, Any] | None) -> dic
 
 
 # --------------------------------------------------------------------------- #
-# Execution (optionally multi-process for the CPU backend)
+# Execution
 # --------------------------------------------------------------------------- #
 
-_WORKER: dict[str, Any] = {}
-
-
-def _init_worker(source: str, profile_path: str | None, device: str | None, cfg: StressConfig) -> None:
-    from .simulator import DigitalTwin
-
-    profile = load_profile(profile_path)
-    show = load_trajectories(source)
-    _WORKER.update(twin=DigitalTwin(show, profile, device=device), profile=profile, cfg=cfg)
-
-
-def _run_one(run_index: int) -> dict[str, Any]:
-    from .simulator import SimConfig
-
-    twin, profile, cfg = _WORKER["twin"], _WORKER["profile"], _WORKER["cfg"]
-    duration = twin.pw.end_time_sec - twin.pw.start_time_sec
-    dist = sample_disturbances(profile, twin.n, duration, run_index, cfg)
-    return evaluate_run(run_index, dist, twin.run(dist, SimConfig(tail_sec=cfg.tail_sec)))
+def auto_batch_size(fleet_size: int, runs: int) -> int:
+    return max(1, min(runs, BATCH_TARGET_DRONES // max(fleet_size, 1)))
 
 
 def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: StressConfig | None = None,
-                    device: str | None = None, workers: int = 1, nominal_only: bool = False,
+                    device: str | None = None, batch: int = 0, nominal_only: bool = False,
                     progress: bool = False,
                     on_record: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
-    """`progress` prints one line per run (for the CLI). `on_record` (docs/5-studio_gui.md B3) is called
-    with a copy of each finished record as it arrives: the nominal one first (run = -1), then runs 0..N-1
-    in order. An exception it raises stops the test (pending worker runs are cancelled) and propagates."""
+    """`batch` is the number of runs simulated together (0 = `auto_batch_size`). `progress` prints one line
+    per run (for the CLI). `on_record` (docs/5-studio_gui.md B3) is called with a copy of each finished
+    record: the nominal one first (run = -1), then runs 0..N-1 in order, one batch at a time. An exception
+    it raises stops the test (later batches are not started) and propagates."""
     from .simulator import DigitalTwin, Disturbances, SimConfig
 
     cfg = cfg or StressConfig()
@@ -237,34 +227,29 @@ def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: Stress
         on_record(copy.deepcopy(nominal))
 
     runs: list[dict[str, Any]] = []
+    batch = batch if batch > 0 else auto_batch_size(twin.n, cfg.runs)
     if not nominal_only and cfg.runs > 0:
-        in_process = workers <= 1 or not isinstance(source, (str, Path)) or twin.device.is_cuda
-        if in_process:
-            _WORKER.update(twin=twin, profile=profile, cfg=cfg)
-            results = map(_run_one, range(cfg.runs))
-        else:
-            pool = ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
-                                       initargs=(str(source), profile_path, str(twin.device), cfg))
-            results = pool.map(_run_one, range(cfg.runs))
-        try:
-            for record in results:
+        duration = twin.pw.end_time_sec - twin.pw.start_time_sec
+        for first in range(0, cfg.runs, batch):
+            indices = range(first, min(first + batch, cfg.runs))
+            dists = [sample_disturbances(profile, twin.n, duration, i, cfg) for i in indices]
+            results = twin.run_batch(dists, SimConfig(tail_sec=cfg.tail_sec))
+            for i, dist, result in zip(indices, dists, results):
+                record = evaluate_run(i, dist, result)
                 runs.append(record)
                 if progress:
                     status = "PASS" if record["passed"] else "FAIL"
-                    print(f"[run {record['run'] + 1:3d}/{cfg.runs}] {status} min sep {record['min_separation_m']} m, "
+                    print(f"[run {i + 1:3d}/{cfg.runs}] {status} min sep {record['min_separation_m']} m, "
                           f"min SOC {record['min_final_soc']:.3f}, wind {record['scenario']['mean_wind_mps']} m/s, "
                           f"{record['realtime_factor']:.2f}x", flush=True)
                 if on_record:
                     on_record(copy.deepcopy(record))
-        finally:
-            if not in_process:
-                pool.shutdown(cancel_futures=True)
-        runs.sort(key=lambda r: r["run"])
 
     report = {
         "input": str(source) if isinstance(source, (str, Path)) else "<in-memory>",
         "profile": profile.name,
-        "device": str(twin.device),
+        "device": twin.device.label,
+        "batch_size": batch,
         "fleet_size": twin.n,
         "show_duration_sec": round(twin.pw.end_time_sec - twin.pw.start_time_sec, 3),
         "criteria": {"d_crash_m": D_CRASH_M, "d_warning_m": D_WARNING_M, "min_landing_soc": MIN_LANDING_SOC},
@@ -284,8 +269,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", default=None, help="Project drone_profile.json (tier 1 override)")
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--seed", type=int, default=StressConfig.base_seed)
-    parser.add_argument("--device", default=None, help="Warp device, e.g. cuda:0 or cpu (default: best available)")
-    parser.add_argument("--workers", type=int, default=1, help="Parallel processes (CPU device only)")
+    parser.add_argument("--device", default=None,
+                        help="OpenCL device: auto (default: first GPU), gpu, cpu or opencl:P:D")
+    parser.add_argument("--batch", type=int, default=0, help="Runs simulated together (default: automatic)")
     parser.add_argument("--wind-max", type=float, default=StressConfig.wind_mean_max_mps)
     parser.add_argument("--gust-max", type=float, default=StressConfig.gust_peak_max_mps)
     parser.add_argument("--nominal-only", action="store_true", help="Only fly the undisturbed nominal case")
@@ -295,10 +281,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = StressConfig(runs=args.runs, base_seed=args.seed, wind_mean_max_mps=args.wind_max,
                        gust_peak_max_mps=args.gust_max)
     try:
-        report = run_monte_carlo(args.input, args.profile, cfg=cfg, device=args.device,
-                                 workers=max(1, min(args.workers, os.cpu_count() or 1)),
+        report = run_monte_carlo(args.input, args.profile, cfg=cfg, device=args.device, batch=max(0, args.batch),
                                  nominal_only=args.nominal_only, progress=True)
-    except (TrajectoryContractError, FileNotFoundError, ValueError) as exc:
+    except (TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

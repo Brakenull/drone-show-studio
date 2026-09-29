@@ -69,3 +69,12 @@ def grid_show(n_side: int, spacing: float = 2.0, climb: float = 10.0, duration: 
                                      colors=[(duration, [255, 0, 0]), (duration + hold, [0, 0, 255])]))
         drones.append(segs)
     return make_contract(drones)
+
+
+def opencl_available() -> bool:
+    """True when pyopencl is installed and finds at least one device (the digital twin's requirement)."""
+    try:
+        from stage3_simulation_packer.twin_sim.devices import opencl_devices
+    except ImportError:
+        return False
+    return bool(opencl_devices())

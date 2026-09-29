@@ -8,8 +8,8 @@ pybind11==3.1.0
 # All stages and the Studio bridge
 numpy==2.5.3
 
-# Stage 3 digital twin (CPU, or GPU with an NVIDIA driver)
-warp-lang==1.17.0
+# Stage 3 digital twin (OpenCL: any GPU driver, or a CPU OpenCL runtime)
+pyopencl==2026.1.4
 
 # Studio: validation and replay
 jsonschema==4.26.0

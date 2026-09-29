@@ -1,1 +1,1 @@
-"""Phase 3: GPU Digital Twin (warp_sim) and binary flight-file packer (packer)."""
+"""Phase 3: OpenCL digital twin (twin_sim) and binary flight-file packer (packer)."""

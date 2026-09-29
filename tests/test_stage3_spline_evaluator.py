@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from stage3_helpers import make_contract, make_segment
-from stage3_simulation_packer.warp_sim.loaders.arrow_loader import parse_contract_dict
-from stage3_simulation_packer.warp_sim.loaders.spline_evaluator import (
+from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import (
     bspline_to_power_spans,
     build_piecewise,
     evaluate_colors_numpy,
@@ -99,9 +99,13 @@ def test_color_keyframes_merge_across_segments():
     assert c.tolist() == [[50, 0, 0], [0, 0, 100], [0, 0, 150]]
 
 
-def test_warp_kernels_match_numpy_reference():
-    wp = pytest.importorskip("warp")
-    from stage3_simulation_packer.warp_sim.loaders.spline_evaluator import WarpTrajectoryBuffers
+def test_opencl_kernels_match_numpy_reference():
+    from stage3_helpers import opencl_available
+
+    if not opencl_available():
+        pytest.skip("no OpenCL device")
+    from stage3_simulation_packer.twin_sim.profile import load_profile
+    from stage3_simulation_packer.twin_sim.simulator import DigitalTwin
 
     rng = np.random.default_rng(11)
     drones = [[random_segment(rng, 0.0, 5.0), random_segment(rng, 5.0, 9.0) | {"segment_index": 1}]
@@ -109,13 +113,15 @@ def test_warp_kernels_match_numpy_reference():
     pw = build_piecewise(parse_contract_dict(make_contract(drones)))
     times = np.linspace(-1.0, 10.0, 45)
     ref_p, ref_v, _ = evaluate_numpy(pw, times)
-    buffers = WarpTrajectoryBuffers(pw, device="cpu")
-    p, v = buffers.sample_grid(times)
+    twin = DigitalTwin(pw, load_profile())
+    p, v = twin.sample_grid(times)
     np.testing.assert_allclose(p, ref_p, atol=2e-4)   # float32 on the device
     np.testing.assert_allclose(v, ref_v, atol=2e-3)
 
-    n = pw.fleet_size
-    arrays = [wp.zeros(n, dtype=wp.vec3, device="cpu") for _ in range(3)] + [wp.zeros(n, dtype=float, device="cpu")]
-    buffers.launch_reference(2.5, *arrays)
+    ref_p, ref_v, ref_a = (x[:, 0] for x in evaluate_numpy(pw, np.array([2.5])))
+    p, v, a, led = twin.references(2.5)
+    np.testing.assert_allclose(p, ref_p, atol=2e-4)
+    np.testing.assert_allclose(v, ref_v, atol=2e-3)
+    np.testing.assert_allclose(a, ref_a, rtol=1e-3, atol=2e-2)
     colors = evaluate_colors_numpy(pw, np.array([2.5]))[:, 0].astype(float)
-    np.testing.assert_allclose(arrays[3].numpy(), colors.sum(axis=1) / 765.0, atol=3e-3)
+    np.testing.assert_allclose(led, colors.sum(axis=1) / 765.0, atol=3e-3)

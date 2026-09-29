@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from stage3_helpers import grid_show, line_control_points, make_contract, make_segment
-from stage3_simulation_packer.warp_sim.loaders.arrow_loader import (
+from stage3_simulation_packer.twin_sim.loaders.arrow_loader import (
     TrajectoryContractError,
     load_trajectories,
     parse_contract_dict,
