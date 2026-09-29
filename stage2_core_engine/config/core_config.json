@@ -9,6 +9,8 @@
     "adaptive_control_points": true,
     "max_scp_iterations": 25,
     "convergence_tol": 1e-3,
+    "scp_stall_iterations": 6,
+    "scp_stall_tol_m": 5e-4,
     "trust_region_delta_m": 1.0,
     "collision_margin_fraction": 0.05,
     "kinematic_slack_fraction": 0.25,
@@ -41,7 +43,8 @@
       "min_allowable_distance_m": 1.45,
       "auto_retry_with_expansion": true,
       "expansion_factor": 1.25,
-      "max_retry_count": 2
+      "max_retry_count": 2,
+      "min_retry_separation_m": 1.0
     }
   },
   "solver_weights": {

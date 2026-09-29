@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -254,7 +255,10 @@ class DigitalTwin:
         })
         source = "".join(f"#define {k} {v}\n" for k, v in defines.items())
         source += "\n".join((KERNEL_DIR / name).read_text(encoding="utf-8") for name in KERNEL_FILES)
-        program = cl.Program(self.ctx, source).build()
+        with warnings.catch_warnings():
+            # Intel's CPU compiler reports vectorization remarks even on success; build errors still raise.
+            warnings.simplefilter("ignore", cl.CompilerWarning)
+            program = cl.Program(self.ctx, source).build()
         kernels = {k.function_name: k for k in program.all_kernels()}
         self._kernels[key] = kernels
         return kernels

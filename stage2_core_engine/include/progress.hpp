@@ -57,6 +57,15 @@ struct ProgressEvent {
     double worst_separation_m = std::numeric_limits<double>::infinity();
     double required_separation_m = 0.0;
     bool passed = false;
+    // Which gatekeeper checks this attempt failed (passed == all three ok).
+    // The floor and zone checks are trivially ok when the run has no floor
+    // or no keep-out zone.
+    bool separation_ok = false;
+    bool floor_ok = true;
+    bool zone_ok = true;
+    // Lowest control point of the attempt (bounds its whole path from below);
+    // +infinity when the run has no altitude floor.
+    double lowest_z_m = std::numeric_limits<double>::infinity();
 };
 
 using ProgressCallback = std::function<void(const ProgressEvent&)>;

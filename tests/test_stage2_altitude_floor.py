@@ -112,6 +112,23 @@ def test_formation_passed_through_near_the_ground_stays_above_it(drone_core):
     assert lowest_sampled(result) >= -TOL_M
 
 
+def test_floor_holds_exactly_and_attempts_report_it(drone_core):
+    # The QP plans 5 cm above the floor and clamps whatever comes back, so no
+    # control point is below it at all (before: OSQP's inexact solutions left
+    # real ground-level takeoffs 1-6 cm underground, rejecting attempts whose
+    # separation had passed).
+    events = []
+    result = drone_core.optimize_trajectories(low_show(ground=0.0, legs=True), {}, progress_callback=events.append)
+    assert lowest_control_point(result) >= -1e-9
+    ends = [e for e in events if e["event"] == "attempt_end"]
+    assert ends and all(e["floor_ok"] and e["lowest_z_m"] >= -1e-9 for e in ends)
+    assert all(e["passed"] == (e["separation_ok"] and e["floor_ok"] and e["zone_ok"]) for e in ends)
+
+    events = []
+    drone_core.optimize_trajectories(low_show(), {}, progress_callback=events.append)
+    assert all(e["lowest_z_m"] is None and e["floor_ok"] for e in events if e["event"] == "attempt_end")
+
+
 def test_fixed_points_below_the_ground_are_refused(drone_core):
     with pytest.raises(RuntimeError, match=r"holding area has a point at z = 0\.0+ m, below the ground"):
         drone_core.optimize_trajectories(low_show(ground=0.5), {})

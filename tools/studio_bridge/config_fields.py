@@ -51,6 +51,9 @@ FIELDS: list[dict[str, Any]] = [
        "transition.", "integer", group="Safety check", minimum=0),
     _f("solver.continuous_gatekeeper.expansion_factor", "Retry time factor",
        "Each retry multiplies the transition time by this.", group="Safety check", minimum=1.0),
+    _f("solver.continuous_gatekeeper.min_retry_separation_m", "Retry only near misses",
+       "Metres. A transition whose closest pass is below this is not retried: more time can't fix a miss "
+       "that deep. 0 retries every miss.", group="Safety check", minimum=0.0),
     # Motion limits.
     _f(f"{KINEMATICS}.v_max_mps", "Top speed", "m/s.", group="Motion limits", risky="higher", minimum=0.0),
     _f(f"{KINEMATICS}.a_max_mps2", "Max acceleration", "m/s².", group="Motion limits", risky="higher",
@@ -70,6 +73,11 @@ FIELDS: list[dict[str, Any]] = [
     _f("solver.max_scp_iterations", "Refining passes", "Maximum refining passes per transition part.",
        "integer", group="Planner", minimum=1),
     _f("solver.convergence_tol", "Stop when moves are below", "Metres.", group="Planner", minimum=0.0),
+    _f("solver.scp_stall_iterations", "Stop after passes without progress",
+       "Ends a transition part after this many refining passes in a row that don't improve it. 0 = off.",
+       "integer", group="Planner", minimum=0),
+    _f("solver.scp_stall_tol_m", "Progress threshold", "Metres. Smaller gains count as no progress.",
+       group="Planner", minimum=0.0),
     _f("solver.trust_region_delta_m", "Largest move per pass", "Metres.", group="Planner", minimum=0.0),
     _f("solver.num_control_points_min", "Path detail (minimum)", "Control points per path segment.",
        "integer", group="Planner", minimum=6),

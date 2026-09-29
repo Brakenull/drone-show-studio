@@ -64,8 +64,18 @@ std::vector<Eigen::MatrixXd> seed_control_points_with_apf(const std::vector<Boun
 
     const bool z_stratification_enabled = config.z_stratification_mode == "4_sector_discrete";
 
+    // A stationary (parked) drone keeps its constant seed: no altitude band
+    // (atan2(0, 0) = 0 would otherwise lift it into the East band) and no
+    // Euler steps, while still repelling the drones around it.
+    std::vector<char> fixed(num_drones);
+    for (int i = 0; i < num_drones; ++i) fixed[i] = is_stationary_hold(starts[i], ends[i]);
+
     std::vector<std::vector<Eigen::Vector3d>> r(num_drones, std::vector<Eigen::Vector3d>(num_free));
     for (int i = 0; i < num_drones; ++i) {
+        if (fixed[i]) {
+            for (int k = 0; k < num_free; ++k) r[i][k] = result[i].row(free_begin + k).transpose();
+            continue;
+        }
         const Eigen::Vector3d d = ends[i].position - starts[i].position;
         // Discrete 4-Sector Z-Stratification (step 2): head-on horizontal
         // flows (theta_i measured from the +x axis) get lifted into a
@@ -140,6 +150,7 @@ std::vector<Eigen::MatrixXd> seed_control_points_with_apf(const std::vector<Boun
             }
         }
         for (int i = 0; i < num_drones; ++i) {
+            if (fixed[i]) continue;
             for (int k = 0; k < num_free; ++k) {
                 Eigen::Vector3d step_vec = config.euler_dt * force[i][k];
                 const double step_norm = step_vec.norm();
@@ -152,6 +163,7 @@ std::vector<Eigen::MatrixXd> seed_control_points_with_apf(const std::vector<Boun
     }
 
     for (int i = 0; i < num_drones; ++i) {
+        if (fixed[i]) continue;
         for (int k = 0; k < num_free; ++k) {
             result[i].row(free_begin + k) = r[i][k].transpose();
         }

@@ -127,6 +127,11 @@ struct SeparationViolation {
 struct GatekeeperAttempt {
     double duration_sec = 0.0;
     double worst_separation_m = 0.0;
+    // The other two gatekeeper checks (section 1.13 floor, 1.14 zone), so a
+    // rejection whose separation was fine still says why it was rejected.
+    bool floor_ok = true;
+    bool zone_ok = true;
+    double lowest_z_m = std::numeric_limits<double>::infinity();  // +inf without a floor
 };
 
 struct SafetyViolationReport {

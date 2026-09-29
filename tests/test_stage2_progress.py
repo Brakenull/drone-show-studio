@@ -20,7 +20,8 @@ KEYS = {
     "transition_start": TRANSITION_KEYS | {"show_time_sec"},
     "transition_end": TRANSITION_KEYS | {"show_time_sec"},
     "attempt_start": ATTEMPT_KEYS,
-    "attempt_end": ATTEMPT_KEYS | {"worst_separation_m", "required_separation_m", "passed"},
+    "attempt_end": ATTEMPT_KEYS | {"worst_separation_m", "required_separation_m", "passed", "separation_ok",
+                                   "floor_ok", "zone_ok", "lowest_z_m"},
     "scp_iteration": ATTEMPT_KEYS | {"substage", "substage_count", "iteration", "max_iterations", "conflict_pairs",
                                      "max_delta_m", "min_separation_m", "converged"},
 }
@@ -70,7 +71,8 @@ def check_attempt(events: list[dict], transition: int) -> dict:
     assert end["event"] == "attempt_end"
     assert (end["attempt"], end["duration_sec"]) == (start["attempt"], start["duration_sec"])
     worst = end["worst_separation_m"]
-    assert end["passed"] == (worst is None or worst >= end["required_separation_m"])
+    assert end["separation_ok"] == (worst is None or worst >= end["required_separation_m"])
+    assert end["passed"] == (end["separation_ok"] and end["floor_ok"] and end["zone_ok"])
     return end
 
 

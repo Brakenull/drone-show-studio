@@ -335,6 +335,51 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         // PRIMAL_INFEASIBLE cases the last two revisions chased.
         constexpr double kFlyThroughSpeedFraction = 0.5;
 
+        // Shared formation velocity (docs/2-phase_2.md section 1.18): every
+        // drone flying through this keyframe's formation passes its point with
+        // the *same* velocity: the mean of the flying drones' unit travel
+        // directions times the fly-through speed. Its size shrinks towards 0
+        // when the directions disagree. A path's first and last 3 control
+        // points are pinned by its boundary state, so near a keyframe the
+        // solver can't bend it. With a velocity of its own direction per drone,
+        // neighbours arriving from different directions crossed in that pinned
+        // part (2026-09-30, 150_cone: 0.979 m in the last 0.7 s, unchanged by
+        // longer retries). With one shared velocity the pinned parts move as
+        // a rigid copy of the formation, keeping its own spacing.
+        // A staggered takeoff arrives at rest: every row but the last hovers
+        // at its formation point until the last row arrives (the post-gap
+        // hold below, v = 0). With a fly-through end velocity those rows
+        // jumped from flying speed to 0 instantly (found 2026-09-30), and the
+        // next transition started with some drones hovering and some flying.
+        Eigen::Vector3d formation_velocity = Eigen::Vector3d::Zero();
+        if (!is_final_keyframe && !apply_stagger) {
+            Eigen::Vector3d direction_sum = Eigen::Vector3d::Zero();
+            int flying = 0;
+            for (int slot = 0; slot < n; ++slot) {
+                const Eigen::Vector3d target = Q.row(assign_result.assignment[slot]).transpose();
+                if (in_holding_region(target)) continue;  // parking: arrives at rest (below)
+                const Eigen::Vector3d travel = target - P.row(slot).transpose();
+                if (travel.norm() > 1e-6) {
+                    direction_sum += travel.normalized();
+                    ++flying;
+                }
+            }
+            if (flying > 0) {
+                formation_velocity = direction_sum / flying * (kFlyThroughSpeedFraction * config.kinematics.v_max_mps);
+            }
+            // Near the floor, pass through level so neither a path's end nor
+            // the next one's start can dip below it (section 1.13). Levelled
+            // for the whole formation, so it stays one shared velocity.
+            for (int slot = 0; slot < n; ++slot) {
+                const Eigen::Vector3d target = Q.row(assign_result.assignment[slot]).transpose();
+                if (in_holding_region(target)) continue;
+                if (optimizer::floor_safe_velocity(target, formation_velocity, config) != formation_velocity) {
+                    formation_velocity.z() = 0.0;
+                    break;
+                }
+            }
+        }
+
         std::vector<optimizer::DroneTransitionProblem> problems(n);
         for (int slot = 0; slot < n; ++slot) {
             const int target_slot = assign_result.assignment[slot];
@@ -344,19 +389,16 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             problem.start.velocity = actual_velocity.row(slot).transpose();
             problem.start.acceleration = Eigen::Vector3d::Zero();
             problem.end.position = Q.row(target_slot).transpose();
-            if (is_final_keyframe) {
-                problem.end.velocity = Eigen::Vector3d::Zero();
-            } else {
-                const Eigen::Vector3d travel = problem.end.position - problem.start.position;
-                const double travel_norm = travel.norm();
-                problem.end.velocity =
-                    travel_norm > 1e-6
-                        ? Eigen::Vector3d(travel / travel_norm * (kFlyThroughSpeedFraction * config.kinematics.v_max_mps))
-                        : Eigen::Vector3d::Zero();
-                // Near the floor, pass through level so neither this path's
-                // end nor the next one's start can dip below it (section 1.13).
-                problem.end.velocity = optimizer::floor_safe_velocity(problem.end.position, problem.end.velocity, config);
-            }
+            // A holding-area target mid-show is a drone parking (or staying
+            // parked): it lands and stops like at the show's end. With the
+            // fly-through speed it reached its pad at ~3 m/s sideways and,
+            // starting the next transition at that speed, skidded ~2 m into
+            // the neighbouring pad (2026-09-29, 150_cone: 0.159 m on every
+            // attempt). At rest, a drone that stays parked is also held
+            // fixed by the solver (docs/2-phase_2.md section 1.15).
+            problem.end.velocity = is_final_keyframe || in_holding_region(problem.end.position)
+                                       ? Eigen::Vector3d::Zero()
+                                       : formation_velocity;
             problem.end.acceleration = Eigen::Vector3d::Zero();
             // Section 1.14: only drones flying the show keep out of the zone;
             // taking off, landing or parked (start or end in the holding

@@ -6,7 +6,7 @@ Takes a drone light show from a Blender animation to verified flight files, one 
 | --- | --- | --- |
 | 1. Design | `stage1_designer/` | Blender add-on: turns animated 3D shapes into one point per drone, checks the motion, exports the show as JSON. |
 | 2. Path planning | `stage2_core_engine/` | C++ engine (`drone_core`): assigns drones to points and plans smooth, collision-free paths. A separate check at 100 Hz rejects any show where two drones come too close. |
-| 3. Digital twin | `stage3_simulation_packer/` | Simulates the fleet in wind, gusts and positioning noise (NVIDIA Warp; CPU or GPU) and packs each drone's path into a checked binary flight file. |
+| 3. Digital twin | `stage3_simulation_packer/` | Simulates the fleet in wind, gusts and positioning noise (OpenCL, on the GPU or the CPU) and packs each drone's path into a checked binary flight file. |
 | Desktop app | `apps/` | Drone Show Studio: runs stages 2 and 3 on a show file and shows the results — progress, why a show was rejected, 3D replay, stress test, flight files, run comparison. |
 
 Windows 10/11 x64 is the supported platform.
@@ -26,7 +26,12 @@ Windows 10/11 x64 is the supported platform.
 | [Git](https://git-scm.com/download/win) | vcpkg downloads its package definitions with it. |
 | [Blender](https://www.blender.org/download/) 4.0 or later | Only to design shows (stage 1). |
 
-An NVIDIA GPU is optional: without one, the stage 3 simulation runs on the CPU. With one, only the NVIDIA driver is needed, not the CUDA toolkit.
+Stage 3 runs its simulation through **OpenCL**, which needs a driver:
+
+* **With a GPU** (Intel, NVIDIA or AMD, including integrated graphics such as Intel Iris Xe): the normal graphics driver already includes OpenCL. Nothing else to install.
+* **Without a usable GPU:** install Intel's free [CPU Runtime for OpenCL Applications](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-cpu-runtime-for-opencl-applications-with-sycl-support.html) (Windows installer; administrator rights needed). It supports Intel Core and Xeon processors.
+
+To see which devices were found, after setup: `.venv\Scripts\python.exe tools\scripts\benchmark_stage3.py --list`.
 
 ### 2. Run the setup script
 
@@ -109,7 +114,7 @@ ctest --preset release                                              # C++ tests 
 .venv\Scripts\python.exe tools\scripts\export_stage2_trajectories.py <show.json> out\
 
 # Stage 3: stress test in simulated weather, then pack and verify flight files
-.venv\Scripts\python.exe -m stage3_simulation_packer.warp_sim.monte_carlo_runner out\trajectory_splines.json --runs 100
+.venv\Scripts\python.exe -m stage3_simulation_packer.twin_sim.monte_carlo_runner out\trajectory_splines.json --runs 100
 stage3_simulation_packer\build\pack_to_binary.exe out\trajectory_splines.json out\bin
 stage3_simulation_packer\build\pack_to_binary.exe --verify out\bin
 ```
@@ -125,4 +130,5 @@ stage3_simulation_packer\build\pack_to_binary.exe --verify out\bin
 | `No module named 'drone_core'` | Stage 2 isn't built, or was built for another Python. Run `setup.ps1` again (with `-Clean` if needed). |
 | `.venv` has the wrong Python version | Delete the `.venv` folder and run `setup.ps1` again. |
 | vcpkg fails to download packages | vcpkg needs internet access and Git on the first build. |
-| Stage 3 is slow | Without an NVIDIA GPU the simulation runs on the CPU; in the app, raise "flights at once". |
+| Stage 3 is slow | Choose the GPU in "Simulate on" (or `--device gpu`). On a CPU, 1 000 drones run at about real time; on an integrated GPU about ten times faster. |
+| Stage 3 says "no OpenCL device found" | Update the graphics driver, or install Intel's CPU Runtime for OpenCL Applications (see Setup), then click *Check again* on the Settings page. |

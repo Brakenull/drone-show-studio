@@ -35,6 +35,16 @@ using trajectory::QuinticBSpline;
 // and another round of collision rows per SCP iteration, which is what took
 // a real 300-drone/50s transition from a projected 15s budget to 6+ minutes
 // of wall time before this fix.
+// Altitude floor planning buffer (section 1.13): the QP keeps free control
+// points this far above the floor, while the gatekeeper still verifies the
+// floor itself (1 mm tolerance). Same idea as collision_margin_fraction for
+// separation. The floor rows are hard, but try_solve_qp() accepts OSQP's
+// SOLVED_INACCURATE and OSQP's tolerances are relative to coordinates of tens
+// of meters, so a "hard" z >= floor came back 1-6 cm underground on real
+// ground-level takeoffs (2026-09-29: 100_cone, cube_300), rejecting attempts
+// whose separation had passed.
+constexpr double kFloorPlanningMarginM = 0.05;
+
 double compute_time_bucket_s(double duration, bool adaptive, int target_windows) {
     constexpr double kMinBucketS = 0.5;
     if (!adaptive || target_windows <= 0) {
@@ -93,6 +103,7 @@ Eigen::VectorXd dense_basis_row(int num_control_points, int degree, const Eigen:
 struct DroneWorkspace {
     int drone_id = 0;
     bool keep_out = false;  // section 1.14: this drone flies the show here
+    bool fixed = false;     // section 1.15: parked, held as an obstacle and never solved
     Eigen::MatrixXd control_points;  // current iterate, num_control_points x 3
     DerivativeOperators ops;
     std::unique_ptr<QuinticBSpline> spline;  // rebuilt after every drone-level solve
@@ -550,16 +561,16 @@ Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, doub
             if (r.coeffs.cwiseAbs().sum() > 1e-12) kinematic_rows.push_back(std::move(r));
         }
     }
-    // Altitude floor (section 1.13): z of every free control point >= floor.
-    // Hard, like the kinematic box; the convex hull property then keeps the
-    // whole spline above it (the pinned control points are floor-safe by
-    // construction, see floor_safe_velocity()).
+    // Altitude floor (section 1.13): z of every free control point >= floor
+    // + kFloorPlanningMarginM. Hard, like the kinematic box; the convex hull
+    // property then keeps the whole spline above it (the pinned control
+    // points are floor-safe by construction, see floor_safe_velocity()).
     if (config.safety.altitude_floor_m) {
         for (int i = 0; i < num_free; ++i) {
             LinearRow r;
             r.coeffs = Eigen::RowVectorXd::Zero(dim);
             r.coeffs(2 * num_free + i) = 1.0;
-            r.lower = *config.safety.altitude_floor_m;
+            r.lower = *config.safety.altitude_floor_m + kFloorPlanningMarginM;
             r.upper = OSQP_INFTY;
             kinematic_rows.push_back(std::move(r));
         }
@@ -880,13 +891,18 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     for (int i = 0; i < num_drones; ++i) {
         workspaces[i].drone_id = problems[i].drone_id;
         workspaces[i].keep_out = problems[i].keep_out;
+        workspaces[i].fixed = trajectory::is_stationary_hold(problems[i].start, problems[i].end);
         workspaces[i].control_points = seeded_control_points[i];
         if (config.safety.altitude_floor_m) {
-            // Lift a seed that dips below the floor onto it, so the first
-            // iteration's trust region already contains a floor-feasible point.
-            for (int idx = map.free_begin; idx < map.free_end; ++idx) {
-                double& z = workspaces[i].control_points(idx, 2);
-                z = std::max(z, *config.safety.altitude_floor_m);
+            // Lift a seed that dips below the floor's planning buffer onto
+            // it, so the first iteration's trust region already contains a
+            // floor-feasible point. A fixed (parked) drone keeps its constant
+            // path on the pad, which is at or above the floor.
+            if (!workspaces[i].fixed) {
+                for (int idx = map.free_begin; idx < map.free_end; ++idx) {
+                    double& z = workspaces[i].control_points(idx, 2);
+                    z = std::max(z, *config.safety.altitude_floor_m + kFloorPlanningMarginM);
+                }
             }
         }
         workspaces[i].ops = trajectory::build_derivative_operators(n, duration);
@@ -926,6 +942,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     // intrusion is always 0, i.e. the previous separation-only ranking).
     double best_intrusion = std::numeric_limits<double>::infinity();
     std::vector<Eigen::MatrixXd> best_control_points(num_drones);
+    int iterations_without_progress = 0;  // SolverOptions::scp_stall_iterations
 
     for (int iter = 0; iter < config.solver.max_scp_iterations; ++iter) {
         // Rebuild the 4D spatio-temporal conflict graph from the *current*
@@ -959,10 +976,6 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         }
         const std::vector<collision::CandidatePair> pairs = hash.find_candidate_pairs();
 
-        std::vector<int> all_ids;
-        all_ids.reserve(num_drones);
-        for (const auto& ws : workspaces) all_ids.push_back(ws.drone_id);
-
         // Conflict-graph edges for clustering/coloring: one per unique drone
         // pair appearing in `pairs` (see build_conflict_edges()'s safety-
         // critical invariant comment — this must stay a 1:1 mirror of every
@@ -978,8 +991,24 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         // enabled.
         const std::vector<collision::ConflictEdge> conflict_edges =
             build_conflict_edges(pairs, workspaces, drone_index, duration, time_bucket_s);
+        // Section 1.15: a fixed (parked) drone is never solved, so it can't
+        // race anyone and needs no cluster or color. Its pairs stay in
+        // `pairs`/`conflict_edges`, so the drones moving past it still get
+        // collision and cutting-plane rows against it.
+        std::vector<int> solved_ids;
+        solved_ids.reserve(num_drones);
+        for (const auto& ws : workspaces) {
+            if (!ws.fixed) solved_ids.push_back(ws.drone_id);
+        }
+        std::vector<collision::ConflictEdge> solved_edges;
+        solved_edges.reserve(conflict_edges.size());
+        for (const auto& edge : conflict_edges) {
+            if (!workspaces[drone_index.at(edge.drone_i)].fixed && !workspaces[drone_index.at(edge.drone_j)].fixed) {
+                solved_edges.push_back(edge);
+            }
+        }
         const std::vector<std::vector<int>> clusters =
-            collision::connected_components(all_ids, conflict_edges, /*max_cluster_size=*/0);
+            collision::connected_components(solved_ids, solved_edges, /*max_cluster_size=*/0);
 
         // Adaptive Cutting-Plane Collocation (docs/2-phase_2.md Rev 2.9
         // section 1.10): scanned once per iteration, from this iteration's
@@ -1050,6 +1079,16 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             };
             self_ws.control_points =
                 solve_drone_qp(map, self_ws, duration, config, H, collision_rows, trust_region_anchor[idx], recollect);
+            if (config.safety.altitude_floor_m) {
+                // Section 1.13: whatever the QP tier returned (an inaccurate
+                // OSQP solution, or the unoptimized jittered iterate when all
+                // tiers failed), lift any free control point still under the
+                // floor onto it, so the floor holds by the convex hull property.
+                for (int k = map.free_begin; k < map.free_end; ++k) {
+                    double& z = self_ws.control_points(k, 2);
+                    z = std::max(z, *config.safety.altitude_floor_m);
+                }
+            }
             rebuild_spline(self_ws, duration);
         };
 
@@ -1065,12 +1104,12 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             // together instead of each waiting behind the previous cluster's
             // own fully sequential turn.
             std::unordered_map<int, int> cluster_of;
-            cluster_of.reserve(all_ids.size());
+            cluster_of.reserve(solved_ids.size());
             for (int c = 0; c < static_cast<int>(clusters.size()); ++c) {
                 for (int drone_id : clusters[c]) cluster_of[drone_id] = c;
             }
             std::vector<std::vector<collision::ConflictEdge>> edges_by_cluster(clusters.size());
-            for (const auto& edge : conflict_edges) {
+            for (const auto& edge : solved_edges) {
                 auto it_i = cluster_of.find(edge.drone_i);
                 auto it_j = cluster_of.find(edge.drone_j);
                 if (it_i != cluster_of.end() && it_j != cluster_of.end() && it_i->second == it_j->second) {
@@ -1130,6 +1169,13 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         constexpr double kIntrusionTieM = 1e-6;
         const bool better = iter_intrusion < best_intrusion - kIntrusionTieM ||
                             (iter_intrusion <= best_intrusion + kIntrusionTieM && iter_min_separation > best_min_separation);
+        // Stall stop: progress means the best iterate got meaningfully better
+        // (less zone intrusion, or more separation), not just any tie-break.
+        const double stall_tol = config.solver.scp_stall_tol_m;
+        const bool progressed = iter_intrusion < best_intrusion - std::max(stall_tol, kIntrusionTieM) ||
+                                (iter_intrusion <= best_intrusion + kIntrusionTieM &&
+                                 iter_min_separation > best_min_separation + stall_tol);
+        iterations_without_progress = progressed ? 0 : iterations_without_progress + 1;
         if (better) {
             best_min_separation = iter_min_separation;
             best_intrusion = iter_intrusion;
@@ -1149,6 +1195,10 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         }
         if (converged) {
             break;
+        }
+        if (config.solver.scp_stall_iterations > 0 &&
+            iterations_without_progress >= config.solver.scp_stall_iterations) {
+            break;  // stalled: the best iterate is kept below, as after max_scp_iterations
         }
     }
 
@@ -1201,22 +1251,32 @@ Eigen::Vector3d bowed_waypoint_position(const Eigen::Vector3d& start, const Eige
 // own collision constraints. This runs a small iterative pairwise repulsion
 // pass (standard Gauss-Seidel constraint relaxation) directly on the batch
 // of one sub-stage boundary's positions across the whole fleet, splitting
-// the deficit between whichever two drones actually end up too close.
-void declash_waypoints(std::vector<Eigen::Vector3d>& positions, double enforced_min_distance) {
+// the deficit between whichever two drones actually end up too close. A
+// `fixed` (parked, section 1.15) drone never moves: the other one takes the
+// whole deficit, and two fixed drones are left as they are.
+void declash_waypoints(std::vector<Eigen::Vector3d>& positions, const std::vector<char>& fixed,
+                       double enforced_min_distance) {
     constexpr int kMaxIterations = 8;
     const int num_drones = static_cast<int>(positions.size());
     for (int iter = 0; iter < kMaxIterations; ++iter) {
         bool any_violation = false;
         for (int i = 0; i < num_drones; ++i) {
             for (int j = i + 1; j < num_drones; ++j) {
+                if (fixed[i] && fixed[j]) continue;
                 const Eigen::Vector3d diff = positions[i] - positions[j];
                 const double dist = diff.norm();
                 if (dist >= enforced_min_distance) continue;
                 any_violation = true;
-                const double push = (enforced_min_distance - dist) / 2.0;
+                const double deficit = enforced_min_distance - dist;
                 const Eigen::Vector3d dir = dist > 1e-6 ? Eigen::Vector3d(diff / dist) : Eigen::Vector3d(1.0, 0.0, 0.0);
-                positions[i] += dir * push;
-                positions[j] -= dir * push;
+                if (fixed[j]) {
+                    positions[i] += dir * deficit;
+                } else if (fixed[i]) {
+                    positions[j] -= dir * deficit;
+                } else {
+                    positions[i] += dir * (deficit / 2.0);
+                    positions[j] -= dir * (deficit / 2.0);
+                }
             }
         }
         if (!any_violation) break;
@@ -1292,6 +1352,8 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     // a time (rather than one drone at a time) so declash_waypoints() can
     // see and correct the whole fleet's positions at that instant together.
     std::vector<std::vector<trajectory::BoundaryConditions>> waypoints(num_drones);
+    std::vector<char> fixed(num_drones);
+    for (int i = 0; i < num_drones; ++i) fixed[i] = trajectory::is_stationary_hold(problems[i].start, problems[i].end);
     for (int i = 0; i < num_drones; ++i) {
         waypoints[i].resize(num_substages + 1);
         waypoints[i].front() = problems[i].start;
@@ -1304,9 +1366,13 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
         for (int i = 0; i < num_drones; ++i) {
             positions[i] = bowed_waypoint_position(problems[i].start.position, problems[i].end.position, frac);
         }
-        declash_waypoints(positions, enforced_min_distance);
+        declash_waypoints(positions, fixed, enforced_min_distance);
         const double remaining_time = duration - waypoint_time;
         for (int i = 0; i < num_drones; ++i) {
+            if (fixed[i]) {
+                waypoints[i][k] = problems[i].start;  // stays at rest on its pad
+                continue;
+            }
             trajectory::BoundaryConditions wp;
             wp.position = positions[i];
             if (config.safety.keep_out && problems[i].keep_out) {
@@ -1657,12 +1723,10 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             worst_continuous_distance = std::min(worst_continuous_distance, report.min_distance);
             stage_offset += stage_duration;
         }
-        attempt_history.push_back(GatekeeperAttempt{attempt_duration, worst_continuous_distance});
-
-        // Altitude floor safety net (section 1.13): the QP rows and the
+        // Altitude floor safety net (section 1.13): the QP rows (planned
+        // kFloorPlanningMarginM above the floor), the post-QP clamp and the
         // floor-safe boundaries make this hold by construction; a result
-        // that still dips below (e.g. an all-tiers-infeasible jittered
-        // iterate) is not accepted. Checked on the control points: by the
+        // that still dips below is not accepted. Checked on the control points: by the
         // convex hull property their lowest z bounds the whole path.
         double lowest_control_point_z = std::numeric_limits<double>::infinity();
         for (const auto& traj : result.trajectories) {
@@ -1670,7 +1734,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                 lowest_control_point_z = std::min(lowest_control_point_z, st.control_points.col(2).minCoeff());
             }
         }
-        constexpr double kFloorToleranceM = 1e-3;  // OSQP's own feasibility tolerance is well below this
+        constexpr double kFloorToleranceM = 1e-3;
         const bool floor_ok = !config.safety.altitude_floor_m ||
                               lowest_control_point_z >= *config.safety.altitude_floor_m - kFloorToleranceM;
 
@@ -1703,6 +1767,11 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
         constexpr double kKeepOutToleranceM = 1e-3;
         const bool zone_ok = !config.safety.keep_out ||
                              closest_to_zone.distance_m >= config.safety.keep_out->clearance_m - kKeepOutToleranceM;
+        const bool separation_ok = worst_continuous_distance >= gatekeeper.min_allowable_distance_m;
+        const double reported_lowest_z =
+            config.safety.altitude_floor_m ? lowest_control_point_z : std::numeric_limits<double>::infinity();
+        attempt_history.push_back(
+            GatekeeperAttempt{attempt_duration, worst_continuous_distance, floor_ok, zone_ok, reported_lowest_z});
         if (progress) {
             ProgressEvent e;
             e.kind = ProgressEvent::Kind::AttemptEnd;
@@ -1711,10 +1780,19 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             e.duration_sec = attempt_duration;
             e.worst_separation_m = worst_continuous_distance;
             e.required_separation_m = gatekeeper.min_allowable_distance_m;
-            e.passed = worst_continuous_distance >= gatekeeper.min_allowable_distance_m && floor_ok && zone_ok;
+            e.passed = separation_ok && floor_ok && zone_ok;
+            e.separation_ok = separation_ok;
+            e.floor_ok = floor_ok;
+            e.zone_ok = zone_ok;
+            e.lowest_z_m = reported_lowest_z;
             progress(e);
         }
 
+        // Fail fast: a separation miss deeper than min_retry_separation_m is
+        // not retried (see ContinuousGatekeeperConfig), nor is anything
+        // after the retry budget.
+        const bool hopeless = !separation_ok && worst_continuous_distance < gatekeeper.min_retry_separation_m;
+        const bool give_up = !gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count || hopeless;
         if (worst_continuous_distance >= gatekeeper.min_allowable_distance_m && floor_ok && zone_ok) {
             if (stats) {
                 stats->attempts = attempt + 1;
@@ -1722,7 +1800,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             }
             return result.trajectories;
         }
-        if ((!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) &&
+        if (give_up &&
             worst_continuous_distance >= gatekeeper.min_allowable_distance_m && floor_ok) {
             // Separation and floor are fine; only the keep-out zone failed.
             throw KeepOutViolationError(
@@ -1732,7 +1810,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                     " attempt(s)",
                 closest_to_zone, attempt + 1);
         }
-        if ((!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) &&
+        if (give_up &&
             worst_continuous_distance >= gatekeeper.min_allowable_distance_m) {
             // Separation is fine; only the floor failed, on every attempt.
             throw std::runtime_error("Altitude floor violated: a planned path goes down to z = " +
@@ -1740,7 +1818,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                                      std::to_string(*config.safety.altitude_floor_m) + " m, after " +
                                      std::to_string(attempt + 1) + " attempt(s)");
         }
-        if (!gatekeeper.auto_retry_with_expansion || attempt >= gatekeeper.max_retry_count) {
+        if (give_up) {
             SafetyViolationReport report;
             report.worst_separation_m = worst_continuous_distance;
             report.required_separation_m = gatekeeper.min_allowable_distance_m;
@@ -1758,11 +1836,29 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                 report.violations.resize(kMaxReportedViolations);
             }
             report.rejected_solutions = std::move(result.trajectories);
+            // The other checks' failures per attempt, so an attempt rejected
+            // with enough separation (floor or zone only) doesn't read as a
+            // separation failure.
+            std::string other_checks;
+            for (size_t a = 0; a < report.attempts.size(); ++a) {
+                const GatekeeperAttempt& h = report.attempts[a];
+                std::string failed;
+                if (!h.floor_ok) failed += "altitude floor (lowest point z = " + std::to_string(h.lowest_z_m) + " m)";
+                if (!h.zone_ok) failed += std::string(failed.empty() ? "" : ", ") + "holding-area clearance";
+                if (failed.empty()) continue;
+                other_checks += "; attempt " + std::to_string(a + 1) + " (worst separation " +
+                                std::to_string(h.worst_separation_m) + " m) also failed: " + failed;
+            }
             throw SafetyViolationError(
                 "CRITICAL: Safety violation detected by 100Hz continuous gatekeeper! (worst separation " +
                     std::to_string(worst_continuous_distance) + " m, required " +
                     std::to_string(gatekeeper.min_allowable_distance_m) + " m, after " +
-                    std::to_string(attempt + 1) + " attempt(s))",
+                    std::to_string(attempt + 1) + " attempt(s)" +
+                    (hopeless && gatekeeper.auto_retry_with_expansion && attempt < gatekeeper.max_retry_count
+                         ? "; not retried: below " + std::to_string(gatekeeper.min_retry_separation_m) +
+                               " m, more time can't fix a miss this deep"
+                         : std::string()) +
+                    ")" + other_checks,
                 std::move(report));
         }
         attempt_duration *= gatekeeper.expansion_factor;

@@ -175,7 +175,7 @@ foreach ($engine in @('stage2_core_engine', 'stage3_simulation_packer')) {
 
 # ---------------------------------------------------------------- 4. checks
 Write-Step 'Checking the pipeline'
-# Warp prints a warning on stderr when there is no NVIDIA driver; only the event on stdout matters.
+# Native libraries (OpenCL drivers) may print to stderr; only the event on stdout matters.
 $doctorLine = Invoke-Quiet { & $venvPython -m tools.studio_bridge doctor } | Where-Object { $_ -like '{"type": "doctor"*' -or $_ -like '{"type":"doctor"*' } | Select-Object -First 1
 if (-not $doctorLine) { throw 'The Studio dependency check (python -m tools.studio_bridge doctor) gave no result.' }
 $doctor = $doctorLine | ConvertFrom-Json

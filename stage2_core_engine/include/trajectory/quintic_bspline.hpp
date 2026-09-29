@@ -41,6 +41,17 @@ struct BoundaryConditions {
     Eigen::Vector3d acceleration = Eigen::Vector3d::Zero();
 };
 
+// A drone at rest on the same point at both ends of a transition (a parked
+// drone that a formation smaller than the fleet leaves in the holding area):
+// the planners hold it there as a fixed obstacle instead of optimizing it
+// (docs/2-phase_2.md section 1.15). seed_control_points() of such a pair is
+// already the constant path.
+inline bool is_stationary_hold(const BoundaryConditions& start, const BoundaryConditions& end) {
+    constexpr double kTolM = 1e-6;
+    return (end.position - start.position).norm() < kTolM && start.velocity.norm() < kTolM &&
+           end.velocity.norm() < kTolM && start.acceleration.norm() < kTolM && end.acceleration.norm() < kTolM;
+}
+
 // Solves for the first/last 3 control points (C0,C1,C2 and C_{m-2},C_{m-1},
 // C_m) that make a clamped quintic B-spline satisfy `start`/`end` exactly,
 // via forward substitution on the derivative recursion above (the end is

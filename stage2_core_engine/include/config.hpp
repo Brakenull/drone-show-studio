@@ -105,6 +105,12 @@ struct ContinuousGatekeeperConfig {
     bool auto_retry_with_expansion = true;
     double expansion_factor = 1.25;
     int max_retry_count = 2;
+    // Fail fast (2026-09-29): an attempt whose worst separation is below
+    // this is not retried. Stretching the duration by expansion_factor fixes
+    // near misses at best; a miss this deep is structural (e.g. a pinned
+    // boundary state), and each retry is a bigger solve than the last.
+    // 0 retries every separation failure, as before.
+    double min_retry_separation_m = 1.0;
 };
 
 // SCP/OSQP hyperparameters (section 1.1, 1.3, 3.3).
@@ -115,6 +121,14 @@ struct SolverOptions {
     bool adaptive_control_points = true;
     int max_scp_iterations = 25;
     double convergence_tol = 1e-3;
+    // Stall stop (2026-09-29): end a sub-stage's SCP loop after this many
+    // iterations in a row that improve its best iterate by less than
+    // scp_stall_tol_m (0 = off). The loop practically never meets
+    // convergence_tol, and the returned best iterate was measured to gain at
+    // most ~2 mm after ~10 iterations, so the rest of max_scp_iterations was
+    // wasted time.
+    int scp_stall_iterations = 6;
+    double scp_stall_tol_m = 5e-4;
     double trust_region_delta_m = 1.0;
     double collision_margin_fraction = 0.05;
     // Rev 2.4's seed_bow_magnitude_m was retired in Rev 2.8 (section 1.2)
@@ -225,6 +239,8 @@ inline void apply_json_overrides(CoreConfig& config, const nlohmann::json& root)
         config_detail::read_key(s, "adaptive_control_points", config.solver.adaptive_control_points);
         config_detail::read_key(s, "max_scp_iterations", config.solver.max_scp_iterations);
         config_detail::read_key(s, "convergence_tol", config.solver.convergence_tol);
+        config_detail::read_key(s, "scp_stall_iterations", config.solver.scp_stall_iterations);
+        config_detail::read_key(s, "scp_stall_tol_m", config.solver.scp_stall_tol_m);
         config_detail::read_key(s, "trust_region_delta_m", config.solver.trust_region_delta_m);
         config_detail::read_key(s, "collision_margin_fraction", config.solver.collision_margin_fraction);
         config_detail::read_key(s, "jitter_magnitude_m", config.solver.jitter_magnitude_m);
@@ -267,6 +283,8 @@ inline void apply_json_overrides(CoreConfig& config, const nlohmann::json& root)
                                      config.solver.continuous_gatekeeper.auto_retry_with_expansion);
             config_detail::read_key(g, "expansion_factor", config.solver.continuous_gatekeeper.expansion_factor);
             config_detail::read_key(g, "max_retry_count", config.solver.continuous_gatekeeper.max_retry_count);
+            config_detail::read_key(g, "min_retry_separation_m",
+                                     config.solver.continuous_gatekeeper.min_retry_separation_m);
         }
     }
 }

@@ -140,6 +140,10 @@ py::dict safety_failure_to_py(const drone_core::io::TransitionSafetyFailure& f) 
         a["attempt"] = static_cast<int>(i + 1);
         a["duration_sec"] = f.solver.attempts[i].duration_sec;
         a["worst_separation_m"] = f.solver.attempts[i].worst_separation_m;
+        a["floor_ok"] = f.solver.attempts[i].floor_ok;
+        a["zone_ok"] = f.solver.attempts[i].zone_ok;
+        const double lowest_z = f.solver.attempts[i].lowest_z_m;  // +inf without a floor
+        a["lowest_z_m"] = std::isfinite(lowest_z) ? py::object(py::float_(lowest_z)) : py::object(py::none());
         attempts.append(a);
     }
 
@@ -222,6 +226,10 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
         d["worst_separation_m"] = finite_or_none(e.worst_separation_m);
         d["required_separation_m"] = e.required_separation_m;
         d["passed"] = e.passed;
+        d["separation_ok"] = e.separation_ok;
+        d["floor_ok"] = e.floor_ok;
+        d["zone_ok"] = e.zone_ok;
+        d["lowest_z_m"] = finite_or_none(e.lowest_z_m);
     }
     return d;
 }
