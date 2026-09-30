@@ -222,6 +222,13 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
         d["max_delta_m"] = e.max_delta_m;
         d["min_separation_m"] = finite_or_none(e.min_separation_m);
         d["converged"] = e.converged;
+        d["step_accepted"] = e.step_accepted;
+        d["trust_region_m"] = e.trust_region_m;
+        d["best_min_separation_m"] = finite_or_none(e.best_min_separation_m);
+        d["qp_tier_counts"] = py::make_tuple(e.qp_tier_counts[0], e.qp_tier_counts[1], e.qp_tier_counts[2],
+                                             e.qp_tier_counts[3]);
+        d["seed_repair_counts"] = py::make_tuple(e.seed_repair_counts[0], e.seed_repair_counts[1],
+                                                 e.seed_repair_counts[2]);
     } else if (e.kind == Kind::AttemptEnd) {
         d["worst_separation_m"] = finite_or_none(e.worst_separation_m);
         d["required_separation_m"] = e.required_separation_m;

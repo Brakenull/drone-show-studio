@@ -52,6 +52,18 @@ struct ProgressEvent {
     // +infinity when no pair was a candidate.
     double min_separation_m = std::numeric_limits<double>::infinity();
     bool converged = false;
+    // Section 1.19: this step's candidate was accepted (else the sub-stage fell
+    // back to its best iterate); the step's trust-region radius; the best
+    // iterate's separation (same scan as min_separation_m).
+    bool step_accepted = false;
+    double trust_region_m = 0.0;
+    double best_min_separation_m = std::numeric_limits<double>::infinity();
+    // This step's drone QPs solved by tier 0 (with trust region), tier 1
+    // (without), tier 2 (jittered), or none.
+    int qp_tier_counts[4] = {0, 0, 0, 0};
+    // Section 1.21, per sub-stage (same on each of its steps): drones whose
+    // starting path was already flyable, was repaired, or couldn't be.
+    int seed_repair_counts[3] = {0, 0, 0};
 
     // AttemptEnd.
     double worst_separation_m = std::numeric_limits<double>::infinity();

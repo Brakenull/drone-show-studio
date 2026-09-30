@@ -89,7 +89,8 @@ struct ApfSeedingConfig {
 // coarse per-window midpoint sample collect_collision_rows() already uses.
 struct CuttingPlaneConfig {
     bool enabled = true;
-    int max_dynamic_collocations_per_pair = 3;
+    // <= 0: every dip under the planning distance gets a row (section 1.19).
+    int max_dynamic_collocations_per_pair = 0;
     double detection_frequency_hz = 100.0;
 };
 
@@ -129,6 +130,9 @@ struct SolverOptions {
     // wasted time.
     int scp_stall_iterations = 6;
     double scp_stall_tol_m = 5e-4;
+    // Section 1.21: move each drone's starting path to the closest flyable
+    // one (kinematic box + floor) before the SCP's first step.
+    bool repair_seed = true;
     double trust_region_delta_m = 1.0;
     double collision_margin_fraction = 0.05;
     // Rev 2.4's seed_bow_magnitude_m was retired in Rev 2.8 (section 1.2)
@@ -241,6 +245,7 @@ inline void apply_json_overrides(CoreConfig& config, const nlohmann::json& root)
         config_detail::read_key(s, "convergence_tol", config.solver.convergence_tol);
         config_detail::read_key(s, "scp_stall_iterations", config.solver.scp_stall_iterations);
         config_detail::read_key(s, "scp_stall_tol_m", config.solver.scp_stall_tol_m);
+        config_detail::read_key(s, "repair_seed", config.solver.repair_seed);
         config_detail::read_key(s, "trust_region_delta_m", config.solver.trust_region_delta_m);
         config_detail::read_key(s, "collision_margin_fraction", config.solver.collision_margin_fraction);
         config_detail::read_key(s, "jitter_magnitude_m", config.solver.jitter_magnitude_m);

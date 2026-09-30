@@ -78,6 +78,8 @@ FIELDS: list[dict[str, Any]] = [
        "integer", group="Planner", minimum=0),
     _f("solver.scp_stall_tol_m", "Progress threshold", "Metres. Smaller gains count as no progress.",
        group="Planner", minimum=0.0),
+    _f("solver.repair_seed", "Start from flyable paths", "Move each drone's starting path to the closest one "
+       "within the speed, acceleration and jerk limits before planning.", "boolean", group="Planner"),
     _f("solver.trust_region_delta_m", "Largest move per pass", "Metres.", group="Planner", minimum=0.0),
     _f("solver.num_control_points_min", "Path detail (minimum)", "Control points per path segment.",
        "integer", group="Planner", minimum=6),
@@ -97,7 +99,8 @@ FIELDS: list[dict[str, Any]] = [
        group="Planner", minimum=1),
     _f("solver.cutting_plane.enabled", "Extra checks between samples", "Adds constraints where two drones "
        "pass close between the planner's samples.", "boolean", group="Planner"),
-    _f("solver.cutting_plane.max_dynamic_collocations_per_pair", "Extra checks per pair", "", "integer",
+    _f("solver.cutting_plane.max_dynamic_collocations_per_pair", "Extra checks per pair",
+       "Most extra constraints per drone pair and pass, at its closest points. 0 = all of them.", "integer",
        group="Planner", minimum=0),
     _f("solver.cutting_plane.detection_frequency_hz", "Extra-check scan rate", "Samples per second.",
        group="Planner", minimum=1.0),

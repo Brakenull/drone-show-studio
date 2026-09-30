@@ -488,6 +488,146 @@ SoftQp assemble_soft_qp(const Eigen::MatrixXd& P_position, const Eigen::VectorXd
     return qp;
 }
 
+// The hard rows every drone QP carries (section 1.3/1.13): the per-axis
+// speed/acceleration/jerk box on the derivative control points (rows that
+// only involve pinned control points are left out: no free variable can
+// change them) and, with an altitude floor, z >= floor + kFloorPlanningMarginM
+// on every free control point.
+std::vector<LinearRow> build_hard_kinematic_rows(const FreeIndexMap& map, const DroneWorkspace& ws,
+                                                 const CoreConfig& config) {
+    const int num_free = map.num_free();
+    const int dim = 3 * num_free;
+    const double v_limit = trajectory::inscribed_axis_limit(config.kinematics.v_max_mps);
+    const double a_limit = trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2);
+    const double j_limit = trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3);
+
+    std::vector<LinearRow> rows;
+    rows.reserve(3 * (ws.ops.velocity.rows() + ws.ops.acceleration.rows() + ws.ops.jerk.rows()) + num_free);
+    const auto add_box = [&](const Eigen::MatrixXd& op, double limit) {
+        for (int k = 0; k < op.rows(); ++k) {
+            for (int axis = 0; axis < 3; ++axis) {
+                LinearRow r = build_box_row(map, ws.control_points, op.row(k), axis, limit);
+                if (r.coeffs.cwiseAbs().sum() > 1e-12) rows.push_back(std::move(r));
+            }
+        }
+    };
+    add_box(ws.ops.velocity, v_limit);
+    add_box(ws.ops.acceleration, a_limit);
+    add_box(ws.ops.jerk, j_limit);
+    // Altitude floor (section 1.13). Hard, like the kinematic box; the convex
+    // hull property then keeps the whole spline above it (the pinned control
+    // points are floor-safe by construction, see floor_safe_velocity()).
+    if (config.safety.altitude_floor_m) {
+        for (int i = 0; i < num_free; ++i) {
+            LinearRow r;
+            r.coeffs = Eigen::RowVectorXd::Zero(dim);
+            r.coeffs(2 * num_free + i) = 1.0;
+            r.lower = *config.safety.altitude_floor_m + kFloorPlanningMarginM;
+            r.upper = OSQP_INFTY;
+            rows.push_back(std::move(r));
+        }
+    }
+    return rows;
+}
+
+// Section 1.21: moves a drone's free control points to the closest (least
+// squares) path that satisfies its hard rows, before the SCP starts.
+// The basic seed pins the first and last three control points from the
+// boundary states and interpolates the middle linearly; where that meets the
+// pinned ends the path needs more acceleration or jerk than allowed (on a
+// real 150-drone show, every starting path; also with APF seeding off), so
+// the first step's QPs with a trust region were infeasible and that step was
+// an unbounded jump (bug-report P2-10).
+//
+// This small QP (no collision rows) is solved accurately, unlike the SCP's
+// own QPs: for the step d from the seed x0 (bounds shifted by each row's
+// value at x0), with every row normalized by its largest coefficient, tight
+// tolerances, and the result accepted only if every normalized row holds
+// within kRepairRowTolerance.
+enum SeedRepair { kSeedFlyable = 0, kSeedRepaired = 1, kSeedUnrepairable = 2 };
+
+SeedRepair repair_to_flyable(const FreeIndexMap& map, DroneWorkspace& ws, double duration, const CoreConfig& config) {
+    constexpr double kRepairRowTolerance = 1e-4;
+    const int num_free = map.num_free();
+    if (num_free == 0) return kSeedFlyable;
+    const int dim = 3 * num_free;
+    const std::vector<LinearRow> rows = build_hard_kinematic_rows(map, ws, config);
+    const int m = static_cast<int>(rows.size());
+
+    Eigen::VectorXd x0(dim);
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int i = 0; i < num_free; ++i) x0(axis * num_free + i) = ws.control_points(map.free_begin + i, axis);
+    }
+    Eigen::MatrixXd A(m, dim);
+    Eigen::VectorXd l(m), u(m);
+    bool holds = true;
+    for (int r = 0; r < m; ++r) {
+        const double largest = rows[r].coeffs.cwiseAbs().maxCoeff();
+        const double scale = largest > 1e-14 ? 1.0 / largest : 1.0;
+        A.row(r) = rows[r].coeffs * scale;
+        const double at_x0 = rows[r].coeffs.dot(x0);
+        l(r) = rows[r].lower <= -OSQP_INFTY ? -OSQP_INFTY : (rows[r].lower - at_x0) * scale;
+        u(r) = rows[r].upper >= OSQP_INFTY ? OSQP_INFTY : (rows[r].upper - at_x0) * scale;
+        holds = holds && l(r) <= kRepairRowTolerance && u(r) >= -kRepairRowTolerance;  // d = 0 satisfies it
+    }
+    if (holds) return kSeedFlyable;
+
+    // min 1/2 |d|^2 subject to l <= A d <= u.
+    Eigen::SparseMatrix<double> P_sparse(dim, dim);
+    P_sparse.setIdentity();
+    P_sparse.makeCompressed();
+    Eigen::SparseMatrix<double> A_sparse = A.sparseView(1e-14, 1.0);
+    A_sparse.makeCompressed();
+    std::vector<OSQPFloat> p_x(P_sparse.valuePtr(), P_sparse.valuePtr() + P_sparse.nonZeros());
+    std::vector<OSQPInt> p_i(P_sparse.innerIndexPtr(), P_sparse.innerIndexPtr() + P_sparse.nonZeros());
+    std::vector<OSQPInt> p_p(P_sparse.outerIndexPtr(), P_sparse.outerIndexPtr() + P_sparse.outerSize() + 1);
+    std::vector<OSQPFloat> a_x(A_sparse.valuePtr(), A_sparse.valuePtr() + A_sparse.nonZeros());
+    std::vector<OSQPInt> a_i(A_sparse.innerIndexPtr(), A_sparse.innerIndexPtr() + A_sparse.nonZeros());
+    std::vector<OSQPInt> a_p(A_sparse.outerIndexPtr(), A_sparse.outerIndexPtr() + A_sparse.outerSize() + 1);
+    OSQPCscMatrix P_csc;
+    OSQPCscMatrix_set_data(&P_csc, dim, dim, static_cast<OSQPInt>(p_x.size()), p_x.data(), p_i.data(), p_p.data());
+    OSQPCscMatrix A_csc;
+    OSQPCscMatrix_set_data(&A_csc, m, dim, static_cast<OSQPInt>(a_x.size()), a_x.data(), a_i.data(), a_p.data());
+    std::vector<OSQPFloat> q_vec(dim, 0.0);
+    std::vector<OSQPFloat> l_vec(l.data(), l.data() + m);
+    std::vector<OSQPFloat> u_vec(u.data(), u.data() + m);
+
+    OSQPSettings settings;
+    osqp_set_default_settings(&settings);
+    settings.verbose = 0;
+    settings.polishing = 1;
+    settings.eps_abs = 1e-6;
+    settings.eps_rel = 1e-6;
+    settings.max_iter = 20000;
+
+    SeedRepair outcome = kSeedUnrepairable;
+    OSQPSolver* solver = nullptr;
+    if (osqp_setup(&solver, &P_csc, q_vec.data(), &A_csc, l_vec.data(), u_vec.data(), m, dim, &settings) == 0 &&
+        solver != nullptr) {
+        osqp_solve(solver);
+        const OSQPInt status = solver->info->status_val;
+        if (status == OSQP_SOLVED || status == OSQP_SOLVED_INACCURATE) {
+            const Eigen::Map<const Eigen::VectorXd> step(solver->solution->x, dim);
+            const Eigen::VectorXd values = A * step;
+            bool rows_hold = true;
+            for (int r = 0; r < m && rows_hold; ++r) {
+                rows_hold = values(r) >= l(r) - kRepairRowTolerance && values(r) <= u(r) + kRepairRowTolerance;
+            }
+            if (rows_hold) {
+                for (int axis = 0; axis < 3; ++axis) {
+                    for (int i = 0; i < num_free; ++i) {
+                        ws.control_points(map.free_begin + i, axis) = x0(axis * num_free + i) + step(axis * num_free + i);
+                    }
+                }
+                rebuild_spline(ws, duration);
+                outcome = kSeedRepaired;
+            }
+        }
+    }
+    if (solver != nullptr) osqp_cleanup(solver);
+    return outcome;
+}
+
 // Solves one drone's QP: minimize w_smoothness_snap*snap^2 +
 // w_smoothness_jerk*jerk^2 + 1/2*w_slack_collision*sum(s_k^2), subject to
 // kinematic box constraints, the soft-slack collision rows already assembled
@@ -510,10 +650,16 @@ SoftQp assemble_soft_qp(const Eigen::MatrixXd& P_position, const Eigen::VectorXd
 //     state, and retry once more without a trust region.
 Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, double duration, const CoreConfig& config,
                                 const Eigen::MatrixXd& H, const std::vector<LinearRow>& collision_rows,
-                                const Eigen::MatrixXd& trust_region_anchor,
-                                const std::function<std::vector<LinearRow>()>& recollect_collision_rows) {
+                                const Eigen::MatrixXd& trust_region_anchor, double trust_region_delta_m,
+                                const std::function<std::vector<LinearRow>()>& recollect_collision_rows,
+                                int* tier_used = nullptr) {
+    // `tier_used` (optional): 0-2 = the tier that solved, 3 = all tiers failed.
+    const auto used = [&](int tier) {
+        if (tier_used) *tier_used = tier;
+    };
     const int num_free = map.num_free();
     if (num_free == 0) {
+        used(0);
         return ws.control_points;  // fully pinned spline, nothing to optimize
     }
     const int n = map.num_control_points;
@@ -537,44 +683,7 @@ Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, doub
     // above), which tier 2's jitter never touches, so P_dense/q stay valid
     // across every tier.
 
-    const double v_limit = trajectory::inscribed_axis_limit(config.kinematics.v_max_mps);
-    const double a_limit = trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2);
-    const double j_limit = trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3);
-
-    std::vector<LinearRow> kinematic_rows;
-    kinematic_rows.reserve(3 * (n - 1));
-    for (int k = 0; k < ws.ops.velocity.rows(); ++k) {
-        for (int axis = 0; axis < 3; ++axis) {
-            LinearRow r = build_box_row(map, ws.control_points, ws.ops.velocity.row(k), axis, v_limit);
-            if (r.coeffs.cwiseAbs().sum() > 1e-12) kinematic_rows.push_back(std::move(r));
-        }
-    }
-    for (int k = 0; k < ws.ops.acceleration.rows(); ++k) {
-        for (int axis = 0; axis < 3; ++axis) {
-            LinearRow r = build_box_row(map, ws.control_points, ws.ops.acceleration.row(k), axis, a_limit);
-            if (r.coeffs.cwiseAbs().sum() > 1e-12) kinematic_rows.push_back(std::move(r));
-        }
-    }
-    for (int k = 0; k < ws.ops.jerk.rows(); ++k) {
-        for (int axis = 0; axis < 3; ++axis) {
-            LinearRow r = build_box_row(map, ws.control_points, ws.ops.jerk.row(k), axis, j_limit);
-            if (r.coeffs.cwiseAbs().sum() > 1e-12) kinematic_rows.push_back(std::move(r));
-        }
-    }
-    // Altitude floor (section 1.13): z of every free control point >= floor
-    // + kFloorPlanningMarginM. Hard, like the kinematic box; the convex hull
-    // property then keeps the whole spline above it (the pinned control
-    // points are floor-safe by construction, see floor_safe_velocity()).
-    if (config.safety.altitude_floor_m) {
-        for (int i = 0; i < num_free; ++i) {
-            LinearRow r;
-            r.coeffs = Eigen::RowVectorXd::Zero(dim);
-            r.coeffs(2 * num_free + i) = 1.0;
-            r.lower = *config.safety.altitude_floor_m + kFloorPlanningMarginM;
-            r.upper = OSQP_INFTY;
-            kinematic_rows.push_back(std::move(r));
-        }
-    }
+    std::vector<LinearRow> kinematic_rows = build_hard_kinematic_rows(map, ws, config);
     // Kinematic box rows are also unaffected by tier 2's jitter: their free
     // coefficients come from the structural D-matrix and their constant
     // offset comes from the (untouched) pinned boundary control points.
@@ -591,18 +700,20 @@ Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, doub
             const int flat_index = axis * num_free + i;
             const double anchor = trust_region_anchor(map.free_begin + i, axis);
             hard_rows_with_trust_region.push_back(
-                build_trust_region_row(flat_index, dim, anchor, config.solver.trust_region_delta_m));
+                build_trust_region_row(flat_index, dim, anchor, trust_region_delta_m));
         }
     }
 
     const SoftQp tier0 = assemble_soft_qp(P_dense, q, hard_rows_with_trust_region, soft_collision_rows,
                                            config.solver.w_slack_collision);
     if (auto solved = try_solve_qp(map, ws.control_points, tier0.P, tier0.q, tier0.rows)) {
+        used(0);
         return *solved;  // Tier 0
     }
     const SoftQp tier1 = assemble_soft_qp(P_dense, q, kinematic_rows, soft_collision_rows,
                                            config.solver.w_slack_collision);
     if (auto solved = try_solve_qp(map, ws.control_points, tier1.P, tier1.q, tier1.rows)) {
+        used(1);
         return *solved;  // Tier 1
     }
 
@@ -615,6 +726,7 @@ Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, doub
     const SoftQp tier2 =
         assemble_soft_qp(P_dense, q, kinematic_rows, jittered_collision_rows, config.solver.w_slack_collision);
     if (auto solved = try_solve_qp(map, ws.control_points, tier2.P, tier2.q, tier2.rows)) {
+        used(2);
         return *solved;  // Tier 2
     }
     // All 3 tiers infeasible (now only possible from the hard kinematic-box
@@ -622,6 +734,7 @@ Eigen::MatrixXd solve_drone_qp(const FreeIndexMap& map, DroneWorkspace& ws, doub
     // pre-jitter one — it has already broken the exact symmetric alignment
     // that caused the deadlock, giving the *next* SCP iteration fresh
     // geometry to converge from instead of retrying the same deadlock.
+    used(3);
     return ws.control_points;
 }
 
@@ -711,8 +824,8 @@ using DynamicCollocationMap = std::map<std::pair<int, int>, std::vector<double>>
 // Adaptive Cutting-Plane Collocation (docs/2-phase_2.md Rev 2.9 section
 // 1.10): beyond the one per-window midpoint sample below, also emits one
 // extra hard row at every dynamic-collocation timestamp `dynamic_collocations`
-// carries for this pair (populated by find_inter_sample_minima() at the end
-// of the *previous* iteration) — these are the actual detected near-miss
+// carries for this pair (populated by scan_pair_separation() when the
+// iterate this iteration starts from was evaluated) — these are the actual detected near-miss
 // extrema, so OSQP constrains the true worst point of a close pass instead
 // of only its window midpoint.
 std::vector<LinearRow> collect_collision_rows(const FreeIndexMap& map, const DroneWorkspace& self_ws,
@@ -758,22 +871,29 @@ std::vector<LinearRow> collect_collision_rows(const FreeIndexMap& map, const Dro
     return collision_rows;
 }
 
-// Dense-sampled local minima of the real (non-linearized) separation between
-// drones `a` and `b` over [t_lo, t_hi] (NOT necessarily the whole transition
-// — see the call site's window-bounding comment), strictly under
-// `d_enforce`, sorted by severity (closest first) and capped at
-// `max_points` — the doc section 1.10 scan run once per SCP iteration per
-// conflict pair. A boundary sample (s == 0 or the last sample) counts as a
-// local minimum if it's <= its one neighbor, matching the interior "<="
-// comparison so a near-miss that's still closing right at the scanned
-// range's edge isn't missed for lack of a second neighbor to compare
-// against.
-std::vector<double> find_inter_sample_minima(const DroneWorkspace& a, const DroneWorkspace& b, double t_lo,
-                                              double t_hi, double detection_frequency_hz, double d_enforce,
-                                              int max_points) {
-    std::vector<double> result;
-    if (max_points <= 0 || t_hi <= t_lo) return result;
-    const double dt = 1.0 / std::max(1.0, detection_frequency_hz);
+// Dense scan of the real (non-linearized) separation between drones `a` and
+// `b` over [t_lo, t_hi] (NOT necessarily the whole transition — see the
+// caller's window-bounding comment), at `scan_frequency_hz` (the gatekeeper's
+// own rate, section 1.10/1.19).
+//
+// `min_distance` is the pair's smallest sampled distance: what the gatekeeper
+// will measure for this pair, so the solver ranks its iterates by it
+// (section 1.19) instead of by one midpoint sample per window. `dips` are the
+// local minima strictly under `d_enforce`, closest first, capped at
+// `max_points` (<= 0: all of them): each gets its own collision row next
+// iteration. A boundary sample (s == 0 or the last sample) counts as a local
+// minimum if it's <= its one neighbor, so a near-miss still closing right at
+// the scanned range's edge isn't missed.
+struct PairScan {
+    double min_distance = std::numeric_limits<double>::infinity();
+    std::vector<double> dips;
+};
+
+PairScan scan_pair_separation(const DroneWorkspace& a, const DroneWorkspace& b, double t_lo, double t_hi,
+                              double scan_frequency_hz, double d_enforce, int max_points) {
+    PairScan result;
+    if (t_hi <= t_lo) return result;
+    const double dt = 1.0 / std::max(1.0, scan_frequency_hz);
     const double span = t_hi - t_lo;
     const int num_samples = std::max(2, static_cast<int>(std::ceil(span / dt)) + 1);
 
@@ -782,6 +902,7 @@ std::vector<double> find_inter_sample_minima(const DroneWorkspace& a, const Dron
     for (int s = 0; s < num_samples; ++s) {
         times[s] = std::min(t_hi, t_lo + s * dt);
         dist[s] = (a.spline->position(times[s]) - b.spline->position(times[s])).norm();
+        result.min_distance = std::min(result.min_distance, dist[s]);
     }
 
     std::vector<std::pair<double, double>> minima;  // (distance, time)
@@ -793,8 +914,8 @@ std::vector<double> find_inter_sample_minima(const DroneWorkspace& a, const Dron
     }
     std::sort(minima.begin(), minima.end());
     for (const auto& [d, t] : minima) {
-        if (static_cast<int>(result.size()) >= max_points) break;
-        result.push_back(t);
+        if (max_points > 0 && static_cast<int>(result.dips.size()) >= max_points) break;
+        result.dips.push_back(t);
     }
     return result;
 }
@@ -930,24 +1051,27 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         compute_time_bucket_s(duration, config.solver.adaptive_time_bucketing, config.solver.target_time_windows);
     const int num_windows = std::max(1, static_cast<int>(std::ceil(duration / time_bucket_s)));
 
-    // Gauss-Seidel SCP has no guaranteed monotonic convergence (observed in
-    // practice: more iterations can *worsen* worst-case separation as later
-    // sweeps re-linearize around a shifted reference and drift, rather than
-    // settle). Track the best iterate by its worst-case pairwise separation
-    // among broad-phase candidates and return that instead of just whatever
-    // the final iteration happens to produce.
-    double best_min_separation = -std::numeric_limits<double>::infinity();
-    // Section 1.14: with a keep-out zone, an iterate reaching less far into
-    // it always ranks better; separation breaks ties (without a zone the
-    // intrusion is always 0, i.e. the previous separation-only ranking).
-    double best_intrusion = std::numeric_limits<double>::infinity();
-    std::vector<Eigen::MatrixXd> best_control_points(num_drones);
-    int iterations_without_progress = 0;  // SolverOptions::scp_stall_iterations
+    // Section 1.19: every iterate is judged by what the gatekeeper will
+    // measure, not by one midpoint sample per broad-phase window. Before, the
+    // collision rows, the "best iterate" choice and the reported separation
+    // all used those midpoints (~0.6 s apart, 2-4 m of relative motion), and
+    // on real shows the solver believed >= 1.45 m in 21 of 28 attempts while
+    // the gatekeeper failed 16 (e.g. 1.509 m believed, 1.281 m real).
+    struct IterateEvaluation {
+        std::vector<collision::CandidatePair> pairs;
+        std::vector<collision::ConflictEdge> conflict_edges;
+        DynamicCollocationMap dips;  // pair -> times of dips under enforced_min_distance
+        double min_separation = std::numeric_limits<double>::infinity();  // dense scan, gatekeeper rate
+        double separation_deficit = 0.0;  // sum over pairs of max(0, enforced - pair minimum)
+        double intrusion = 0.0;           // section 1.14
+        double smoothness = 0.0;          // the QPs' own objective, summed over drones
+    };
 
-    for (int iter = 0; iter < config.solver.max_scp_iterations; ++iter) {
+    const auto evaluate_iterate = [&]() {
+        IterateEvaluation ev;
         // Rebuild the 4D spatio-temporal conflict graph from the *current*
-        // trajectories every iteration (docs/2-phase_2.md Rev 2.3 section
-        // 3.3's pseudocode calls find_conflict_clusters() inside the loop).
+        // trajectories (docs/2-phase_2.md Rev 2.3 section 3.3's pseudocode
+        // calls find_conflict_clusters() inside the loop).
         collision::SpatioTemporalHash hash(enforced_min_distance, time_bucket_s);
         for (const auto& ws : workspaces) {
             for (int w = 0; w < num_windows; ++w) {
@@ -963,46 +1087,125 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
                 // Pad by the full enforced separation, not just the visual
                 // safety_radius_m: the broad phase must keep flagging a pair
                 // as a candidate for as long as their true point-wise
-                // distance could plausibly be under enforced_min_distance,
-                // otherwise a near-miss whose bounding boxes stop touching
-                // (even though the sampled curve is still marginally under
-                // d_enforce at that instant) never gets re-corrected on
-                // later SCP iterations — observed as a plateau exactly
-                // insensitive to collision_margin_fraction.
+                // distance could plausibly be under enforced_min_distance.
                 const Eigen::Vector3d margin =
                     Eigen::Vector3d::Constant(config.safety.safety_radius_m + enforced_min_distance);
                 hash.insert(collision::DroneWindow{ws.drone_id, w, bbox_min - margin, bbox_max + margin});
             }
         }
-        const std::vector<collision::CandidatePair> pairs = hash.find_candidate_pairs();
-
+        ev.pairs = hash.find_candidate_pairs();
         // Conflict-graph edges for clustering/coloring: one per unique drone
         // pair appearing in `pairs` (see build_conflict_edges()'s safety-
-        // critical invariant comment — this must stay a 1:1 mirror of every
-        // pair collect_collision_rows() below can generate a mutual QP row
-        // for, not a distance-filtered subset). max_cluster_size is
-        // deliberately NOT passed to connected_components here (capped
-        // clustering would cut edges this same set of QP rows still
-        // depends on, which is exactly the data race that produced a real
-        // 0.029 m drone-drone violation before this fix) — graph coloring
-        // (below) parallelizes safely within a cluster regardless of its
-        // size, so the old cap's original purpose (bounding a purely
-        // sequential Gauss-Seidel chain) no longer applies once coloring is
-        // enabled.
-        const std::vector<collision::ConflictEdge> conflict_edges =
-            build_conflict_edges(pairs, workspaces, drone_index, duration, time_bucket_s);
+        // critical invariant comment: this must stay a 1:1 mirror of every
+        // pair collect_collision_rows() can generate a mutual QP row for).
+        ev.conflict_edges = build_conflict_edges(ev.pairs, workspaces, drone_index, duration, time_bucket_s);
+
+        // Dense scan of every conflict pair, bounded to the time range the
+        // broad phase flags it in (padded by one time_bucket_s each side, to
+        // catch a minimum straddling a window edge): a pair flagged nowhere
+        // near a time range can't come within enforced_min_distance there.
+        std::map<std::pair<int, int>, std::pair<int, int>> window_range_by_pair;
+        for (const auto& p : ev.pairs) {
+            const auto key = ordered_pair_key(p.drone_i, p.drone_j);
+            auto it = window_range_by_pair.find(key);
+            if (it == window_range_by_pair.end()) {
+                window_range_by_pair[key] = {p.window_index, p.window_index};
+            } else {
+                it->second.first = std::min(it->second.first, p.window_index);
+                it->second.second = std::max(it->second.second, p.window_index);
+            }
+        }
+        const int num_edges = static_cast<int>(ev.conflict_edges.size());
+        std::vector<PairScan> scans(num_edges);
+        const double scan_hz = std::max(config.solver.cutting_plane.detection_frequency_hz,
+                                        config.solver.continuous_gatekeeper.verification_frequency_hz);
+#pragma omp parallel for schedule(dynamic)
+        for (int e = 0; e < num_edges; ++e) {
+            const auto& edge = ev.conflict_edges[e];
+            const auto range = window_range_by_pair.at(ordered_pair_key(edge.drone_i, edge.drone_j));
+            const double t_lo = std::max(0.0, range.first * time_bucket_s - time_bucket_s);
+            const double t_hi = std::min(duration, (range.second + 1) * time_bucket_s + time_bucket_s);
+            scans[e] = scan_pair_separation(workspaces[drone_index.at(edge.drone_i)],
+                                            workspaces[drone_index.at(edge.drone_j)], t_lo, t_hi, scan_hz,
+                                            enforced_min_distance,
+                                            config.solver.cutting_plane.max_dynamic_collocations_per_pair);
+        }
+        for (int e = 0; e < num_edges; ++e) {
+            ev.min_separation = std::min(ev.min_separation, scans[e].min_distance);
+            ev.separation_deficit += std::max(0.0, enforced_min_distance - scans[e].min_distance);
+            if (config.solver.cutting_plane.enabled && !scans[e].dips.empty()) {
+                const auto& edge = ev.conflict_edges[e];
+                ev.dips[ordered_pair_key(edge.drone_i, edge.drone_j)] = std::move(scans[e].dips);
+            }
+        }
+        ev.intrusion = keep_out_intrusion(workspaces, duration, config);
+        for (const auto& ws : workspaces) {
+            for (int axis = 0; axis < 3; ++axis) {
+                const Eigen::VectorXd c = ws.control_points.col(axis);
+                ev.smoothness += c.dot(H * c);
+            }
+        }
+        return ev;
+    };
+
+    // Merit, lexicographic: keep-out intrusion (section 1.14), then the total
+    // separation deficit, then smoothness. `a` must be strictly better.
+    const auto better_than = [](const IterateEvaluation& a, const IterateEvaluation& b) {
+        constexpr double kTieM = 1e-6;
+        if (a.intrusion < b.intrusion - kTieM) return true;
+        if (a.intrusion > b.intrusion + kTieM) return false;
+        if (a.separation_deficit < b.separation_deficit - kTieM) return true;
+        if (a.separation_deficit > b.separation_deficit + kTieM) return false;
+        return a.smoothness < b.smoothness - 1e-9 * std::max(1.0, std::abs(b.smoothness));
+    };
+
+    // Adaptive trust region (section 1.19): a step that doesn't make the
+    // iterate better by the merit above is rejected (back to the best
+    // iterate, radius halved), and an accepted step lets the radius grow back
+    // up to trust_region_delta_m. With a fixed radius and no rejection the
+    // Gauss-Seidel sweep (each drone linearized against neighbours that move
+    // later in the same sweep) never settled: every step on real shows sat
+    // at the radius (1.1-1.7 m), 0 of 1 875 iterations converged, and the
+    // result was one frame of an oscillation.
+    // Section 1.21: start from flyable paths (see repair_to_flyable()).
+    int seed_repair_counts[3] = {0, 0, 0};  // already flyable, repaired, unrepairable
+    if (config.solver.repair_seed) {
+#pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < num_drones; ++i) {
+            if (workspaces[i].fixed) continue;
+            const SeedRepair outcome = repair_to_flyable(map, workspaces[i], duration, config);
+#pragma omp atomic
+            seed_repair_counts[outcome] += 1;
+        }
+    }
+
+    const double max_trust_region = config.solver.trust_region_delta_m;
+    double trust_region = max_trust_region;
+    std::vector<Eigen::MatrixXd> best_control_points(num_drones);
+    for (int i = 0; i < num_drones; ++i) best_control_points[i] = workspaces[i].control_points;
+    IterateEvaluation best = evaluate_iterate();
+    int iterations_without_progress = 0;  // SolverOptions::scp_stall_iterations
+
+    std::vector<int> solved_ids;
+    solved_ids.reserve(num_drones);
+    for (const auto& ws : workspaces) {
+        if (!ws.fixed) solved_ids.push_back(ws.drone_id);
+    }
+
+    for (int iter = 0; iter < config.solver.max_scp_iterations; ++iter) {
+        // The iteration starts from the best iterate (the last accepted one),
+        // with its own pairs and dips.
+        const std::vector<collision::CandidatePair>& pairs = best.pairs;
+        const DynamicCollocationMap& dynamic_collocations = best.dips;
+
         // Section 1.15: a fixed (parked) drone is never solved, so it can't
         // race anyone and needs no cluster or color. Its pairs stay in
-        // `pairs`/`conflict_edges`, so the drones moving past it still get
-        // collision and cutting-plane rows against it.
-        std::vector<int> solved_ids;
-        solved_ids.reserve(num_drones);
-        for (const auto& ws : workspaces) {
-            if (!ws.fixed) solved_ids.push_back(ws.drone_id);
-        }
+        // `pairs`, so the drones moving past it still get collision rows
+        // against it. max_cluster_size is deliberately NOT passed to
+        // connected_components (see build_conflict_edges()).
         std::vector<collision::ConflictEdge> solved_edges;
-        solved_edges.reserve(conflict_edges.size());
-        for (const auto& edge : conflict_edges) {
+        solved_edges.reserve(best.conflict_edges.size());
+        for (const auto& edge : best.conflict_edges) {
             if (!workspaces[drone_index.at(edge.drone_i)].fixed && !workspaces[drone_index.at(edge.drone_j)].fixed) {
                 solved_edges.push_back(edge);
             }
@@ -1010,57 +1213,9 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         const std::vector<std::vector<int>> clusters =
             collision::connected_components(solved_ids, solved_edges, /*max_cluster_size=*/0);
 
-        // Adaptive Cutting-Plane Collocation (docs/2-phase_2.md Rev 2.9
-        // section 1.10): scanned once per iteration, from this iteration's
-        // *starting* trajectories (before any of this iteration's own
-        // drone-level solves), so the extra collocation rows fed into this
-        // same iteration's collect_collision_rows() calls target whatever
-        // near-miss extrema the previous iteration actually produced.
-        //
-        // Bounded to the time range `pairs` already flags this drone pair as
-        // a broad-phase candidate in (padded by one time_bucket_s each side,
-        // to catch a true minimum straddling a window edge), NOT the whole
-        // [0, duration] transition: a dense 100Hz scan of the full duration
-        // per conflict pair per iteration was measured to blow the doc's own
-        // N=40 ring-swap performance budget (<=20s) by >6x on an 8-core CPU,
-        // and is unnecessary — a pair broad-phase-flagged nowhere near a
-        // given time range cannot have a true continuous-time minimum there
-        // either, by the same margin argument build_conflict_edges()'s
-        // caller already relies on for the main collision rows.
-        DynamicCollocationMap dynamic_collocations;
-        if (config.solver.cutting_plane.enabled) {
-            std::map<std::pair<int, int>, std::pair<int, int>> window_range_by_pair;
-            for (const auto& p : pairs) {
-                const auto key = ordered_pair_key(p.drone_i, p.drone_j);
-                auto it = window_range_by_pair.find(key);
-                if (it == window_range_by_pair.end()) {
-                    window_range_by_pair[key] = {p.window_index, p.window_index};
-                } else {
-                    it->second.first = std::min(it->second.first, p.window_index);
-                    it->second.second = std::max(it->second.second, p.window_index);
-                }
-            }
-            for (const auto& edge : conflict_edges) {
-                auto it_i = drone_index.find(edge.drone_i);
-                auto it_j = drone_index.find(edge.drone_j);
-                if (it_i == drone_index.end() || it_j == drone_index.end()) continue;
-                const auto key = ordered_pair_key(edge.drone_i, edge.drone_j);
-                const auto range_it = window_range_by_pair.find(key);
-                if (range_it == window_range_by_pair.end()) continue;
-                const double t_lo = std::max(0.0, range_it->second.first * time_bucket_s - time_bucket_s);
-                const double t_hi = std::min(duration, (range_it->second.second + 1) * time_bucket_s + time_bucket_s);
-                std::vector<double> t_stars = find_inter_sample_minima(
-                    workspaces[it_i->second], workspaces[it_j->second], t_lo, t_hi,
-                    config.solver.cutting_plane.detection_frequency_hz, enforced_min_distance,
-                    config.solver.cutting_plane.max_dynamic_collocations_per_pair);
-                if (!t_stars.empty()) {
-                    dynamic_collocations[key] = std::move(t_stars);
-                }
-            }
-        }
-
         std::vector<Eigen::MatrixXd> trust_region_anchor(num_drones);
         for (int i = 0; i < num_drones; ++i) trust_region_anchor[i] = workspaces[i].control_points;
+        int tier_counts[4] = {0, 0, 0, 0};  // drone QPs solved by tier 0/1/2, or all failed
 
         auto solve_one_drone = [&](int drone_id) {
             const int idx = drone_index.at(drone_id);
@@ -1077,8 +1232,11 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
                 for (LinearRow& r : collect_keep_out_rows(map, self_ws, duration, config)) rows.push_back(std::move(r));
                 return rows;
             };
-            self_ws.control_points =
-                solve_drone_qp(map, self_ws, duration, config, H, collision_rows, trust_region_anchor[idx], recollect);
+            int tier = 0;
+            self_ws.control_points = solve_drone_qp(map, self_ws, duration, config, H, collision_rows,
+                                                    trust_region_anchor[idx], trust_region, recollect, &tier);
+#pragma omp atomic
+            tier_counts[tier] += 1;
             if (config.safety.altitude_floor_m) {
                 // Section 1.13: whatever the QP tier returned (an inaccurate
                 // OSQP solution, or the unoptimized jittered iterate when all
@@ -1093,16 +1251,11 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         };
 
         if (config.solver.enable_graph_coloring) {
-            // Rev 2.7 section 1.8: greedy graph coloring within each cluster,
-            // replacing the pure ascending-drone-id Gauss-Seidel sweep with
-            // same-color batches that have no conflict edge between any two
-            // members and can therefore be solved together via OpenMP.
-            // Batches are merged *across* clusters by color index before
-            // solving (rather than looping clusters outer / colors inner)
-            // so independent, single-drone clusters — every one of whose
-            // only color is index 0 — join one large parallel batch 0
-            // together instead of each waiting behind the previous cluster's
-            // own fully sequential turn.
+            // Rev 2.7 section 1.8: greedy graph coloring within each cluster;
+            // same-color batches have no conflict edge between any two
+            // members and are solved together via OpenMP. Batches are merged
+            // across clusters by color index, so independent single-drone
+            // clusters all join batch 0.
             std::unordered_map<int, int> cluster_of;
             cluster_of.reserve(solved_ids.size());
             for (int c = 0; c < static_cast<int>(clusters.size()); ++c) {
@@ -1133,10 +1286,8 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
                 for (int b = 0; b < static_cast<int>(batch.size()); ++b) {
                     solve_one_drone(batch[b]);
                 }
-                // The parallel-for region above is itself a synchronizing
-                // barrier: every thread finishes this color's updates to the
-                // shared workspaces buffer before any drone in the next
-                // color's batch reads a cluster-mate's position.
+                // The parallel-for region is a barrier: every thread finishes
+                // this color's updates before the next color's batch reads them.
             }
         } else {
             // Legacy (pre-2.7) fallback: parallel across clusters, strictly
@@ -1145,8 +1296,6 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             for (int c = 0; c < static_cast<int>(clusters.size()); ++c) {
                 std::vector<int> ordered = clusters[c];
                 std::sort(ordered.begin(), ordered.end());  // deterministic priority ordering
-                // Clusters partition the drone set (connected components), so
-                // no two threads ever touch the same workspaces[idx] here.
                 for (int drone_id : ordered) {
                     solve_one_drone(drone_id);
                 }
@@ -1160,37 +1309,50 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
                     std::max(max_delta, (workspaces[i].control_points.row(idx) - trust_region_anchor[i].row(idx)).norm());
             }
         }
-        double iter_min_separation = std::numeric_limits<double>::infinity();
-        for (const auto& pair : pairs) {
-            iter_min_separation = std::min(
-                iter_min_separation, pair_window_distance(pair, workspaces, drone_index, duration, time_bucket_s));
-        }
-        const double iter_intrusion = keep_out_intrusion(workspaces, duration, config);
-        constexpr double kIntrusionTieM = 1e-6;
-        const bool better = iter_intrusion < best_intrusion - kIntrusionTieM ||
-                            (iter_intrusion <= best_intrusion + kIntrusionTieM && iter_min_separation > best_min_separation);
-        // Stall stop: progress means the best iterate got meaningfully better
-        // (less zone intrusion, or more separation), not just any tie-break.
+
+        IterateEvaluation candidate = evaluate_iterate();
+        const double candidate_min_separation = candidate.min_separation;
+        const int candidate_conflict_pairs = static_cast<int>(candidate.conflict_edges.size());
+        const bool accepted = better_than(candidate, best);
+        // Stall stop (section 1.16): progress means meaningfully less zone
+        // intrusion or separation deficit; smoothness alone doesn't count.
         const double stall_tol = config.solver.scp_stall_tol_m;
-        const bool progressed = iter_intrusion < best_intrusion - std::max(stall_tol, kIntrusionTieM) ||
-                                (iter_intrusion <= best_intrusion + kIntrusionTieM &&
-                                 iter_min_separation > best_min_separation + stall_tol);
+        const bool progressed =
+            accepted && (candidate.intrusion < best.intrusion - stall_tol ||
+                         candidate.separation_deficit < best.separation_deficit - stall_tol);
         iterations_without_progress = progressed ? 0 : iterations_without_progress + 1;
-        if (better) {
-            best_min_separation = iter_min_separation;
-            best_intrusion = iter_intrusion;
+        const double step_trust_region = trust_region;
+        if (accepted) {
+            best = std::move(candidate);
             for (int i = 0; i < num_drones; ++i) best_control_points[i] = workspaces[i].control_points;
+            trust_region = std::min(max_trust_region, 2.0 * trust_region);
+        } else {
+            for (int i = 0; i < num_drones; ++i) {
+                if (workspaces[i].fixed) continue;
+                workspaces[i].control_points = best_control_points[i];
+                rebuild_spline(workspaces[i], duration);
+            }
+            trust_region *= 0.5;
         }
 
-        const bool converged = max_delta < config.solver.convergence_tol;
+        // Converged: the QPs moved nothing (a fixed point, whether or not that
+        // counted as better), or no better iterate within a trust region
+        // that small.
+        const bool converged =
+            max_delta < config.solver.convergence_tol || trust_region < config.solver.convergence_tol;
         if (progress) {
             ProgressEvent e = progress->event;
             e.iteration = iter + 1;
             e.max_iterations = config.solver.max_scp_iterations;
-            e.conflict_pairs = static_cast<int>(conflict_edges.size());
+            e.conflict_pairs = candidate_conflict_pairs;
             e.max_delta_m = max_delta;
-            e.min_separation_m = iter_min_separation;
+            e.min_separation_m = candidate_min_separation;
             e.converged = converged;
+            e.step_accepted = accepted;
+            e.trust_region_m = step_trust_region;
+            e.best_min_separation_m = best.min_separation;
+            for (int k = 0; k < 4; ++k) e.qp_tier_counts[k] = tier_counts[k];
+            for (int k = 0; k < 3; ++k) e.seed_repair_counts[k] = seed_repair_counts[k];
             (*progress->callback)(e);
         }
         if (converged) {
@@ -1198,22 +1360,13 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         }
         if (config.solver.scp_stall_iterations > 0 &&
             iterations_without_progress >= config.solver.scp_stall_iterations) {
-            break;  // stalled: the best iterate is kept below, as after max_scp_iterations
+            break;  // stalled: the best iterate is returned, as after max_scp_iterations
         }
     }
 
-    if (best_intrusion < std::numeric_limits<double>::infinity()) {
-        for (int i = 0; i < num_drones; ++i) workspaces[i].control_points = best_control_points[i];
-    }
-
     SingleStageResult result;
-    result.control_points.reserve(num_drones);
-    for (const auto& ws : workspaces) {
-        result.control_points.push_back(ws.control_points);
-    }
-    result.min_separation = best_min_separation > -std::numeric_limits<double>::infinity()
-                                 ? best_min_separation
-                                 : std::numeric_limits<double>::infinity();
+    result.control_points = std::move(best_control_points);
+    result.min_separation = best.min_separation;
     return result;
 }
 

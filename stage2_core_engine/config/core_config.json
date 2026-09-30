@@ -11,6 +11,7 @@
     "convergence_tol": 1e-3,
     "scp_stall_iterations": 6,
     "scp_stall_tol_m": 5e-4,
+    "repair_seed": true,
     "trust_region_delta_m": 1.0,
     "collision_margin_fraction": 0.05,
     "kinematic_slack_fraction": 0.25,
@@ -35,7 +36,7 @@
     },
     "cutting_plane": {
       "enabled": true,
-      "max_dynamic_collocations_per_pair": 3,
+      "max_dynamic_collocations_per_pair": 0,
       "detection_frequency_hz": 100.0
     },
     "continuous_gatekeeper": {

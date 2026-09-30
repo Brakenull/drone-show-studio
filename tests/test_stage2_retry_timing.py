@@ -1,9 +1,13 @@
 """A transition that passes only after a gatekeeper retry is timed by what is flown (bug-report P2-03).
 
 8 drones: holding area -> ring -> swap -> hold, with T_min auto-scaling off so
-the takeoff is flown in exactly 30 s. A gatekeeper floor of 1.67 m makes the
-takeoff fail its first attempt (1.656 m) and pass its retry (x1.25 = 37.5 s,
-1.694 m). With `legs`, the return leg also passes only on a retry. The show
+the takeoff is planned for exactly 30 s. A gatekeeper floor of 1.60 m makes the
+takeoff pass only on a retry, flown for 30 s x 1.25 per retry; with `legs` the
+return leg too (2026-09-30: takeoff 1.577 m then 1.611 m, return 1.593 m then
+1.745 m). The seed repair (2-phase_2.md section 1.21) is off: with it every
+attempt of this show lands near 2.0 m, so no floor makes a retry pass where the
+first attempt failed; this test is about retry timing, not the solver. The tests
+accept any retry and check the timing against the attempt actually flown. The show
 timeline, LED fades, leg times and `metadata.transitions` must all follow the
 flown durations. Skips if drone_core is not built for this Python.
 """
@@ -21,10 +25,10 @@ sys.path.insert(0, str(REPO / "tools" / "scripts"))
 
 from smoke_test_stage2 import build_phase1_json, evaluate  # noqa: E402
 
-FLOOR_M = 1.67
+FLOOR_M = 1.60
 N = 8
 RED = [255, 0, 0]
-OVERRIDES = {"solver": {"auto_scale_transition_time": False,
+OVERRIDES = {"solver": {"auto_scale_transition_time": False, "repair_seed": False,
                         "continuous_gatekeeper": {"min_allowable_distance_m": FLOOR_M, "max_retry_count": 2}}}
 
 
@@ -75,9 +79,9 @@ def run(request, drone_core):
 def test_the_takeoff_really_passed_on_a_retry(run):
     _legs, result, _events = run
     takeoff = result["metadata"]["transitions"][0]
-    assert takeoff["attempts"] == 2
+    assert takeoff["attempts"] >= 2
     assert takeoff["planned_duration_sec"] == pytest.approx(30.0)
-    assert takeoff["flown_duration_sec"] == pytest.approx(30.0 * 1.25)
+    assert takeoff["flown_duration_sec"] == pytest.approx(30.0 * 1.25 ** (takeoff["attempts"] - 1))
 
 
 def test_timeline_follows_the_flown_durations(run):
@@ -129,7 +133,7 @@ def test_return_leg_timing_uses_its_retry(run):
         assert "legs" not in meta and len(meta["transitions"]) == 3
         return
     ret = meta["transitions"][-1]
-    assert ret["to_keyframe"] == "holding_area" and ret["attempts"] == 2
+    assert ret["to_keyframe"] == "holding_area" and ret["attempts"] >= 2
     assert meta["legs"]["return"]["duration_sec"] == pytest.approx(ret["flown_duration_sec"])
     assert meta["legs"]["return"]["end_time_sec"] == pytest.approx(meta["total_duration_sec"])
     assert meta["legs"]["takeoff"]["end_time_sec"] == pytest.approx(meta["transitions"][0]["end_time_sec"])

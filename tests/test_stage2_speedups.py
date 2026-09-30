@@ -58,11 +58,11 @@ def rejected(drone_core, min_retry):
 
 
 def test_a_deep_miss_is_not_retried(drone_core):
-    # The show keeps ~1.8 m; required 2.5 m, and a miss below 2.0 m is "deep".
-    message, report = rejected(drone_core, min_retry=2.0)
+    # The show keeps ~2.0 m; required 2.5 m, and a miss below 2.2 m is "deep".
+    message, report = rejected(drone_core, min_retry=2.2)
     assert len(report["attempts"]) == 1
-    assert report["worst_separation_m"] < 2.0
-    assert "after 1 attempt(s); not retried: below 2.000000 m" in message
+    assert report["worst_separation_m"] < 2.2
+    assert "after 1 attempt(s); not retried: below 2.200000 m" in message
 
 
 def test_zero_retries_every_miss(drone_core):

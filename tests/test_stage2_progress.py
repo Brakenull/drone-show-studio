@@ -23,7 +23,9 @@ KEYS = {
     "attempt_end": ATTEMPT_KEYS | {"worst_separation_m", "required_separation_m", "passed", "separation_ok",
                                    "floor_ok", "zone_ok", "lowest_z_m"},
     "scp_iteration": ATTEMPT_KEYS | {"substage", "substage_count", "iteration", "max_iterations", "conflict_pairs",
-                                     "max_delta_m", "min_separation_m", "converged"},
+                                     "max_delta_m", "min_separation_m", "converged", "step_accepted",
+                                     "trust_region_m", "best_min_separation_m", "qp_tier_counts",
+                                     "seed_repair_counts"},
 }
 
 
