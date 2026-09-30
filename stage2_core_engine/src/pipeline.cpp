@@ -367,6 +367,39 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             if (flying > 0) {
                 formation_velocity = direction_sum / flying * (kFlyThroughSpeedFraction * config.kinematics.v_max_mps);
             }
+            // Section 1.23 (P2-14): the rule above only looks at the incoming
+            // leg. A formation that arrives moving one way and leaves another
+            // way was passed at full fly-through speed along the incoming
+            // direction, and all its drones had to brake and turn at once at
+            // the start of the next transition (200_cube, Shape_818: 3 m/s
+            // north-east, next formation straight up, 0.546 m). With a
+            // previous and a next formation, use the velocity of the
+            // formation's centre between them instead (Catmull-Rom):
+            // (centre_next - centre_prev) / (t_next - t_prev), over airborne
+            // points and design keyframe times, capped at the fly-through speed.
+            if (config.solver.centered_formation_velocity && kf_index >= 1 && kf_index + 1 < specs.size() &&
+                !specs[kf_index + 1].is_leg) {
+                const auto airborne_centre = [&](const Eigen::MatrixXd& points, Eigen::Vector3d* centre) {
+                    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+                    int count = 0;
+                    for (int r = 0; r < points.rows(); ++r) {
+                        const Eigen::Vector3d p = points.row(r).transpose();
+                        if (in_holding_region(p)) continue;
+                        sum += p;
+                        ++count;
+                    }
+                    if (count > 0) *centre = sum / count;
+                    return count > 0;
+                };
+                Eigen::Vector3d centre_prev, centre_next;
+                const double dt = specs[kf_index + 1].keyframe_time_sec - specs[kf_index - 1].keyframe_time_sec;
+                if (dt > 1e-6 && airborne_centre(P, &centre_prev) &&
+                    airborne_centre(specs[kf_index + 1].targets, &centre_next)) {
+                    formation_velocity = (centre_next - centre_prev) / dt;
+                    const double cap = kFlyThroughSpeedFraction * config.kinematics.v_max_mps;
+                    if (formation_velocity.norm() > cap) formation_velocity *= cap / formation_velocity.norm();
+                }
+            }
             // Near the floor, pass through level so neither a path's end nor
             // the next one's start can dip below it (section 1.13). Levelled
             // for the whole formation, so it stays one shared velocity.

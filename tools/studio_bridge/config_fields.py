@@ -78,6 +78,12 @@ FIELDS: list[dict[str, Any]] = [
        "integer", group="Planner", minimum=0),
     _f("solver.scp_stall_tol_m", "Progress threshold", "Metres. Smaller gains count as no progress.",
        group="Planner", minimum=0.0),
+    _f("solver.centered_formation_velocity", "Formation speed from both legs",
+       "Drones pass a formation with the velocity of the formation's centre between the previous and "
+       "the next formation, instead of full speed along the way they arrived.", "boolean", group="Planner"),
+    _f("solver.shared_substage_velocity", "Shared velocity between transition parts",
+       "Long transitions are split into parts; all drones pass each split with the same velocity, so "
+       "drones passing each other there can't come closer than planned.", "boolean", group="Planner"),
     _f("solver.repair_seed", "Start from flyable paths", "Move each drone's starting path to the closest one "
        "within the speed, acceleration and jerk limits before planning.", "boolean", group="Planner"),
     _f("solver.trust_region_delta_m", "Largest move per pass", "Metres.", group="Planner", minimum=0.0),

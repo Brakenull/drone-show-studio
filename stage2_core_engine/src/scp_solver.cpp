@@ -1548,9 +1548,36 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             wp.velocity = remaining_time > 1e-6
                               ? Eigen::Vector3d((problems[i].end.position - wp.position) / remaining_time)
                               : Eigen::Vector3d::Zero();
-            wp.velocity = floor_safe_velocity(wp.position, wp.velocity, config);
             wp.acceleration = Eigen::Vector3d::Zero();
             waypoints[i][k] = wp;
+        }
+        // Section 1.22: one shared velocity at the boundary. With each drone
+        // heading straight for its own end point, two drones passing each
+        // other at a boundary were exactly at the planning distance there
+        // (declash_waypoints() only fixes that instant) but closer just
+        // before or after, inside the part of both sub-stages that the pinned
+        // boundary state fixes (200_cube: 1.418 m, 0.46 s before a boundary,
+        // bug-report P2-15). With one shared velocity the pinned pieces around
+        // the boundary move as a rigid copy of the de-clashed positions.
+        if (config.solver.shared_substage_velocity) {
+            Eigen::Vector3d shared = Eigen::Vector3d::Zero();
+            int moving = 0;
+            for (int i = 0; i < num_drones; ++i) {
+                if (fixed[i]) continue;
+                shared += waypoints[i][k].velocity;
+                ++moving;
+            }
+            if (moving > 0) shared /= moving;
+            for (int i = 0; i < num_drones; ++i) {
+                if (!fixed[i]) waypoints[i][k].velocity = shared;
+            }
+        }
+        // Near the floor, a boundary is passed level (section 1.13); this
+        // is per drone, so a drone close to the ground may differ from the
+        // shared velocity.
+        for (int i = 0; i < num_drones; ++i) {
+            if (fixed[i]) continue;
+            waypoints[i][k].velocity = floor_safe_velocity(waypoints[i][k].position, waypoints[i][k].velocity, config);
         }
     }
 

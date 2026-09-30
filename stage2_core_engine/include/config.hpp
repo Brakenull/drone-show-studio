@@ -133,6 +133,13 @@ struct SolverOptions {
     // Section 1.21: move each drone's starting path to the closest flyable
     // one (kinematic box + floor) before the SCP's first step.
     bool repair_seed = true;
+    // Section 1.22: every moving drone passes a sub-stage boundary with the
+    // same velocity (the mean of their "straight to the end point" ones).
+    bool shared_substage_velocity = true;
+    // Section 1.23: a mid-show formation's shared fly-through velocity is the
+    // velocity of the formation's centre between the previous and the next
+    // formation (false: the mean incoming direction x the fly-through speed).
+    bool centered_formation_velocity = true;
     double trust_region_delta_m = 1.0;
     double collision_margin_fraction = 0.05;
     // Rev 2.4's seed_bow_magnitude_m was retired in Rev 2.8 (section 1.2)
@@ -246,6 +253,8 @@ inline void apply_json_overrides(CoreConfig& config, const nlohmann::json& root)
         config_detail::read_key(s, "scp_stall_iterations", config.solver.scp_stall_iterations);
         config_detail::read_key(s, "scp_stall_tol_m", config.solver.scp_stall_tol_m);
         config_detail::read_key(s, "repair_seed", config.solver.repair_seed);
+        config_detail::read_key(s, "shared_substage_velocity", config.solver.shared_substage_velocity);
+        config_detail::read_key(s, "centered_formation_velocity", config.solver.centered_formation_velocity);
         config_detail::read_key(s, "trust_region_delta_m", config.solver.trust_region_delta_m);
         config_detail::read_key(s, "collision_margin_fraction", config.solver.collision_margin_fraction);
         config_detail::read_key(s, "jitter_magnitude_m", config.solver.jitter_magnitude_m);
