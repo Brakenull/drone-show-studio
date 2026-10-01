@@ -1,8 +1,9 @@
-// Conditions: weather scenarios for a show, flown through the digital twin and played back, and the
-// rain return readiness of the show (docs/4-condition_simulator.md §5, §6; milestones C1, C2). When a
-// scenario's rain reaches the alert level, the simulation flies the fleet home on its return paths.
+// Conditions (Stage 3 › Weather scenarios): weather scenarios for a show, flown through the digital twin,
+// and the rain return readiness of the show (docs/4-condition_simulator.md §5, §6; milestones C1, C2).
+// When a scenario's rain reaches the alert level, the simulation flies the fleet home on its return
+// paths. This page holds the inputs and the results; the playback is in the Replay tab.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { runJob } from "../bridge/api";
 import type {
   ConditionsInfo,
@@ -18,11 +19,9 @@ import { cancelSimulate, startSimulate, useSimulateJob, type SimulateJob } from 
 import { isStage2Running } from "../app/stage2Jobs";
 import { clock, duration as formatDuration } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
-import { ReplayPlayer } from "../replay/ReplayPlayer";
-import type { ReplayData, ReplayFocus } from "../replay/types";
 import { compass, rainLabel, RTK_LABEL } from "../replay/weather";
-import { loadReplay } from "./ReplayView";
 import { ReadinessPanel } from "./ReadinessPanel";
+import { VerdictCard } from "./VerdictCard";
 import { TimelineEditor, type Channel, type KeyRef } from "./TimelineEditor";
 
 /** Seconds the simulation keeps flying after the show (twin_sim/scenario_runner.py TAIL_SEC). */
@@ -31,6 +30,10 @@ const TAIL_SEC = 2;
 interface Props {
   run: RunRecord;
   onFinished: () => void;
+  /** Play a simulated scenario in the Replay tab, at `time` with `drones` highlighted. */
+  onPlay: (id: string, name: string, time: number, drones: number[]) => void;
+  /** The scenario to show first (e.g. "Edit this weather" from the Replay tab). */
+  scenarioId?: string | null;
 }
 
 function blankScenario(name: string, defaults: ConditionsInfo["defaults"], seed: number): Scenario {
@@ -68,12 +71,12 @@ function errorOf(events: { type: string }[], fallback: string): { message: strin
   return { message: e?.message ?? fallback, errors: e?.errors ?? [] };
 }
 
-export function ConditionsView({ run, onFinished }: Props) {
+export function ConditionsView({ run, onFinished, onPlay, scenarioId }: Props) {
   if (run.stage2.status !== "succeeded" || isStage2Running(run.run_id)) {
     return (
       <div className="page">
         <header className="page-head">
-          <h1>Conditions</h1>
+          <h1>Weather scenarios</h1>
         </header>
         <p>
           Weather scenarios fly the planned show, so they need a run whose Stage 2 passed.{" "}
@@ -82,10 +85,10 @@ export function ConditionsView({ run, onFinished }: Props) {
       </div>
     );
   }
-  return <Conditions key={run.run_id} run={run} onFinished={onFinished} />;
+  return <Conditions key={run.run_id} run={run} onFinished={onFinished} onPlay={onPlay} scenarioId={scenarioId} />;
 }
 
-function Conditions({ run, onFinished }: Props) {
+function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
   const [info, setInfo] = useState<ConditionsInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -95,8 +98,6 @@ function Conditions({ run, onFinished }: Props) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<{ message: string; errors: string[] } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [mode, setMode] = useState<"timeline" | "playback">("timeline");
-  const [focus, setFocus] = useState<ReplayFocus | null>(null);
   const job = useSimulateJob(run.run_id);
   const running = !!job && !job.exit;
 
@@ -120,8 +121,8 @@ function Conditions({ run, onFinished }: Props) {
   );
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void reload(scenarioId ?? undefined);
+  }, [reload, scenarioId]);
 
   const entry: ScenarioEntry | null = info?.scenarios.find((s) => s.id === currentId) ?? null;
   const draft: Scenario | null = entry ? (edit?.id === entry.id ? edit.scenario : entry.scenario) : null;
@@ -186,16 +187,14 @@ function Conditions({ run, onFinished }: Props) {
     let id: string | null = entry.id;
     if (dirty) id = await save(draft, entry.id);
     if (!id) return;
-    setMode("timeline");
+    runSimulation(id);
+  }
+
+  /** Fly scenario `id`; its result shows here when it lands, and "Watch the playback" opens the Replay tab. */
+  function runSimulation(id: string) {
     const device = run.stage3?.monte_carlo?.config?.device ?? "auto";
-    startSimulate(run.run_id, run.run_dir, id, device, (exit: JobExit) => {
-      void reload(id).then(() => {
-        // 0 = passed, 1 = a criterion failed; a killed process can also exit with 1, hence `cancelled`.
-        if (!exit.cancelled && (exit.code === 0 || exit.code === 1)) {
-          setFocus(null);
-          setMode("playback");
-        }
-      });
+    startSimulate(run.run_id, run.run_dir, id, device, (_exit: JobExit) => {
+      void reload(id);
       onFinished();
     }).catch((e) => setProblem({ message: String(e), errors: [] }));
   }
@@ -215,28 +214,16 @@ function Conditions({ run, onFinished }: Props) {
     ];
     const id = await save({ ...draft, name: `${draft.name}, rain at ${formatTime(t)} (${w} s to the limit)`, rain }, null);
     if (!id) return;
-    const device = run.stage3?.monte_carlo?.config?.device ?? "auto";
-    startSimulate(run.run_id, run.run_dir, id, device, (exit: JobExit) => {
-      void reload(id).then(() => {
-        if (!exit.cancelled && (exit.code === 0 || exit.code === 1)) {
-          setFocus(null);
-          setMode("playback");
-        }
-      });
-      onFinished();
-    }).catch((e) => setProblem({ message: String(e), errors: [] }));
+    runSimulation(id);
   }
 
-  const openAt = (time: number, drones: number[]) => {
-    setFocus({ time, drones, key: Date.now() });
-    setMode("playback");
-  };
+  const openAt = (time: number, drones: number[]) => entry && onPlay(entry.id, entry.scenario.name, time, drones);
 
   if (loadError) {
     return (
       <div className="page">
         <header className="page-head">
-          <h1>Conditions</h1>
+          <h1>Weather scenarios</h1>
         </header>
         <p className="notice notice-bad">Could not read this run's scenarios: {loadError}</p>
       </div>
@@ -250,65 +237,61 @@ function Conditions({ run, onFinished }: Props) {
     );
   }
 
-  if (mode === "playback" && entry?.playback && !running) {
-    return (
-      <Playback
-        run={run}
-        entry={entry}
-        focus={focus}
-        onBack={() => setMode("timeline")}
-      />
-    );
-  }
-
   return (
     <div className="page page-wide conditions">
       <header className="page-head">
-        <h1>Conditions</h1>
+        <h1>Weather scenarios</h1>
         <p className="lede">
           Write the weather for this show (wind, gusts, RTK quality and rain, each free to change during the show),
-          then fly the whole show through the digital twin and watch it.
+          then fly the whole show through the digital twin. Watch the flight in the Replay tab.
         </p>
       </header>
 
-      <div className="scenario-bar">
-        <label className="field">
-          <span className="field-label">Scenario</span>
-          <select
-            value={currentId ?? ""}
-            disabled={!info.scenarios.length || busy || running}
-            onChange={(e) => setCurrentId(e.target.value)}
-          >
-            {!info.scenarios.length && <option value="">No scenarios yet</option>}
-            {info.scenarios.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.scenario.name}
-              </option>
+      <section className="scenario-toolbar" aria-label="Scenarios">
+        <div className="scenario-list" role="tablist" aria-label="Scenario">
+          {info.scenarios.length === 0 && <span className="muted">No scenarios yet</span>}
+          {info.scenarios.map((s) => {
+            const tone = !s.result ? "idle" : s.result.passed ? "ok" : "bad";
+            return (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={s.id === currentId}
+                className={`subtab scenario-chip ${s.id === currentId ? "is-current" : ""}`}
+                disabled={busy || running}
+                title={`${s.scenario.name}: ${!s.result ? "not flown yet" : s.result.passed ? "held up" : "failed"}`}
+                onClick={() => setCurrentId(s.id)}
+              >
+                <span className={`light light-${tone}`} aria-hidden="true" />
+                <span className="subtab-label">{s.scenario.name}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="scenario-ops">
+          <button onClick={newScenario} disabled={busy || running} className={info.scenarios.length ? "" : "primary"}>
+            New scenario
+          </button>
+          <button onClick={duplicate} disabled={!draft || busy || running}>
+            Duplicate
+          </button>
+          {entry &&
+            (confirmDelete ? (
+              <>
+                <button className="danger" onClick={() => void remove(entry.id)} disabled={busy || running}>
+                  Delete it and its results
+                </button>
+                <button className="link" onClick={() => setConfirmDelete(false)}>
+                  Keep it
+                </button>
+              </>
+            ) : (
+              <button onClick={() => setConfirmDelete(true)} disabled={busy || running}>
+                Delete
+              </button>
             ))}
-          </select>
-        </label>
-        <button onClick={newScenario} disabled={busy || running} className={info.scenarios.length ? "" : "primary"}>
-          New scenario
-        </button>
-        <button onClick={duplicate} disabled={!draft || busy || running}>
-          Duplicate
-        </button>
-        {entry &&
-          (confirmDelete ? (
-            <>
-              <button className="danger" onClick={() => void remove(entry.id)} disabled={busy || running}>
-                Delete {entry.scenario.name} and its results
-              </button>
-              <button className="link" onClick={() => setConfirmDelete(false)}>
-                Keep it
-              </button>
-            </>
-          ) : (
-            <button onClick={() => setConfirmDelete(true)} disabled={busy || running}>
-              Delete
-            </button>
-          ))}
-      </div>
+        </div>
+      </section>
 
       {problem && (
         <div className="notice notice-bad">
@@ -323,160 +306,155 @@ function Conditions({ run, onFinished }: Props) {
         </div>
       )}
 
-      {!entry || !draft ? (
+      {(!entry || !draft) && (
         <p className="empty-scenarios">
           No scenarios yet. A new scenario starts with a light westerly breeze, RTK fixed and no rain; change it on the
           timeline.
         </p>
-      ) : (
-        <>
-          <div className="scenario-meta">
-            <label className="field">
-              <span className="field-label">Name</span>
-              <input value={draft.name} disabled={running} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-            </label>
-            <label className="field field-narrow">
-              <span className="field-label">Random seed</span>
-              <input
-                type="number"
-                min={0}
-                value={draft.seed}
-                disabled={running}
-                onChange={(e) => setDraft({ ...draft, seed: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-              />
-            </label>
-            <label className="field field-narrow">
-              <span className="field-label">Rain alert level (mm/h)</span>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={draft.rain_rule.alert_mm_h}
-                disabled={running}
-                onChange={(e) =>
-                  setDraft({ ...draft, rain_rule: { ...draft.rain_rule, alert_mm_h: Math.max(0, Number(e.target.value) || 0) } })
-                }
-              />
-            </label>
-            <label className="field field-narrow">
-              <span className="field-label">Rain limit level (mm/h)</span>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={draft.rain_rule.limit_mm_h}
-                disabled={running}
-                onChange={(e) =>
-                  setDraft({ ...draft, rain_rule: { ...draft.rain_rule, limit_mm_h: Math.max(0, Number(e.target.value) || 0) } })
-                }
-              />
-            </label>
-            <label className="field field-narrow">
-              <span className="field-label">Reaction (s)</span>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={draft.rain_rule.reaction_s}
-                disabled={running}
-                onChange={(e) =>
-                  setDraft({ ...draft, rain_rule: { ...draft.rain_rule, reaction_s: Math.max(0, Number(e.target.value) || 0) } })
-                }
-              />
-            </label>
-            <label className="field field-narrow">
-              <span className="field-label">Margin (s)</span>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={draft.rain_rule.margin_s}
-                disabled={running}
-                onChange={(e) =>
-                  setDraft({ ...draft, rain_rule: { ...draft.rain_rule, margin_s: Math.max(0, Number(e.target.value) || 0) } })
-                }
-              />
-            </label>
-          </div>
+      )}
 
-          <div className="timeline-wrap">
-            <div>
-              <TimelineEditor
+      {entry && draft && (
+        <>
+          <section className="card" aria-labelledby="weather-title">
+            <h2 id="weather-title">Scenario and weather</h2>
+            <div className="scenario-meta">
+              <fieldset className="meta-group">
+                <legend>Scenario</legend>
+                <MetaField
+                  label="Name"
+                  help="How this scenario is listed here and in the Replay tab."
+                  text
+                  value={draft.name}
+                  fallback={entry.scenario.name}
+                  placeholder="Name this scenario"
+                  disabled={running}
+                  onChange={(v) => setDraft({ ...draft, name: String(v) })}
+                />
+                <MetaField
+                  label="Random seed"
+                  help="Fixes the turbulence and GPS noise drawn for this flight, so the scenario flies the same way every time. Change it to try another draw of the same weather. Empty keeps the saved seed."
+                  value={draft.seed}
+                  fallback={entry.scenario.seed}
+                  integer
+                  disabled={running}
+                  onChange={(v) => setDraft({ ...draft, seed: Number(v) })}
+                />
+              </fieldset>
+              <fieldset className="meta-group meta-group-rain">
+                <legend>
+                  When it rains <span className="legend-note">empty fields use the drone profile's values</span>
+                </legend>
+                {(
+                  [
+                    ["alert_mm_h", "Alert level", "mm/h", 0.1, "Rain intensity at which the fleet is called home. The return command follows after the reaction time."],
+                    ["limit_mm_h", "Limit level", "mm/h", 0.1, "Rain the drones must not fly in. Every drone has to be home before the rain reaches it."],
+                    ["reaction_s", "Reaction time", "s", 0.5, "From the rain alert until the return command reaches the drones: noticing the rain, deciding, sending the command."],
+                    ["margin_s", "Margin", "s", 1, "Spare time the flight home must leave before the rain reaches the limit level."],
+                  ] as const
+                ).map(([key, label, unit, step, help]) => (
+                  <MetaField
+                    key={key}
+                    label={label}
+                    unit={unit}
+                    help={help}
+                    value={draft.rain_rule[key]}
+                    fallback={info.defaults.rain_rule[key]}
+                    placeholder={String(info.defaults.rain_rule[key])}
+                    step={step}
+                    disabled={running}
+                    onChange={(v) => setDraft({ ...draft, rain_rule: { ...draft.rain_rule, [key]: Number(v) } })}
+                  />
+                ))}
+              </fieldset>
+            </div>
+            <div className="timeline-wrap">
+              <div>
+                <TimelineEditor
+                  scenario={draft}
+                  show={info.show}
+                  duration={timelineDuration}
+                  selected={selected}
+                  onSelect={setSelected}
+                  disabled={running}
+                  onChange={(next, select) => {
+                    setDraft(next);
+                    if (select !== undefined) setSelected(select);
+                  }}
+                />
+                <p className="muted small timeline-help">
+                  Click a lane to add a key. Drag a key to move it; on Wind and Rain, drag up or down to change the value.
+                  With a key focused, the arrow keys nudge it (Shift for 5 s) and Delete removes it. When the rain reaches
+                  the alert level, the simulated fleet is called home after the reaction time.
+                </p>
+              </div>
+              <Inspector
                 scenario={draft}
-                show={info.show}
-                duration={timelineDuration}
                 selected={selected}
-                onSelect={setSelected}
+                duration={timelineDuration}
                 disabled={running}
                 onChange={(next, select) => {
                   setDraft(next);
                   if (select !== undefined) setSelected(select);
                 }}
               />
-              <p className="muted small timeline-help">
-                Click a lane to add a key. Drag a key to move it; on Wind and Rain, drag up or down to change the value.
-                With a key focused, the arrow keys nudge it (Shift for 5 s) and Delete removes it. When the rain reaches
-                the alert level, the simulated fleet is called home after the reaction time.
-              </p>
             </div>
-            <Inspector
-              scenario={draft}
-              selected={selected}
-              duration={timelineDuration}
-              disabled={running}
-              onChange={(next, select) => {
-                setDraft(next);
-                if (select !== undefined) setSelected(select);
-              }}
-            />
-          </div>
+          </section>
 
-          {info.readiness.error ? (
-            <p className="notice notice-warn">Rain return readiness isn't available: {info.readiness.error}</p>
-          ) : (
-            <ReadinessPanel
-              run={run}
-              readiness={info.readiness}
-              scenario={draft}
-              duration={timelineDuration}
-              scenarioWindow={(() => {
-                const a = rainCrossing(draft.rain, draft.rain_rule.alert_mm_h);
-                const l = rainCrossing(draft.rain, draft.rain_rule.limit_mm_h);
-                return a !== null && l !== null ? l - a : null;
-              })()}
-              disabled={running || busy}
-              onPlanned={() => void reload()}
-              onFlyThis={(t, w) => void flyThis(t, w)}
-            />
-          )}
-
-          <div className="actions">
-            {running ? null : (
-              <>
-                <button className="primary" onClick={() => void simulate()} disabled={busy}>
-                  {dirty ? "Save and simulate" : "Simulate this scenario"}
-                </button>
-                <button onClick={() => void save(draft, entry.id)} disabled={!dirty || busy}>
-                  Save changes
-                </button>
-                {dirty && (
-                  <button className="link" onClick={() => setEdit(null)}>
-                    Undo changes
-                  </button>
-                )}
-              </>
+          <section className="card">
+            {info.readiness.error ? (
+              <p className="notice notice-warn">Rain return readiness isn't available: {info.readiness.error}</p>
+            ) : (
+              <ReadinessPanel
+                run={run}
+                readiness={info.readiness}
+                scenario={draft}
+                duration={timelineDuration}
+                scenarioWindow={(() => {
+                  const a = rainCrossing(draft.rain, draft.rain_rule.alert_mm_h);
+                  const l = rainCrossing(draft.rain, draft.rain_rule.limit_mm_h);
+                  return a !== null && l !== null ? l - a : null;
+                })()}
+                disabled={running || busy}
+                onPlanned={() => void reload()}
+                onFlyThis={(t, w) => void flyThis(t, w)}
+              />
             )}
-          </div>
+          </section>
 
-          {running && job!.scenarioId === entry.id && <Simulating job={job!} runId={run.run_id} />}
-          {running && job!.scenarioId !== entry.id && (
-            <p className="notice">Another scenario of this run is being simulated; wait for it to finish.</p>
-          )}
-          {!running && job?.exit && job.scenarioId === entry.id && (job.exit.cancelled || (job.exit.code !== 0 && job.exit.code !== 1)) && (
-            <p className="notice notice-bad">
-              {job.exit.cancelled ? "The simulation was cancelled." : `The simulation stopped: ${job.errors[job.errors.length - 1] ?? `exit code ${job.exit.code}`}`}
+          <section className="card fly-card" aria-labelledby="fly-title">
+            <h2 id="fly-title">Fly this scenario</h2>
+            <p className="muted stage3-about">
+              The whole show through the digital twin in this weather. It passes when no two drones come within 0.5 m
+              and every drone is home with at least 15 % battery.
             </p>
-          )}
+            <div className="actions">
+              {running ? null : (
+                <>
+                  <button className="primary" onClick={() => void simulate()} disabled={busy}>
+                    {dirty ? "Save and simulate" : "Simulate this scenario"}
+                  </button>
+                  <button onClick={() => void save(draft, entry.id)} disabled={!dirty || busy}>
+                    Save changes
+                  </button>
+                  {dirty && (
+                    <button className="link" onClick={() => setEdit(null)}>
+                      Undo changes
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {running && job!.scenarioId === entry.id && <Simulating job={job!} runId={run.run_id} />}
+            {running && job!.scenarioId !== entry.id && (
+              <p className="notice">Another scenario of this run is being simulated; wait for it to finish.</p>
+            )}
+            {!running && job?.exit && job.scenarioId === entry.id && (job.exit.cancelled || (job.exit.code !== 0 && job.exit.code !== 1)) && (
+              <p className="notice notice-bad">
+                {job.exit.cancelled ? "The simulation was cancelled." : `The simulation stopped: ${job.errors[job.errors.length - 1] ?? `exit code ${job.exit.code}`}`}
+              </p>
+            )}
+          </section>
           {!running && entry.result && (
             <Result
               run={run}
@@ -492,6 +470,67 @@ function Conditions({ run, onFinished }: Props) {
 }
 
 // --------------------------------------------------------------------------------------------- //
+
+/** A scenario input that shows its fallback as a placeholder: empty while the value equals the fallback
+ *  (a default from the drone profile, or the saved value), and emptying it goes back to the fallback. */
+function MetaField({
+  label,
+  unit,
+  help,
+  value,
+  fallback,
+  placeholder,
+  text,
+  integer,
+  step,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  unit?: string;
+  help: string;
+  value: number | string;
+  fallback: number | string;
+  placeholder?: string;
+  text?: boolean;
+  integer?: boolean;
+  step?: number;
+  disabled: boolean;
+  onChange: (v: number | string) => void;
+}) {
+  // While focused, the field keeps exactly what was typed ("0." on the way to "0.5").
+  const [local, setLocal] = useState<string | null>(null);
+  const shown = local ?? (value === fallback && !text ? "" : String(value));
+  return (
+    <label className="field">
+      <span className="field-label">
+        {label}
+        {unit && <span className="muted"> ({unit})</span>}
+        <span className="hint-icon" tabIndex={0} role="img" aria-label={help} data-tip={help}>
+          ?
+        </span>
+      </span>
+      <input
+        type={text ? "text" : "number"}
+        min={text ? undefined : 0}
+        step={text ? undefined : integer ? 1 : step}
+        value={shown}
+        placeholder={placeholder ?? String(fallback)}
+        disabled={disabled}
+        onFocus={() => setLocal(shown)}
+        onBlur={() => setLocal(null)}
+        onChange={(e) => {
+          setLocal(e.target.value);
+          const t = e.target.value.trim();
+          if (t === "") return onChange(fallback);
+          if (text) return onChange(e.target.value);
+          const n = Number(t);
+          if (Number.isFinite(n) && n >= 0) onChange(integer ? Math.floor(n) : n);
+        }}
+      />
+    </label>
+  );
+}
 
 function Inspector({
   scenario,
@@ -672,7 +711,7 @@ function Result({
           : `The last drone got home ${seconds(-(home!.spare_sec ?? 0))} after the rain limit`
         : `${low} ${low === 1 ? "drone landed" : "drones landed"} with less than ${pct(r.criteria.min_landing_soc)} battery`;
   return (
-    <section className="sim-result" aria-labelledby="sim-result-title">
+    <section className="sim-result" aria-label="Result">
       {stale && (
         <p className="notice notice-warn">
           This result is from an earlier Stage 2 result. Simulate again to fly the current paths.
@@ -681,103 +720,104 @@ function Result({
       {edited && !stale && (
         <p className="notice notice-warn">The scenario changed after this simulation. Simulate again to see the effect.</p>
       )}
-      <div className={`verdict ${r.passed ? "verdict-ok" : "verdict-bad"}`}>
-        <span className={`light light-${r.passed ? "ok" : "bad"}`} aria-hidden="true" />
-        <h2 id="sim-result-title">{headline}</h2>
-      </div>
-      <dl className="facts facts-wide">
-        <div>
-          <dt>Closest approach</dt>
-          <dd className={(r.closest?.distance_m ?? Infinity) < r.criteria.d_crash_m ? "tone-bad" : (r.closest?.distance_m ?? Infinity) < r.criteria.d_warning_m ? "tone-warn" : undefined}>
-            {r.closest ? (
-              <button className="fact-link" onClick={() => onOpen(r.closest!.time_sec, [r.closest!.a, r.closest!.b])}>
-                {metres(r.closest.distance_m, 2)}
+      <VerdictCard tone={r.passed ? "ok" : "bad"} title={headline}>
+        <dl className="stat-cards">
+          <div>
+            <dt>Closest approach</dt>
+            <dd className={(r.closest?.distance_m ?? Infinity) < r.criteria.d_crash_m ? "tone-bad" : (r.closest?.distance_m ?? Infinity) < r.criteria.d_warning_m ? "tone-warn" : undefined}>
+              {r.closest ? (
+                <button className="fact-link" onClick={() => onOpen(r.closest!.time_sec, [r.closest!.a, r.closest!.b])}>
+                  {metres(r.closest.distance_m, 2)}
+                </button>
+              ) : (
+                "over 3 m"
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Largest deviation from plan</dt>
+            <dd className={r.largest_deviation.distance_m > 0.5 ? "tone-warn" : undefined}>
+              <button className="fact-link" onClick={() => onOpen(r.largest_deviation.time_sec, [r.largest_deviation.drone])}>
+                {metres(r.largest_deviation.distance_m, 2)}
               </button>
-            ) : (
-              "over 3 m"
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>Largest deviation from plan</dt>
-          <dd className={r.largest_deviation.distance_m > 0.5 ? "tone-warn" : undefined}>
-            <button className="fact-link" onClick={() => onOpen(r.largest_deviation.time_sec, [r.largest_deviation.drone])}>
-              {metres(r.largest_deviation.distance_m, 2)}
-            </button>
-          </dd>
-        </div>
-        <div>
-          <dt>Lowest battery at landing</dt>
-          <dd className={r.lowest_battery.soc < r.criteria.min_landing_soc ? "tone-bad" : undefined}>
-            {pct(r.lowest_battery.soc)}
-          </dd>
-        </div>
-        <div>
-          <dt>Rain</dt>
-          <dd>
-            {r.rain.alert_time_sec === null ? (
-              rainLabel(r.rain.peak_mm_h)
-            ) : (
-              <button className="fact-link" onClick={() => onOpen(r.rain.alert_time_sec!, [])}>
-                alert at {formatTime(r.rain.alert_time_sec)}
-              </button>
-            )}
-          </dd>
-        </div>
-      </dl>
-      {home && home.formation >= 0 && <RainReturnFacts home={home} reaction={r.rain.reaction_s} onOpen={onOpen} />}
-      {r.rain.not_applied && (
-        <p className="notice notice-warn">The rain rule wasn't applied: {r.rain.not_applied}.</p>
-      )}
-      <p className="muted small">
-        {r.closest && <>Closest pair: drones {r.closest.a} and {r.closest.b} at {formatTime(r.closest.time_sec)}. </>}
-        Furthest from plan: drone {r.largest_deviation.drone} at {formatTime(r.largest_deviation.time_sec)}.{" "}
-        {r.rain.alert_time_sec !== null && (
-          <>
-            Rain reaches the alert level at {formatTime(r.rain.alert_time_sec)}
-            {r.rain.limit_time_sec !== null && <> and the limit at {formatTime(r.rain.limit_time_sec)}</>}.{" "}
-          </>
+            </dd>
+          </div>
+          <div>
+            <dt>Lowest battery at landing</dt>
+            <dd className={r.lowest_battery.soc < r.criteria.min_landing_soc ? "tone-bad" : undefined}>
+              {pct(r.lowest_battery.soc)}
+            </dd>
+          </div>
+          <div>
+            <dt>Rain</dt>
+            <dd>
+              {r.rain.alert_time_sec === null ? (
+                rainLabel(r.rain.peak_mm_h)
+              ) : (
+                <button className="fact-link" onClick={() => onOpen(r.rain.alert_time_sec!, [])}>
+                  alert at {formatTime(r.rain.alert_time_sec)}
+                </button>
+              )}
+            </dd>
+          </div>
+        </dl>
+        {home && home.formation >= 0 && <RainReturnFacts home={home} reaction={r.rain.reaction_s} onOpen={onOpen} />}
+        {r.rain.not_applied && (
+          <p className="notice notice-warn">The rain rule wasn't applied: {r.rain.not_applied}.</p>
         )}
-        Flown on {r.device.replace(/\s*\(opencl:\d+:\d+\)$/, "").replace(/\((R|TM)\)/g, "")} in{" "}
-        {formatDuration(r.wall_time_sec)} ({r.realtime_factor.toFixed(1)}× real time).
-      </p>
-      {r.crash_pairs.length > 0 && (
-        <div className="table-scroll">
-          <table className="table">
-            <thead>
-              <tr>
-                <th scope="col">Drones</th>
-                <th scope="col" className="num">Closest</th>
-                <th scope="col" className="num">At</th>
-                <th scope="col">
-                  <span className="visually-hidden">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {r.crash_pairs.slice(0, 20).map((p) => (
-                <tr key={`${p.drone_a}-${p.drone_b}`}>
-                  <td>
-                    {p.drone_a} and {p.drone_b}
-                  </td>
-                  <td className="num tone-bad">{metres(p.min_distance_m, 2)}</td>
-                  <td className="num">{formatTime(p.time_sec)}</td>
-                  <td className="row-action">
-                    <button className="link" onClick={() => onOpen(p.time_sec, [p.drone_a, p.drone_b])}>
-                      Show
-                    </button>
-                  </td>
+        <p className="muted small">
+          {r.closest && <>Closest pair: drones {r.closest.a} and {r.closest.b} at {formatTime(r.closest.time_sec)}. </>}
+          Furthest from plan: drone {r.largest_deviation.drone} at {formatTime(r.largest_deviation.time_sec)}.{" "}
+          {r.rain.alert_time_sec !== null && (
+            <>
+              Rain reaches the alert level at {formatTime(r.rain.alert_time_sec)}
+              {r.rain.limit_time_sec !== null && <> and the limit at {formatTime(r.rain.limit_time_sec)}</>}.{" "}
+            </>
+          )}
+          Flown on {r.device.replace(/\s*\(opencl:\d+:\d+\)$/, "").replace(/\((R|TM)\)/g, "")} in{" "}
+          {formatDuration(r.wall_time_sec)} ({r.realtime_factor.toFixed(1)}× real time).
+        </p>
+        {r.crash_pairs.length > 0 && (
+          <div className="table-scroll">
+            <table className="table data">
+              <thead>
+                <tr>
+                  <th scope="col">Drones</th>
+                  <th scope="col" className="num">Closest</th>
+                  <th scope="col" className="num">At</th>
+                  <th scope="col">
+                    <span className="visually-hidden">Actions</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {entry.playback && (
-        <div className="actions">
-          <button onClick={() => onOpen(0, [])}>Watch the playback</button>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {r.crash_pairs.slice(0, 20).map((p) => (
+                  <tr key={`${p.drone_a}-${p.drone_b}`}>
+                    <td>
+                      {p.drone_a} and {p.drone_b}
+                    </td>
+                    <td className="num tone-bad">{metres(p.min_distance_m, 2)}</td>
+                    <td className="num">{formatTime(p.time_sec)}</td>
+                    <td className="row-action">
+                      <button className="link" onClick={() => onOpen(p.time_sec, [p.drone_a, p.drone_b])}>
+                        Show in replay
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {entry.playback && (
+          <div className="actions">
+            <button className="primary" onClick={() => onOpen(0, [])}>
+              Watch in Replay
+            </button>
+            <span className="muted small">Times and values above open the replay at that moment.</span>
+          </div>
+        )}
+      </VerdictCard>
     </section>
   );
 }
@@ -806,7 +846,7 @@ function RainReturnFacts({
   return (
     <div className="rain-return">
       <h3>The return to the holding area</h3>
-      <dl className="facts facts-wide">
+      <dl className="stat-cards">
         <div>
           <dt>Return called</dt>
           <dd>
@@ -870,74 +910,6 @@ function RainReturnFacts({
           </>
         )}
       </p>
-    </div>
-  );
-}
-
-// --------------------------------------------------------------------------------------------- //
-
-const playbackCache = new Map<string, { stamp: string; data: ReplayData }>();
-
-function Playback({
-  run,
-  entry,
-  focus,
-  onBack,
-}: {
-  run: RunRecord;
-  entry: ScenarioEntry;
-  focus: ReplayFocus | null;
-  onBack: () => void;
-}) {
-  const dir = `stage3/scenarios/${entry.id}`;
-  const key = `${run.run_id}:${dir}`;
-  const stamp = entry.result?.simulated_at ?? "";
-  const [data, setData] = useState<ReplayData | null>(() => {
-    const hit = playbackCache.get(key);
-    return hit?.stamp === stamp ? hit.data : null;
-  });
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const hit = playbackCache.get(key);
-    if (hit?.stamp === stamp) {
-      setData(hit.data);
-      return;
-    }
-    let live = true;
-    setData(null);
-    loadReplay(run.run_id, dir)
-      .then((d) => {
-        if (!live) return;
-        if (!d) setError("The playback files are missing; simulate the scenario again.");
-        else {
-          playbackCache.set(key, { stamp, data: d });
-          setData(d);
-        }
-      })
-      .catch((e) => live && setError(String(e)));
-    return () => {
-      live = false;
-    };
-  }, [run.run_id, dir, key, stamp]);
-
-  const label = useMemo(() => `${entry.scenario.name}, flown through the digital twin`, [entry.scenario.name]);
-  if (error || !data) {
-    return (
-      <div className="page">
-        <button className="link" onClick={onBack}>
-          Back to the timeline
-        </button>
-        {error ? <p className="notice notice-bad">{error}</p> : <p className="status-line">Loading the playback…</p>}
-      </div>
-    );
-  }
-  return (
-    <div className="replay-wrap">
-      <button className="link replay-back" onClick={onBack}>
-        Back to the timeline
-      </button>
-      <ReplayPlayer key={dir + stamp} data={data} focus={focus} label={label} />
     </div>
   );
 }

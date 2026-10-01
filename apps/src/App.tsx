@@ -41,6 +41,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("stage2");
   const [stage3Section, setStage3Section] = useState<Stage3Section>("stress");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The weather scenario Stage 3 › Weather scenarios opens on ("Edit this weather" in the Replay tab). */
+  const [scenarioId, setScenarioId] = useState<string | null>(null);
   const [focus, setFocus] = useState<ReplayFocus | null>(null);
   const [replaySource, setReplaySource] = useState<ReplaySource>({ kind: "show" });
 
@@ -88,6 +90,7 @@ export default function App() {
     setTab(nextTab);
     setFocus(null);
     setReplaySource({ kind: "show" });
+    setScenarioId(null);
   }
 
   return (
@@ -225,6 +228,12 @@ export default function App() {
                   devices={devices}
                   onFinished={() => void refreshRuns()}
                   onConditionsFinished={() => void refreshRuns()}
+                  scenarioId={scenarioId}
+                  onPlayScenario={(id, name, time, drones) => {
+                    setReplaySource({ kind: "scenario", id, name });
+                    setFocus({ time, drones, key: Date.now() });
+                    setTab("replay");
+                  }}
                   onShowInReplay={(time, drones, note) => {
                     setReplaySource({ kind: "show" });
                     setFocus({ time, drones, note, key: Date.now() });
@@ -237,9 +246,14 @@ export default function App() {
                   run={run}
                   focus={focus}
                   source={replaySource}
-                  onShowPlayback={() => {
-                    setReplaySource({ kind: "show" });
+                  onSource={(s) => {
+                    setReplaySource(s);
                     setFocus(null);
+                  }}
+                  onEditScenario={(id) => {
+                    setScenarioId(id);
+                    setStage3Section("conditions");
+                    setTab("stage3");
                   }}
                 />
               )}

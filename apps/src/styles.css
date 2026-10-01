@@ -1030,10 +1030,10 @@ input[type="radio"]:focus-visible {
   bottom: 1rem;
   width: 19rem;
   overflow-y: auto;
-  padding: 1rem 1.5rem;
+  padding: 1.25rem 1.5rem;
   background: rgb(26 26 26 / 0.92);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-elevated);
   backdrop-filter: blur(8px);
 }
@@ -1569,16 +1569,6 @@ input[type="radio"]:focus-visible {
   flex: 1;
   min-height: 0;
 }
-.replay-back {
-  position: absolute;
-  top: 1rem;
-  left: 1rem;
-  z-index: 2;
-  padding: 0.375rem 0.75rem;
-  background: rgb(26 26 26 / 0.92);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
 .row-action .link + .link {
   margin-left: 1rem;
 }
@@ -1628,27 +1618,111 @@ input[type="radio"]:focus-visible {
 .page-wide {
   max-width: 90rem;
 }
-.scenario-bar,
+/* Scenario inputs: "Scenario" (name, seed) beside "When it rains" (the rain rule). */
 .scenario-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 1rem;
+}
+.meta-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 9.5rem;
+  align-content: start;
+  gap: 0.75rem 1rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem 1.25rem 1.25rem;
+  background: rgb(255 255 255 / 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.meta-group-rain {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.legend-note {
+  margin-left: 0.5rem;
+  font-family: var(--font);
+  font-size: var(--step--1);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--text-muted);
+}
+.meta-group legend {
+  padding: 0 0.375rem;
+  margin-left: -0.375rem;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.meta-group .field input {
+  width: 100%;
+  min-width: 0;
+}
+.meta-group .field-label {
   display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 1rem 1rem;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
 }
-.scenario-bar .field select {
-  min-width: 16rem;
+/* "?" hint: its text shows on hover or keyboard focus. */
+.hint-icon {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 0.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
 }
-.scenario-bar button {
-  min-height: 44px;
+.hint-icon:hover,
+.hint-icon:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
 }
-.scenario-meta {
-  margin: 1.5rem 0 1.25rem;
+.hint-icon::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 18rem;
+  padding: 0.5rem 0.75rem;
+  transform: translateX(-50%);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  color: var(--text);
+  font-size: var(--step--1);
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+  text-align: left;
+  pointer-events: none;
+  /* Not just transparent: a hidden tip would still widen the page and add a scrollbar. */
+  display: none;
 }
-.scenario-meta .field input {
-  width: 18rem;
+.hint-icon:hover::after,
+.hint-icon:focus-visible::after {
+  display: block;
 }
-.scenario-meta .field-narrow input {
-  width: 10rem;
+/* The last field's tip opens leftwards so it stays inside the window. */
+.meta-group .field:last-child .hint-icon::after {
+  left: auto;
+  right: -0.5rem;
+  transform: none;
+}
+@media (max-width: 1250px) {
+  .scenario-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .empty-scenarios {
   margin-top: 1.5rem;
@@ -1833,8 +1907,7 @@ input[type="radio"]:focus-visible {
   margin-top: 1.5rem;
 }
 .sim-result {
-  margin-top: 2rem;
-  max-width: 56rem;
+  margin-top: 0.5rem;
 }
 .fact-link {
   padding: 0;
@@ -1957,7 +2030,7 @@ input[type="radio"]:focus-visible {
 
 /* Rain return readiness (docs/4-condition_simulator.md §5, §6): the chart shares the timeline's axis. */
 .readiness {
-  margin-top: 2rem;
+  margin-top: 0;
 }
 .readiness-title {
   font-size: var(--step-2);
@@ -2457,4 +2530,150 @@ input[type="radio"]:focus-visible {
 .clock-small {
   font-family: var(--font-mono);
   font-size: var(--step--1);
+}
+
+/* Replay toolbar: what is playing (the show, a return path, or a simulated weather scenario). */
+.replay-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.5rem;
+  padding: 0.75rem 2rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.page > .replay-toolbar {
+  margin: 0 0 2rem;
+  padding: 0.75rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 56rem;
+}
+.replay-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.replay-pick select {
+  min-height: 40px;
+  min-width: 18rem;
+  max-width: 28rem;
+  padding: 0.5rem 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  line-height: 1.2;
+  transition:
+    background-color var(--fast) ease,
+    border-color var(--fast) ease;
+}
+.replay-pick select:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.replay-pick select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.replay-about {
+  flex: 1;
+  min-width: 12rem;
+}
+/* The transport bar in the v3 spacing. */
+.transport {
+  padding: 0.625rem 2rem;
+}
+.transport .speed select {
+  border-radius: var(--radius-md);
+}
+
+/* Weather scenarios (Stage 3): the page in v3 spacing, one card per step, full width for the timeline. */
+.page.page-wide {
+  padding: 2.5rem 2.5rem 4.5rem;
+}
+.conditions .card {
+  max-width: none;
+}
+.conditions .verdict-card {
+  max-width: none;
+}
+/* Scenario toolbar: pick a scenario (each with its last result), and new / duplicate / delete. */
+.scenario-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.scenario-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.scenario-chip {
+  max-width: 20rem;
+}
+.scenario-chip .subtab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scenario-ops {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.scenario-ops button {
+  min-height: 44px;
+}
+.card > .scenario-meta {
+  margin: 0.75rem 0 1.25rem;
+}
+.conditions > .empty-scenarios {
+  margin-top: 0;
+}
+.card .inspector {
+  background: rgb(255 255 255 / 0.03);
+}
+.card .actions:first-of-type {
+  margin-top: 1rem;
+}
+.fly-card .running {
+  max-width: none;
+  margin-top: 1.25rem;
+  box-shadow: none;
+}
+.fly-card .notice:last-child {
+  margin-bottom: 0;
+}
+.sim-result .stat-cards {
+  max-width: none;
+}
+.sim-result .rain-return h3 {
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 1100px) {
+  .page.page-wide {
+    padding: 2rem 1.5rem 4rem;
+  }
+  .replay-toolbar {
+    padding: 0.625rem 1.5rem;
+  }
+  .transport {
+    padding: 0.5rem 1.5rem;
+  }
+}
+.stat-cards .fact-link {
+  text-align: left;
+}
+.sim-result .stat-cards dd {
+  font-size: 22px;
 }

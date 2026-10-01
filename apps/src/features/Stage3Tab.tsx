@@ -17,9 +17,23 @@ interface Props {
   /** A weather simulation finished: refresh the run list. */
   onConditionsFinished: () => void;
   onShowInReplay: (time: number, drones: number[], note: string) => void;
+  /** Play a simulated weather scenario in the Replay tab. */
+  onPlayScenario: (id: string, name: string, time: number, drones: number[]) => void;
+  /** The weather scenario to show first. */
+  scenarioId: string | null;
 }
 
-export function Stage3Tab({ run, section, onSection, devices, onFinished, onConditionsFinished, onShowInReplay }: Props) {
+export function Stage3Tab({
+  run,
+  section,
+  onSection,
+  devices,
+  onFinished,
+  onConditionsFinished,
+  onShowInReplay,
+  onPlayScenario,
+  scenarioId,
+}: Props) {
   const sections: [Stage3Section, string, StageState][] = [
     ["stress", "Random weather (stress test)", stressState(run)],
     ["conditions", "Weather scenarios", conditionsState(run)],
@@ -43,7 +57,7 @@ export function Stage3Tab({ run, section, onSection, devices, onFinished, onCond
         ))}
       </div>
       {section === "conditions" ? (
-        <ConditionsView run={run} onFinished={onConditionsFinished} />
+        <ConditionsView run={run} onFinished={onConditionsFinished} onPlay={onPlayScenario} scenarioId={scenarioId} />
       ) : (
         <Stage3View
           run={run}
