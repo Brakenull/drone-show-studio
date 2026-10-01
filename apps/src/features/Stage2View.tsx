@@ -15,6 +15,7 @@ import {
 import { isStage3Running } from "../app/stage3Jobs";
 import { isReturnsRunning } from "../app/returnsJobs";
 import { ReturnPaths } from "./ReturnPaths";
+import { VerdictCard } from "./VerdictCard";
 import { clock, duration, STATUS } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
 import type { Separation } from "../replay/types";
@@ -279,25 +280,23 @@ function Passed({
   }, [run.run_id, run.stage2.ended_at]);
   return (
     <section className="outcome">
-      <div className="verdict verdict-ok">
-        <span className="light light-ok" aria-hidden="true" />
-        <h2>Stage 2 planned the whole show</h2>
-      </div>
-      <p>Every pair of drones stayed at or above the required distance for the full show.</p>
-      <dl className="facts facts-wide">
-        <div>
-          <dt>Show length</dt>
-          <dd>{duration(run.stage2.total_duration_sec)}</dd>
-        </div>
-        <div>
-          <dt>Closest approach</dt>
-          <dd>{sep ? metres(sep.worst.distance_m, 3) : "n/a"}</dd>
-        </div>
-        <div>
-          <dt>Planning time</dt>
-          <dd>{duration(run.stage2.wall_time_sec)}</dd>
-        </div>
-      </dl>
+      <VerdictCard tone="ok" title="Stage 2 planned the whole show">
+        <p>Every pair of drones stayed at or above the required distance for the full show.</p>
+        <dl className="stat-cards">
+          <div>
+            <dt>Show length</dt>
+            <dd>{duration(run.stage2.total_duration_sec)}</dd>
+          </div>
+          <div>
+            <dt>Closest approach</dt>
+            <dd>{sep ? metres(sep.worst.distance_m, 3) : "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Planning time</dt>
+            <dd>{duration(run.stage2.wall_time_sec)}</dd>
+          </div>
+        </dl>
+      </VerdictCard>
       <ReturnPaths run={run} onChanged={onChanged} onView={onViewReturn} />
       {again}
     </section>
@@ -327,76 +326,74 @@ function Rejected({
   const where = (name: string) => (name === "holding_area" ? "the holding area" : name);
   return (
     <section className="outcome">
-      <div className="verdict verdict-bad">
-        <span className="light light-bad" aria-hidden="true" />
-        <h2>Stage 2 rejected this show</h2>
-      </div>
-      <p className="verdict-detail">
-        Flying from {where(t.from_keyframe)} to {where(t.to_keyframe)}, two drones come within{" "}
-        <strong className="tone-bad">{metres(failure.worst_separation_m, 3)}</strong> of each other. The safety check
-        requires <strong>{metres(failure.required_separation_m, 2)}</strong>.{" "}
-        {failure.violating_pair_count === 1
-          ? "One pair is too close."
-          : `${failure.violating_pair_count} pairs are too close.`}
-      </p>
+      <VerdictCard tone="bad" title="Stage 2 rejected this show">
+        <p className="verdict-detail">
+          Flying from {where(t.from_keyframe)} to {where(t.to_keyframe)}, two drones come within{" "}
+          <strong className="tone-bad">{metres(failure.worst_separation_m, 3)}</strong> of each other. The safety check
+          requires <strong>{metres(failure.required_separation_m, 2)}</strong>.{" "}
+          {failure.violating_pair_count === 1
+            ? "One pair is too close."
+            : `${failure.violating_pair_count} pairs are too close.`}
+        </p>
 
-      <h3>Too-close pairs</h3>
-      <table className="table">
-        <thead>
-          <tr>
-            <th scope="col">Drones</th>
-            <th scope="col" className="num">Closest</th>
-            <th scope="col" className="num">At</th>
-            <th scope="col">
-              <span className="visually-hidden">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {failure.violations.slice(0, 100).map((v) => (
-            <tr key={`${v.drone_a}-${v.drone_b}`}>
-              <td>
-                {v.drone_a} and {v.drone_b}
-              </td>
-              <td className="num tone-bad">{metres(v.distance_m, 3)}</td>
-              <td className="num">{formatTime(v.time_sec)}</td>
-              <td className="row-action">
-                <button className="link" onClick={() => onShowInReplay(v.time_sec, [v.drone_a, v.drone_b])}>
-                  Show in replay
-                </button>
-              </td>
+        <h3>Too-close pairs</h3>
+        <table className="table data">
+          <thead>
+            <tr>
+              <th scope="col">Drones</th>
+              <th scope="col" className="num">Closest</th>
+              <th scope="col" className="num">At</th>
+              <th scope="col">
+                <span className="visually-hidden">Actions</span>
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {failure.violations_truncated && (
-        <p className="muted small">Showing the {failure.violations.length} closest pairs.</p>
-      )}
+          </thead>
+          <tbody>
+            {failure.violations.slice(0, 100).map((v) => (
+              <tr key={`${v.drone_a}-${v.drone_b}`}>
+                <td>
+                  {v.drone_a} and {v.drone_b}
+                </td>
+                <td className="num tone-bad">{metres(v.distance_m, 3)}</td>
+                <td className="num">{formatTime(v.time_sec)}</td>
+                <td className="row-action">
+                  <button className="link" onClick={() => onShowInReplay(v.time_sec, [v.drone_a, v.drone_b])}>
+                    Show in replay
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {failure.violations_truncated && (
+          <p className="muted small">Showing the {failure.violations.length} closest pairs.</p>
+        )}
 
-      <h3>What Stage 2 tried</h3>
-      <p className="muted">
-        Before rejecting a transition, Stage 2 retries it with more time and stronger spreading. If the closest
-        distance doesn't improve, the formations themselves need to change.
-      </p>
-      <table className="table">
-        <thead>
-          <tr>
-            <th scope="col">Attempt</th>
-            <th scope="col" className="num">Transition time</th>
-            <th scope="col" className="num">Closest</th>
-          </tr>
-        </thead>
-        <tbody>
-          {failure.attempts.map((a) => (
-            <tr key={a.attempt}>
-              <td>{a.attempt}</td>
-              <td className="num">{a.duration_sec.toFixed(1)} s</td>
-              <td className="num tone-bad">{metres(a.worst_separation_m, 3)}</td>
+        <h3>What Stage 2 tried</h3>
+        <p className="muted">
+          Before rejecting a transition, Stage 2 retries it with more time and stronger spreading. If the closest
+          distance doesn't improve, the formations themselves need to change.
+        </p>
+        <table className="table data">
+          <thead>
+            <tr>
+              <th scope="col">Attempt</th>
+              <th scope="col" className="num">Transition time</th>
+              <th scope="col" className="num">Closest</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="muted small">Planning took {duration(run.stage2.wall_time_sec)}.</p>
+          </thead>
+          <tbody>
+            {failure.attempts.map((a) => (
+              <tr key={a.attempt}>
+                <td>{a.attempt}</td>
+                <td className="num">{a.duration_sec.toFixed(1)} s</td>
+                <td className="num tone-bad">{metres(a.worst_separation_m, 3)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted small planning-took">Planning took {duration(run.stage2.wall_time_sec)}.</p>
+      </VerdictCard>
       {again}
     </section>
   );
@@ -441,18 +438,19 @@ function Stopped({
   const cancelled = status === "cancelled";
   return (
     <section className="outcome">
-      <div className={`verdict ${cancelled ? "" : "verdict-warn"}`}>
-        <span className={`light light-${STATUS[status].tone}`} aria-hidden="true" />
-        <h2>{cancelled ? "This run was cancelled" : "Stage 2 stopped with an error"}</h2>
-      </div>
-      {!cancelled && run.stage2.message && <p className="notice notice-bad">{run.stage2.message}</p>}
-      {!cancelled && (
-        <p className="muted">
-          This isn't a safety verdict. The planner didn't finish, so nothing was checked. The output below usually
-          says why.
-        </p>
-      )}
-      <LogPane lines={logTail} />
+      <VerdictCard
+        tone={cancelled ? "idle" : STATUS[status].tone === "bad" ? "bad" : "warn"}
+        title={cancelled ? "This run was cancelled" : "Stage 2 stopped with an error"}
+      >
+        {!cancelled && run.stage2.message && <p className="notice notice-bad">{run.stage2.message}</p>}
+        {!cancelled && (
+          <p className="muted">
+            This isn't a safety verdict. The planner didn't finish, so nothing was checked. The output below usually
+            says why.
+          </p>
+        )}
+        <LogPane lines={logTail} />
+      </VerdictCard>
       {again}
     </section>
   );

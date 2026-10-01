@@ -44,7 +44,7 @@ def _overlays(run_dir: Path, failure: dict[str, Any] | None) -> dict[str, Any]:
     meta = phase1["project_metadata"]
     overlays: dict[str, Any] = {
         "holding_area": {**meta["holding_area"], "slots": holding_positions(meta).round(4).tolist()},
-        "keyframes": [{"shape_name": kf["shape_name"]} for kf in phase1["keyframes"]],
+        "keyframes": [{"shape_name": kf["shape_name"], "time_sec": kf["time_sec"]} for kf in phase1["keyframes"]],
         "nominal_min_distance_m": meta["min_distance_m"],
         "ground_z_m": meta.get("ground_z_m", GROUND_Z_M),
         "gatekeeper_floor_m": failure["required_separation_m"] if failure else gatekeeper_floor(run_dir),

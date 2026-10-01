@@ -170,6 +170,16 @@ def test_stage2_success_writes_contract_and_replay(tmp_path):
     d = np.linalg.norm(positions[k, separation["worst"]["a"]] - positions[k, separation["worst"]["b"]])
     assert d == pytest.approx(separation["worst"]["distance_m"], abs=1e-4)
 
+    # Formation marks: every Phase 1 formation, at the time the planned show reaches it.
+    contract = json.loads((run_dir / "stage2" / "trajectory_splines.json").read_text())
+    reached = {t["to_keyframe"]: t["end_time_sec"] for t in contract["metadata"]["transitions"]}
+    marks = header["timeline"]["formations"]
+    assert [m["name"] for m in marks] == [kf["shape_name"] for kf in phase1_of(run_dir)["keyframes"]]
+    for m, kf in zip(marks, phase1_of(run_dir)["keyframes"]):
+        assert m["designed_sec"] == kf["time_sec"]
+        assert m["reached_sec"] == pytest.approx(reached.get(m["name"], header["t0"]))
+        assert not m["rejected"]
+
 
 @needs_drone_core
 def test_stage2_safety_failure_writes_report_and_failure_replay(tmp_path):
@@ -212,6 +222,46 @@ def test_replay_without_stage2_output_is_an_input_error(tmp_path):
     code, events = bridge("replay", str(run_dir))
     assert code == 2
     assert first(events, "error")["code"] == "input"
+
+
+def phase1_of(run_dir: Path) -> dict:
+    return json.loads((run_dir / "input" / "phase1.json").read_text())
+
+
+def test_show_timeline_places_formations_at_planned_times():
+    from tools.studio_bridge.replay_builder import show_timeline
+
+    contract = {"metadata": {
+        "transitions": [
+            {"from_keyframe": "holding_area", "to_keyframe": "A", "start_time_sec": 0.0, "end_time_sec": 30.0},
+            {"from_keyframe": "A", "to_keyframe": "B", "start_time_sec": 35.0, "end_time_sec": 60.0},
+            {"from_keyframe": "B", "to_keyframe": "holding_area", "start_time_sec": 60.0, "end_time_sec": 90.0},
+        ],
+        "legs": {"takeoff": {"start_time_sec": 0.0, "end_time_sec": 30.0},
+                 "return": {"start_time_sec": 60.0, "end_time_sec": 90.0}},
+    }}
+    overlays = {"keyframes": [{"shape_name": "A", "time_sec": 0.0}, {"shape_name": "B", "time_sec": 20.0},
+                              {"shape_name": "C", "time_sec": 40.0}]}
+    timeline = show_timeline(contract, overlays, 0.0)
+    # Reached later than designed (takeoff leg), A held until 35 s; C is never reached, so it is left out.
+    assert [(f["name"], f["reached_sec"], f["leaves_sec"], f["designed_sec"]) for f in timeline["formations"]] == [
+        ("A", 30.0, 35.0, 0.0), ("B", 60.0, 60.0, 20.0)]
+    assert timeline["legs"] == {"takeoff": {"start_sec": 0.0, "end_sec": 30.0},
+                                "return": {"start_sec": 60.0, "end_sec": 90.0}}
+
+    # A rejected show: B is the target of the rejected attempt, and nothing after it is listed.
+    contract["metadata"]["transitions"] = contract["metadata"]["transitions"][:1]
+    overlays["failure"] = {"transition": {"from_keyframe": "A", "to_keyframe": "B", "start_time_sec": 35.0,
+                                          "duration_sec": 20.0}}
+    marks = show_timeline(contract, overlays, 0.0)["formations"]
+    assert [(f["name"], f["reached_sec"], f["rejected"]) for f in marks] == [("A", 30.0, False), ("B", 55.0, True)]
+
+    # No takeoff leg: the show starts in the first formation.
+    contract = {"metadata": {"transitions": [
+        {"from_keyframe": "A", "to_keyframe": "B", "start_time_sec": 5.0, "end_time_sec": 25.0}]}}
+    overlays = {"keyframes": [{"shape_name": "A", "time_sec": 0.0}, {"shape_name": "B", "time_sec": 20.0}]}
+    marks = show_timeline(contract, overlays, 0.0)["formations"]
+    assert [(f["name"], f["reached_sec"], f["leaves_sec"]) for f in marks] == [("A", 0.0, 5.0), ("B", 25.0, None)]
 
 
 def test_failure_show_join_keeps_completed_segments_first():

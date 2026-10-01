@@ -24,9 +24,11 @@ export interface ReplayHeader {
   ground_z_m: number;
   below_ground: { drone: number; min_z_m: number; time_sec: number }[];
   min_distance_enforced_m: number | null;
+  /** Where each formation falls in the planned show; absent from replays built before 2026-10-01. */
+  timeline?: ShowTimeline;
   overlays: {
     holding_area?: { center: V3; size: [number, number]; grid_spacing_m: number; slots: V3[] };
-    keyframes?: { shape_name: string }[];
+    keyframes?: { shape_name: string; time_sec?: number }[];
     nominal_min_distance_m?: number;
     gatekeeper_floor_m?: number | null;
     failure?: {
@@ -52,6 +54,26 @@ export interface ReplayHeader {
     /** A condition-simulator flight (docs/4-condition_simulator.md §6): the weather to draw. */
     simulation?: SimWeather;
   };
+}
+
+/** tools/studio_bridge/replay_builder.py show_timeline(). */
+export interface FormationMark {
+  /** Index in the Phase 1 file's keyframes. */
+  index: number;
+  name: string;
+  /** When the planned show reaches it. */
+  reached_sec: number;
+  /** When the next transition leaves it (later than reached_sec when the formation is held), or null. */
+  leaves_sec: number | null;
+  /** Its time_sec in the Blender export. */
+  designed_sec: number | null;
+  /** The target of a rejected transition: the rejected attempt ends here. */
+  rejected: boolean;
+}
+
+export interface ShowTimeline {
+  formations: FormationMark[];
+  legs: { takeoff?: { start_sec: number; end_sec: number }; return?: { start_sec: number; end_sec: number } };
 }
 
 /** The scenario's weather sampled at `hz` from t = 0 (tools/studio_bridge/conditions_job.py). */

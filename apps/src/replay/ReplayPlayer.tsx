@@ -6,6 +6,7 @@ import { SeparationStrip } from "./SeparationStrip";
 import { distanceAt, formatTime, metres, nearestTo, positionAt } from "./sampling";
 import type { ReplayData, ReplayFocus, SimWeather } from "./types";
 import { WeatherHud } from "./WeatherHud";
+import { currentFormation, formationDelay, formationDetail } from "./formations";
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
 
@@ -21,9 +22,12 @@ interface Props {
   data: ReplayData;
   focus: ReplayFocus | null;
   label: string; // what this replay shows, e.g. "Rejected attempt"
+  /** Rebuild the replay files; offered when they predate the formation marks. */
+  onRebuild?: () => void;
+  rebuilding?: boolean;
 }
 
-export function ReplayPlayer({ data, focus, label }: Props) {
+export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Props) {
   const { header, separation } = data;
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<ReplayScene | null>(null);
@@ -161,6 +165,13 @@ export function ReplayPlayer({ data, focus, label }: Props) {
           }
         : null;
 
+  const formations = header.timeline?.formations ?? [];
+  const atFormation = currentFormation(formations, time);
+  const jumpTo = (t: number) => {
+    setPlaying(false);
+    setTime(Math.min(header.t1, Math.max(header.t0, t)));
+  };
+
   const seekTo = (t: number, drones: number[]) => {
     setPlaying(false);
     setTime(t);
@@ -238,6 +249,36 @@ export function ReplayPlayer({ data, focus, label }: Props) {
             </section>
           )}
           {!pair && <p className="muted hint">Click a drone to see its nearest neighbour.</p>}
+          {formations.length > 0 && (
+            <section className="panel-block">
+              <h3>Formations</h3>
+              <ol className="formation-jumps">
+                {formations.map((f) => (
+                  <li key={f.index}>
+                    <button
+                      className={atFormation === f ? "is-current" : undefined}
+                      title={formationDetail(f)}
+                      onClick={() => jumpTo(f.reached_sec)}
+                    >
+                      <span className={f.rejected ? "tone-bad" : undefined}>{f.name}</span>
+                      <span className="clock-small">{formatTime(f.reached_sec)}</span>
+                      <span className="muted">{formationDelay(f) ?? ""}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+              <p className="muted small">Times in the planned show; the difference is from the Blender export.</p>
+            </section>
+          )}
+          {!header.timeline && !sim && onRebuild && (
+            <section className="panel-block">
+              <h3>Formations</h3>
+              <p className="muted small">This replay was built before formation marks existed.</p>
+              <button className="link" onClick={onRebuild} disabled={rebuilding}>
+                {rebuilding ? "Rebuilding the replay…" : "Rebuild the replay to show them"}
+              </button>
+            </section>
+          )}
 
           {failure && (
             <section className="panel-block">
@@ -323,6 +364,7 @@ export function ReplayPlayer({ data, focus, label }: Props) {
         floorLabel={sim ? "crash" : "required"}
         deviation={deviation}
         marks={marks}
+        timeline={header.timeline ?? null}
         onSeek={(t) => {
           setPlaying(false);
           setTime(t);

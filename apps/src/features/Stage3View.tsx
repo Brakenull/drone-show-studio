@@ -1,4 +1,5 @@
-// Stage 3: Monte Carlo stress test and flight-file packing (docs/5-studio_gui.md §6.3).
+// Stage 3: Monte Carlo stress test and flight-file packing (docs/5-studio_gui.md §6.3), one section of
+// the Stage 3 tab at a time (features/Stage3Tab.tsx).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openRunFolder, readRunJson, readRunText } from "../bridge/api";
@@ -15,10 +16,14 @@ import type {
 import { cancelStage3, secondsLeft, startStage3, useStage3Job, type Stage3Job } from "../app/stage3Jobs";
 import { isStage2Running } from "../app/stage2Jobs";
 import { clock, duration, STATUS } from "../app/format";
+import { isStale } from "../app/stages";
+import { VerdictCard } from "./VerdictCard";
 import { formatTime, metres } from "../replay/sampling";
 
 interface Props {
   run: RunRecord;
+  /** Which section of the Stage 3 tab: the stress test or the flight files. */
+  part: "stress" | "pack";
   /** From `doctor`; null while it is still checking. */
   devices: SimDevice[] | null;
   onFinished: (runId: string, exit: JobExit) => void;
@@ -71,11 +76,7 @@ function reportDevice(device: string): string {
   return plainName(device.replace(/\s*\(opencl:\d+:\d+\)$/, ""));
 }
 
-/** The part was made from an earlier Stage 2 result than the one this run has now. */
-const isStale = (run: RunRecord, part: { stage2_ended_at?: string | null } | undefined) =>
-  !!part?.stage2_ended_at && part.stage2_ended_at !== run.stage2.ended_at;
-
-export function Stage3View({ run, devices, onFinished, onShowInReplay }: Props) {
+export function Stage3View({ run, part, devices, onFinished, onShowInReplay }: Props) {
   if (run.stage2.status !== "succeeded" || isStage2Running(run.run_id)) {
     return (
       <div className="page">
@@ -98,8 +99,11 @@ export function Stage3View({ run, devices, onFinished, onShowInReplay }: Props) 
           drone loads before the show.
         </p>
       </header>
-      <MonteCarlo run={run} devices={devices} onFinished={onFinished} onShowInReplay={onShowInReplay} />
-      <Pack run={run} onFinished={onFinished} />
+      {part === "stress" ? (
+        <MonteCarlo run={run} devices={devices} onFinished={onFinished} onShowInReplay={onShowInReplay} />
+      ) : (
+        <Pack run={run} onFinished={onFinished} />
+      )}
     </div>
   );
 }
@@ -129,7 +133,7 @@ const closestPair = (r: McRecord): McPair | undefined => r.crash_pairs[0] ?? r.w
 
 const flightName = (r: McRecord) => (r.run < 0 ? "Calm air" : `Flight ${r.run + 1}`);
 
-function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "run"> & { run: RunRecord }) {
+function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "part">) {
   const part = run.stage3?.monte_carlo;
   const job = useStage3Job(run.run_id, "monte_carlo");
   const running = !!job && !job.exit;
@@ -201,7 +205,7 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "r
   );
 
   return (
-    <section className="stage3-section" aria-labelledby="mc-title">
+    <section className="card" aria-labelledby="mc-title">
       <h2 id="mc-title" className="stage3-title">
         Stress test in simulated weather
       </h2>
@@ -306,18 +310,18 @@ function McResults({
   return (
     <>
       {s && (
-        <div className="mc-verdict">
-          <div className={`verdict ${s.passed ? "verdict-ok" : "verdict-bad"}`}>
-            <span className={`light light-${s.passed ? "ok" : "bad"}`} aria-hidden="true" />
-            <h2>
-              {s.passed
-                ? `The show held up in all ${s.runs} flights`
-                : crashes
-                  ? `${crashes} of ${s.runs} flights had a crash`
-                  : `${lowBattery} of ${s.runs} flights landed with too little battery`}
-            </h2>
-          </div>
-          <dl className="facts facts-wide">
+        <VerdictCard
+          inner
+          tone={s.passed ? "ok" : "bad"}
+          title={
+            s.passed
+              ? `The show held up in all ${s.runs} flights`
+              : crashes
+                ? `${crashes} of ${s.runs} flights had a crash`
+                : `${lowBattery} of ${s.runs} flights landed with too little battery`
+          }
+        >
+          <dl className="stat-cards">
             <div>
               <dt>Closest approach</dt>
               <dd className={(s.worst_min_separation_m ?? Infinity) < D_CRASH_M ? "tone-bad" : undefined}>
@@ -349,7 +353,7 @@ function McResults({
               s.passed &&
               " Close calls and voltage dips don't fail the test, but they are worth a look in the table below."}
           </p>
-        </div>
+        </VerdictCard>
       )}
 
       <div className="run-grid" role="list" aria-label="Flights">
@@ -387,7 +391,7 @@ function McResults({
 
       {records.length > 0 && (
         <div className="table-scroll">
-          <table className="table mc-table">
+          <table className="table data mc-table">
             <thead>
               <tr>
                 <th scope="col">Flight</th>
@@ -494,7 +498,7 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
 
   const verified = manifest?.files.filter((f) => f.verified).length ?? 0;
   return (
-    <section className="stage3-section" aria-labelledby="pack-title">
+    <section className="card" aria-labelledby="pack-title">
       <h2 id="pack-title" className="stage3-title">
         Flight files
       </h2>
@@ -538,37 +542,33 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
 
       {!running && status === "succeeded" && part && (
         <>
-          <div className="verdict verdict-ok pack-verdict">
-            <span className="light light-ok" aria-hidden="true" />
-            <h2>
-              {part.verified_files} of {part.files} files written and checked
-            </h2>
-          </div>
-          <dl className="facts facts-wide">
-            <div>
-              <dt>Samples per file</dt>
-              <dd>{part.records_per_file?.toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt>Every</dt>
-              <dd>{part.sampling_dt_ms} ms</dd>
-            </div>
-            <div>
-              <dt>File size</dt>
-              <dd>{bytes(part.file_size_bytes)}</dd>
-            </div>
-            <div>
-              <dt>All files</dt>
-              <dd>{bytes(part.total_bytes)}</dd>
-            </div>
-          </dl>
+          <VerdictCard inner tone="ok" title={`${part.verified_files} of ${part.files} files written and checked`}>
+            <dl className="stat-cards">
+              <div>
+                <dt>Samples per file</dt>
+                <dd>{part.records_per_file?.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Every</dt>
+                <dd>{part.sampling_dt_ms} ms</dd>
+              </div>
+              <div>
+                <dt>File size</dt>
+                <dd>{bytes(part.file_size_bytes)}</dd>
+              </div>
+              <div>
+                <dt>All files</dt>
+                <dd>{bytes(part.total_bytes)}</dd>
+              </div>
+            </dl>
+          </VerdictCard>
           {manifest && (
             <details className="manifest">
               <summary>
                 File list ({manifest.files.length} files, {verified} checked)
               </summary>
               <div className="table-scroll">
-                <table className="table">
+                <table className="table data">
                   <thead>
                     <tr>
                       <th scope="col">Drone</th>

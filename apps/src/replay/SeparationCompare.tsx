@@ -16,8 +16,8 @@ interface Props {
   b: CompareSeries;
 }
 
-// Series colours stay out of the status palette (teal / amber / red mean safe / attention / violation).
-export const SERIES_COLORS = ["#f5f5f5", "#00d9ff"] as const;
+// Series colours stay out of the status palette: this run in the primary orange, the other in the cyan accent.
+export const SERIES_COLORS = ["#ffa34d", "#00d9ff"] as const;
 const COLORS = { bg: "#0f0f0f", grid: "#222222", axis: "#a0a0a0", floor: "#facc15", bad: "#ef4444" };
 const PAD = { left: 56, right: 16, top: 14, bottom: 22 };
 

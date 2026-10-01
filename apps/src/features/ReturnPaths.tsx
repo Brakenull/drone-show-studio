@@ -81,7 +81,7 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
   }
 
   return (
-    <section className="returns">
+    <section className="returns card">
       <h3>Return paths</h3>
       <p className="muted">
         If the show has to stop, for example when rain starts, the drones fly from the formation they are at
@@ -90,7 +90,7 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
         the first formation, so its flight home is simply the takeoff flown backwards.
       </p>
 
-      <table className="table">
+      <table className="table data">
         <thead>
           <tr>
             <th scope="col">From</th>

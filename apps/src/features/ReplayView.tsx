@@ -122,7 +122,7 @@ export function ReplayView({
             Back to the planned show
           </button>
         )}
-        <ReplayPlayer key={dir} data={data} focus={focus} label={label} />
+        <ReplayPlayer key={dir} data={data} focus={focus} label={label} onRebuild={rebuild} rebuilding={rebuilding} />
       </div>
     );
   }

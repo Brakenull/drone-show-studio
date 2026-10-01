@@ -51,6 +51,63 @@ def join_failure_show(report: dict[str, Any]) -> dict[str, Any]:
     return {"metadata": report["rejected"]["metadata"], "trajectories": trajectories}
 
 
+def show_timeline(contract: dict[str, Any], overlays: dict[str, Any] | None, t0: float) -> dict[str, Any]:
+    """Where each Phase 1 formation falls in the planned show (docs/5-studio_gui.md §6.4).
+
+    Stage 2 adds the takeoff and return legs and may lengthen transitions, so a formation is reached
+    later than the time it has in the Blender export. Formations are matched to the contract's
+    transitions in show order; ``designed_sec`` is the Phase 1 ``time_sec``. A formation the replay never
+    reaches (after a rejection, or after a return path's abort) is left out. The target of a rejected
+    transition is listed with ``rejected`` set, at the end of the rejected attempt.
+    """
+    meta = contract["metadata"]
+    overlays = overlays or {}
+    arrivals = [
+        {"name": t["to_keyframe"], "end": float(t["end_time_sec"]), "rejected": False}
+        for t in sorted(meta.get("transitions") or [], key=lambda t: t["start_time_sec"])
+    ]
+    departures = sorted(
+        ((t["from_keyframe"], float(t["start_time_sec"])) for t in meta.get("transitions") or []),
+        key=lambda d: d[1],
+    )
+    failure = overlays.get("failure")
+    if failure is not None:
+        ft = failure["transition"]
+        arrivals.append({"name": ft["to_keyframe"], "end": float(ft["start_time_sec"] + ft["duration_sec"]),
+                         "rejected": True})
+        departures.append((ft["from_keyframe"], float(ft["start_time_sec"])))
+
+    formations = []
+    pointer = 0
+    for index, kf in enumerate(overlays.get("keyframes") or []):
+        name = kf["shape_name"]
+        hit = next((j for j in range(pointer, len(arrivals)) if arrivals[j]["name"] == name), None)
+        if hit is not None:
+            reached, rejected = arrivals[hit]["end"], arrivals[hit]["rejected"]
+            pointer = hit + 1
+        elif index == 0 and not any(a["name"] == name for a in arrivals):
+            reached, rejected = t0, False  # no takeoff leg: the show starts in the first formation
+        else:
+            break
+        leaves = next((t for frm, t in departures if frm == name and t >= reached - 1e-6), None)
+        formations.append({
+            "index": index,
+            "name": name,
+            "reached_sec": reached,
+            "leaves_sec": leaves,
+            "designed_sec": kf.get("time_sec"),
+            "rejected": rejected,
+        })
+        if rejected:
+            break
+
+    legs = {}
+    for leg, info in (meta.get("legs") or {}).items():
+        if info:
+            legs[leg] = {"start_sec": float(info["start_time_sec"]), "end_sec": float(info["end_time_sec"])}
+    return {"formations": formations, "legs": legs}
+
+
 def frame_times(t0: float, t1: float, fps: float) -> np.ndarray:
     count = int(np.floor((t1 - t0) * fps + 1e-9)) + 1
     times = t0 + np.arange(count) / fps
@@ -144,6 +201,7 @@ def build_replay(contract: dict[str, Any], out_dir: Path, *, overlays: dict[str,
             for d in np.argsort(lowest_z) if lowest_z[d] < ground_z - BELOW_GROUND_TOLERANCE_M
         ],
         "ground_z_m": ground_z,
+        "timeline": show_timeline(contract, overlays, float(times[0])),
     }
     write_json_atomic(out_dir / "replay.json", header)
     return header

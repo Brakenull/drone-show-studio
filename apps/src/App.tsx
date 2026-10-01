@@ -1,36 +1,33 @@
 import { useCallback, useEffect, useState } from "react";
 import { getSettings, listRuns, runJob } from "./bridge/api";
 import type { DoctorCheck, RunRecord, Settings, SimDevice } from "./bridge/types";
-import { STATUS, runName } from "./app/format";
-import { isStage2Running } from "./app/stage2Jobs";
-import { isStage3Running, useStage3Job } from "./app/stage3Jobs";
-import { isSimulateRunning, useSimulateJob } from "./app/simulateJobs";
+import { STATUS, runCreated, runName } from "./app/format";
+import { useStage3Job } from "./app/stage3Jobs";
+import { useSimulateJob } from "./app/simulateJobs";
+import { useReturnsJob } from "./app/returnsJobs";
+import { compareState, inputState, replayState, stage2State, stage3State, type StageState } from "./app/stages";
 import { Sidebar } from "./features/Sidebar";
 import { NewRun } from "./features/NewRun";
 import { InputView } from "./features/InputView";
 import { Stage2View } from "./features/Stage2View";
-import { Stage3View } from "./features/Stage3View";
+import { Stage3Tab, type Stage3Section } from "./features/Stage3Tab";
 import { ReplayView, type ReplaySource } from "./features/ReplayView";
 import { CompareView } from "./features/CompareView";
-import { ConditionsView } from "./features/ConditionsView";
 import { SettingsView } from "./features/SettingsView";
 import type { ReplayFocus } from "./replay/types";
 import "./styles.css";
 
-type View = "new" | "run" | "settings";
-type Tab = "input" | "stage2" | "stage3" | "conditions" | "replay" | "compare";
+type View = "new" | "run";
+type Tab = "input" | "stage2" | "stage3" | "replay" | "compare";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "input", label: "Input" },
-  { id: "stage2", label: "Stage 2" },
-  { id: "stage3", label: "Stage 3" },
-  { id: "conditions", label: "Conditions" },
-  { id: "replay", label: "Replay" },
-  { id: "compare", label: "Compare" },
+/** The stage cards in the run header: one per tab, each with its part's state. */
+const TABS: { id: Tab; label: string; state: (run: RunRecord, runs: RunRecord[]) => StageState }[] = [
+  { id: "input", label: "Input", state: inputState },
+  { id: "stage2", label: "Stage 2", state: stage2State },
+  { id: "stage3", label: "Stage 3", state: stage3State },
+  { id: "replay", label: "Replay", state: replayState },
+  { id: "compare", label: "Compare", state: compareState },
 ];
-
-const runTone = (run: RunRecord) =>
-  (isStage2Running(run.run_id) || isStage3Running(run.run_id) || isSimulateRunning(run.run_id) ? STATUS.running : STATUS[run.stage2.status]).tone;
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -42,6 +39,8 @@ export default function App() {
   const [view, setView] = useState<View>("new");
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("stage2");
+  const [stage3Section, setStage3Section] = useState<Stage3Section>("stress");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [focus, setFocus] = useState<ReplayFocus | null>(null);
   const [replaySource, setReplaySource] = useState<ReplaySource>({ kind: "show" });
 
@@ -80,6 +79,7 @@ export default function App() {
   useStage3Job(selected, "monte_carlo");
   useStage3Job(selected, "pack");
   useSimulateJob(selected);
+  useReturnsJob(selected);
   const missing = checks?.filter((c) => !c.ok && ["stage2", "validate", "replay", "all"].includes(c.required_for));
 
   function openRun(runId: string, nextTab: Tab = "stage2") {
@@ -96,9 +96,10 @@ export default function App() {
         runs={runs}
         selectedRunId={selected}
         view={view}
+        settingsOpen={settingsOpen}
         onNew={() => setView("new")}
         onSelect={(id) => openRun(id, id === selected ? tab : "stage2")}
-        onSettings={() => setView("settings")}
+        onSettings={() => setSettingsOpen(true)}
       />
       <main className="main">
         {(doctorError || (missing && missing.length > 0)) && (
@@ -108,7 +109,7 @@ export default function App() {
             ) : (
               <>
                 Missing: {missing!.map((c) => c.name).join(", ")}. Steps that need them won't work.{" "}
-                <button className="link" onClick={() => setView("settings")}>
+                <button className="link" onClick={() => setSettingsOpen(true)}>
                   See details
                 </button>
               </>
@@ -116,7 +117,7 @@ export default function App() {
           </div>
         )}
 
-        {view === "settings" && settings && (
+        {settingsOpen && settings && (
           <SettingsView
             settings={settings}
             checks={checks}
@@ -126,6 +127,7 @@ export default function App() {
               void runDoctor();
             }}
             onRecheck={runDoctor}
+            onClose={() => setSettingsOpen(false)}
           />
         )}
 
@@ -143,32 +145,52 @@ export default function App() {
           <div className="run-view">
             <header className="run-head">
               <div className="run-title">
-                <span className={`light light-${runTone(run)}`} aria-hidden="true" />
+                {/* Busy while any of the run's jobs is live; otherwise Stage 2's verdict. */}
+                <span
+                  className={`light light-${TABS.some((t) => t.state(run, runs).tone === "busy") ? "busy" : stage2State(run).tone}`}
+                  aria-hidden="true"
+                />
                 <h1>{runName(run)}</h1>
-                <span className="muted">
+                <span className={`pill pill-lg pill-${stage2State(run).tone}`}>
+                  {stage2State(run).tone === "busy" ? "Running" : STATUS[run.stage2.status].label}
+                </span>
+              </div>
+              <div className="run-meta-line">
+                <span>
                   {run.input.fleet_size} drones, {run.input.keyframes.length}{" "}
                   {run.input.keyframes.length === 1 ? "formation" : "formations"}
                 </span>
+                <span>Created {runCreated(run)}</span>
+                {run.copied_from && <span>Copy of {runName({ run_id: run.copied_from })}</span>}
+                <span className="path">{run.run_id}</span>
               </div>
-              <div className="tabs" role="tablist">
-                {TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    role="tab"
-                    aria-selected={tab === t.id}
-                    className={tab === t.id ? "is-current" : ""}
-                    onClick={() => {
-                      // The Replay tab itself always opens the show; a return path is opened from Stage 2.
-                      if (t.id === "replay") {
-                        setReplaySource({ kind: "show" });
-                        setFocus(null);
-                      }
-                      setTab(t.id);
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+              <div className="stage-cards" role="tablist">
+                {TABS.map((t, i) => {
+                  const st = t.state(run, runs);
+                  return (
+                    <button
+                      key={t.id}
+                      role="tab"
+                      aria-selected={tab === t.id}
+                      className={`stage-card ${tab === t.id ? "is-current" : ""}`}
+                      onClick={() => {
+                        // The Replay tab itself always opens the show; a return path is opened from Stage 2.
+                        if (t.id === "replay") {
+                          setReplaySource({ kind: "show" });
+                          setFocus(null);
+                        }
+                        setTab(t.id);
+                      }}
+                    >
+                      <span className="stage-card-top">
+                        <span className="stage-num">{String(i + 1).padStart(2, "0")}</span>
+                        <span className={`light light-${st.tone}`} aria-hidden="true" />
+                      </span>
+                      <span className="stage-label">{t.label}</span>
+                      <span className={`stage-status tone-${st.tone}`}>{st.text}</span>
+                    </button>
+                  );
+                })}
               </div>
             </header>
             <div className="run-body">
@@ -196,10 +218,13 @@ export default function App() {
                 />
               )}
               {tab === "stage3" && (
-                <Stage3View
+                <Stage3Tab
                   run={run}
+                  section={stage3Section}
+                  onSection={setStage3Section}
                   devices={devices}
                   onFinished={() => void refreshRuns()}
+                  onConditionsFinished={() => void refreshRuns()}
                   onShowInReplay={(time, drones, note) => {
                     setReplaySource({ kind: "show" });
                     setFocus({ time, drones, note, key: Date.now() });
@@ -207,7 +232,6 @@ export default function App() {
                   }}
                 />
               )}
-              {tab === "conditions" && <ConditionsView run={run} onFinished={() => void refreshRuns()} />}
               {tab === "replay" && (
                 <ReplayView
                   run={run}

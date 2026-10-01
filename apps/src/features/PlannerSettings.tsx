@@ -134,7 +134,7 @@ export function PlannerSettings({ run, runLabel, primary, blocked, onRun, onCopy
   };
 
   const table = (group: string, gf: ConfigField[]) => (
-    <table key={group} className="table settings-table">
+    <table key={group} className="table data settings-table">
       <caption>{group}</caption>
       <thead>
         <tr>
@@ -178,7 +178,7 @@ export function PlannerSettings({ run, runLabel, primary, blocked, onRun, onCopy
   );
 
   return (
-    <section className="planner" aria-label="Run Stage 2">
+    <section className="planner card planner-card" aria-label="Run Stage 2">
       {loadError && <p className="notice notice-bad">{loadError}</p>}
       {fields && (
         <details className="planner-settings" open={count > 0 || undefined}>

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatTime, metres, nearestFrame } from "./sampling";
-import type { Separation } from "./types";
+import { formationDetail } from "./formations";
+import type { FormationMark, Separation, ShowTimeline } from "./types";
 
 interface Props {
   separation: Separation;
@@ -19,6 +20,8 @@ interface Props {
   deviation?: number[] | null;
   /** Moments marked across the strip, e.g. when the rain reaches its alert and limit levels. */
   marks?: { time: number; label: string; tone: "warn" | "bad" }[];
+  /** Each formation at the time the planned show reaches it, and the takeoff and return legs. */
+  timeline?: ShowTimeline | null;
   onSeek: (t: number) => void;
 }
 
@@ -34,7 +37,14 @@ const COLORS = {
   playhead: "#ffa34d",
   deviation: "#00d9ff",
   warn: "#facc15",
+  formation: "#a0a0a0",
+  formationLine: "rgba(160, 160, 160, 0.35)",
+  formationHover: "#f5f5f5",
+  leg: "rgba(255, 255, 255, 0.035)",
 };
+
+/** Pointer within this many pixels of a formation mark picks it. */
+const MARK_HIT_PX = 8;
 
 const PAD = { left: 56, right: 16, top: 14, bottom: 22 };
 
@@ -55,6 +65,7 @@ export function SeparationStrip({
   span,
   deviation,
   marks,
+  timeline,
   onSeek,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -81,6 +92,23 @@ export function SeparationStrip({
     Math.min(t1, Math.max(t0, t0 + ((x - PAD.left) / Math.max(size.w - PAD.left - PAD.right, 1)) * (t1 - t0)));
   const yOf = (d: number) => PAD.top + (1 - Math.min(d, yMax) / yMax) * (size.h - PAD.top - PAD.bottom);
 
+  const formations = useMemo(() => timeline?.formations ?? [], [timeline]);
+  // The formation under the pointer, if any: its mark lights up and the readout explains it.
+  const hoverMark: FormationMark | null = useMemo(() => {
+    if (hover === null || !size.w) return null;
+    let best: FormationMark | null = null;
+    let bestPx = MARK_HIT_PX;
+    const pxPerSec = (size.w - PAD.left - PAD.right) / Math.max(t1 - t0, 1e-9);
+    for (const f of formations) {
+      const px = Math.abs(f.reached_sec - hover) * pxPerSec;
+      if (px <= bestPx) {
+        best = f;
+        bestPx = px;
+      }
+    }
+    return best;
+  }, [hover, formations, size.w, t0, t1]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !size.w) return;
@@ -93,6 +121,21 @@ export function SeparationStrip({
     ctx.fillRect(0, 0, size.w, size.h);
     ctx.font = "12px Inter, system-ui, 'Segoe UI', sans-serif";
     ctx.textBaseline = "middle";
+
+    // Takeoff and return legs: a faint band, labelled at the bottom.
+    const legs = timeline?.legs ?? {};
+    for (const [name, leg] of [["Takeoff", legs.takeoff], ["Return", legs.return]] as const) {
+      if (!leg) continue;
+      const x0 = xOf(Math.max(t0, leg.start_sec));
+      const x1 = xOf(Math.min(t1, leg.end_sec));
+      if (x1 <= x0) continue;
+      ctx.fillStyle = COLORS.leg;
+      ctx.fillRect(x0, PAD.top, x1 - x0, size.h - PAD.top - PAD.bottom);
+      ctx.fillStyle = COLORS.formation;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      if (ctx.measureText(name).width + 8 < x1 - x0) ctx.fillText(name, (x0 + x1) / 2, size.h - PAD.bottom - 4);
+    }
 
     if (span) {
       ctx.fillStyle = span.tone === "info" ? COLORS.spanInfo : COLORS.span;
@@ -168,6 +211,48 @@ export function SeparationStrip({
       ctx.fillText(m.label, x + 4, PAD.top + row * 14);
     }
 
+    // Formation marks: a dotted line where the show reaches each formation, a bar while it is held,
+    // and the name along the bottom (stacked upwards when names would overlap).
+    const formationRows: number[] = [];
+    ctx.font = "11px Inter, system-ui, 'Segoe UI', sans-serif";
+    for (const f of formations) {
+      if (f.reached_sec < t0 - 1e-6 || f.reached_sec > t1 + 1e-6) continue;
+      const x = xOf(f.reached_sec);
+      const lit = hoverMark === f;
+      const color = f.rejected ? COLORS.bad : lit ? COLORS.formationHover : COLORS.formation;
+      ctx.strokeStyle = lit ? COLORS.formationHover : f.rejected ? COLORS.bad : COLORS.formationLine;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, PAD.top);
+      ctx.lineTo(x, size.h - PAD.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (f.leaves_sec !== null && f.leaves_sec - f.reached_sec > 0.05) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x, size.h - PAD.bottom - 2, xOf(Math.min(t1, f.leaves_sec)) - x, 2);
+      }
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      const yb = size.h - PAD.bottom;
+      ctx.moveTo(x, yb - 4);
+      ctx.lineTo(x + 3.5, yb);
+      ctx.lineTo(x, yb + 4);
+      ctx.lineTo(x - 3.5, yb);
+      ctx.closePath();
+      ctx.fill();
+      // A name that would run off the right edge goes to the left of its mark.
+      const w = ctx.measureText(f.name).width;
+      const left = x + 4 + w > size.w - PAD.right ? x - 4 - w : x + 4;
+      let row = formationRows.findIndex((end) => left >= end);
+      if (row < 0) row = formationRows.length;
+      formationRows[row] = left + w + 6;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(f.name, left, size.h - PAD.bottom - 4 - row * 13);
+    }
+    ctx.font = "12px Inter, system-ui, 'Segoe UI', sans-serif";
+
     if (floor !== null) {
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = COLORS.floor;
@@ -201,7 +286,7 @@ export function SeparationStrip({
     ctx.moveTo(px, PAD.top - 4);
     ctx.lineTo(px, size.h - PAD.bottom);
     ctx.stroke();
-  }, [size, separation, time, t0, t1, floor, floorLabel, yMax, span, deviation, marks]);
+  }, [size, separation, time, t0, t1, floor, floorLabel, yMax, span, deviation, marks, timeline, hoverMark]);
 
   const readoutTime = hover ?? time;
   const k = nearestFrame(separation.times, readoutTime);
@@ -245,7 +330,8 @@ export function SeparationStrip({
             <span className="strip-pair"> drone {separation.deviation_drone?.[k]}</span>
           </span>
         )}
-        {span && <span className={`strip-window ${span.tone === "info" ? "strip-window-info" : ""}`}>{span.label}</span>}
+        {hoverMark && <span className={`strip-formation ${hoverMark.rejected ? "tone-bad" : ""}`}>{formationDetail(hoverMark)}</span>}
+        {span && !hoverMark && <span className={`strip-window ${span.tone === "info" ? "strip-window-info" : ""}`}>{span.label}</span>}
       </div>
       <canvas
         ref={canvasRef}

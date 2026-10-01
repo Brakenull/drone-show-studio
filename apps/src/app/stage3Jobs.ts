@@ -108,11 +108,13 @@ export async function cancelStage3(runId: string, part: Stage3Part): Promise<voi
   }
 }
 
+export function isStage3PartRunning(runId: string, part: Stage3Part): boolean {
+  const job = jobs[key(runId, part)];
+  return !!job && !job.exit;
+}
+
 export function isStage3Running(runId: string): boolean {
-  return (["monte_carlo", "pack"] as const).some((p) => {
-    const job = jobs[key(runId, p)];
-    return !!job && !job.exit;
-  });
+  return (["monte_carlo", "pack"] as const).some((p) => isStage3PartRunning(runId, p));
 }
 
 export function useStage3Job(runId: string | null, part: Stage3Part): Stage3Job | null {

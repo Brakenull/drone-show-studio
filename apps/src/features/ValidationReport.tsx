@@ -86,7 +86,7 @@ export function ValidationReport({ validation }: { validation: Validation }) {
 
       {summary && (
         <>
-          <dl className="facts facts-wide">
+          <dl className="stat-cards">
             <div>
               <dt>Drones</dt>
               <dd>{summary.fleet_size}</dd>
@@ -105,29 +105,22 @@ export function ValidationReport({ validation }: { validation: Validation }) {
             </div>
           </dl>
           <Capacity summary={summary} />
-          <table className="table">
-            <caption className="visually-hidden">Formations</caption>
-            <thead>
-              <tr>
-                <th scope="col">Formation</th>
-                <th scope="col" className="num">At</th>
-                <th scope="col" className="num">Points</th>
-                <th scope="col" className="num">Closest points</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.keyframes.map((k, i) => (
-                <tr key={i}>
-                  <td>{k.shape_name}</td>
-                  <td className="num">{fmt(k.time_sec)} s</td>
-                  <td className="num">{k.points}</td>
-                  <td className={`num ${k.min_spacing_m < summary.min_distance_m - 1e-6 ? "tone-bad" : ""}`}>
-                    {fmt(k.min_spacing_m, 2)} m
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <h3>Formations, in show order</h3>
+          <ol className="formation-cards">
+            {summary.keyframes.map((k, i) => {
+              const tight = k.min_spacing_m < summary.min_distance_m - 1e-6;
+              return (
+                <li key={i}>
+                  <span className="formation-num">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="formation-name">{k.shape_name}</span>
+                  <span className="muted small">
+                    {k.points} points at {fmt(k.time_sec)} s
+                  </span>
+                  <span className={`small ${tight ? "tone-bad" : "muted"}`}>Closest points {fmt(k.min_spacing_m, 2)} m</span>
+                </li>
+              );
+            })}
+          </ol>
         </>
       )}
     </div>

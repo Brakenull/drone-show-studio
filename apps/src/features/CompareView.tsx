@@ -134,7 +134,7 @@ export function CompareView({ run, runs }: { run: RunRecord; runs: RunRecord[] }
                 </p>
               )}
 
-              <table className="table compare-table">
+              <table className="table data compare-table">
                 <thead>
                   <tr>
                     <th scope="col">
@@ -207,7 +207,7 @@ export function CompareView({ run, runs }: { run: RunRecord; runs: RunRecord[] }
               {differences.length === 0 ? (
                 <p className="muted">Both runs used the same planner settings.</p>
               ) : (
-                <table className="table compare-table">
+                <table className="table data compare-table">
                   <thead>
                     <tr>
                       <th scope="col">Setting</th>
