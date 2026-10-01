@@ -51,10 +51,12 @@ export function ReplayPlayer({ data, focus, label }: Props) {
   const marks = useMemo(() => {
     if (!sim) return [];
     const out: { time: number; label: string; tone: "warn" | "bad" }[] = [];
-    const alert = rainReaches(sim, sim.rain_rule.alert_mm_h);
-    const limit = rainReaches(sim, sim.rain_rule.limit_mm_h);
-    if (alert !== null) out.push({ time: alert, label: "Rain alert level", tone: "warn" });
-    if (limit !== null) out.push({ time: limit, label: "Rain limit level", tone: "bad" });
+    const home = sim.rain_return;
+    const alert = sim.alert_time_sec ?? rainReaches(sim, sim.rain_rule.alert_mm_h);
+    const limit = home?.deadline_sec ?? rainReaches(sim, sim.rain_rule.limit_mm_h);
+    if (alert !== null) out.push({ time: alert, label: "Rain alert", tone: "warn" });
+    if (home && home.command_sec > (alert ?? -1) + 0.5) out.push({ time: home.command_sec, label: "Return called", tone: "warn" });
+    if (limit !== null) out.push({ time: limit, label: "Rain limit", tone: "bad" });
     return out;
   }, [sim]);
 
@@ -135,6 +137,7 @@ export function ReplayPlayer({ data, focus, label }: Props) {
   const pair = highlight.length === 2 ? highlight : null;
   const pairDistance = pair ? distanceAt(data, pair[0], pair[1], time) : null;
   const back = header.overlays.return_path;
+  const simHome = sim?.rain_return;
   const span = failure
     ? {
         start: failure.transition.start_time_sec,
@@ -149,7 +152,14 @@ export function ReplayPlayer({ data, focus, label }: Props) {
           label: `Flight home from ${back.from_keyframe}`,
           tone: "info" as const,
         }
-      : null;
+      : simHome && simHome.formation_name && simHome.planned_home_sec !== null
+        ? {
+            start: simHome.start_sec,
+            end: simHome.planned_home_sec,
+            label: `Flight home from ${simHome.formation_name}`,
+            tone: "info" as const,
+          }
+        : null;
 
   const seekTo = (t: number, drones: number[]) => {
     setPlaying(false);

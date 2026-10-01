@@ -150,12 +150,60 @@ export interface ScenarioResult {
   rain: {
     alert_mm_h: number;
     limit_mm_h: number;
+    reaction_s?: number;
+    margin_s?: number;
     alert_time_sec: number | null;
     limit_time_sec: number | null;
     peak_mm_h: number;
+    /** The return to the holding area; null when the rain never reached the alert level. */
+    return?: RainReturn | null;
+    /** Why the rain rule couldn't be applied, e.g. an old Stage 2 result without transition timing. */
+    not_applied?: string | null;
   };
   stage2_ended_at: string | null;
   simulated_at: string;
+}
+
+/** How the fleet came home under the rain rule (twin_sim/scenario_runner.py `_return_report`). */
+export interface RainReturn {
+  command_sec: number;
+  /** The formation the fleet returned from; -1 when the show had already landed. */
+  formation: number;
+  formation_name: string | null;
+  method: "return_path" | "return_leg" | "rest_of_show" | "none" | "landed";
+  start_sec: number;
+  planned_home_sec: number | null;
+  last_landing_sec: number | null;
+  last_drone: number | null;
+  lag_sec: number | null;
+  home_radius_m: number;
+  not_home: number[];
+  all_home: boolean;
+  deadline_sec: number | null;
+  spare_sec: number | null;
+  home_by_deadline: boolean | null;
+  farthest_from_slot_m: number | null;
+  farthest_from_slot_drone: number | null;
+  off_slot_drones: number[];
+}
+
+/** H(u) on [u0, u1): value0 at u0, slope 0 or -1 (twin_sim/rain_return.py `Piece`); u1 null = no end. */
+export interface HomePiece {
+  u0: number;
+  u1: number | null;
+  value0: number | null;
+  slope: number;
+  formation: number;
+  method: RainReturn["method"];
+}
+
+export interface Readiness {
+  error: string | null;
+  end_sec: number;
+  pieces: HomePiece[];
+  formations: { index: number; name: string; arrival_sec: number; return_sec: number | null }[];
+  return_leg_sec: number | null;
+  returns: { planned: boolean; stale: boolean; entries: ReturnEntry[] };
 }
 
 export interface ScenarioEntry {
@@ -181,6 +229,7 @@ export interface ConditionsInfo {
     legs: { takeoff?: { start_time_sec: number; end_time_sec: number } | null; return?: { start_time_sec: number; end_time_sec: number } | null };
   };
   scenarios: ScenarioEntry[];
+  readiness: Readiness;
   defaults: { rain_rule: RainRule; rtk_states: RtkState[]; limits: Record<string, [number, number]> };
 }
 

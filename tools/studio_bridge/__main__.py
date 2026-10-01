@@ -213,6 +213,12 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return run_simulate(Path(args.run_dir), args.scenario, args.device)
 
 
+def cmd_readiness(args: argparse.Namespace) -> int:
+    from .conditions_job import run_readiness
+
+    return run_readiness(Path(args.run_dir), args.scenario, args.window_s)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="studio_bridge", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -278,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scenario", required=True, help="The scenario's id (its folder name)")
     p.add_argument("--device", default="auto", help="OpenCL device: auto (first GPU), gpu, cpu or opencl:P:D")
     p.set_defaults(fn=cmd_simulate)
+    p = sub.add_parser("readiness", help="Rain return readiness: time to home and coverage, no physics")
+    p.add_argument("run_dir")
+    p.add_argument("--scenario", default=None, help="Take the rain rule and window from this scenario")
+    p.add_argument("--window-s", type=float, default=None, help="Seconds from the rain alert to the limit level")
+    p.set_defaults(fn=cmd_readiness)
     args = parser.parse_args(argv)
     reserve_stdout()
     try:

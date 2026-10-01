@@ -46,5 +46,10 @@
     "gnss_rtk_noise_m": 0.02,
     "gnss_drift_rate_m_per_sqrt_s": 0.01,
     "initial_position_error_m": 0.05
+  },
+  "environment": {
+    "rain_alert_mm_h": 0.5,
+    "rain_limit_mm_h": 2.5,
+    "return_reaction_s": 5.0
   }
 }

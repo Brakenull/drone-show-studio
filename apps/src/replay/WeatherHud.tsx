@@ -49,6 +49,13 @@ export function WeatherHud({ weather, time }: { weather: SimWeather; time: numbe
         </div>
       </div>
       <p className={`hud-rtk hud-rtk-${now.rtk}`}>{RTK_LABEL[now.rtk] ?? now.rtk}</p>
+      {weather.rain_return && weather.rain_return.formation_name && time >= weather.rain_return.command_sec && (
+        <p className="hud-return">
+          {time < weather.rain_return.start_sec
+            ? `Return called: finishing the move to ${weather.rain_return.formation_name}`
+            : "Returning to the holding area"}
+        </p>
+      )}
     </div>
   );
 }

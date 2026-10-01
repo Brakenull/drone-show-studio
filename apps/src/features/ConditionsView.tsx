@@ -1,12 +1,13 @@
-// Conditions: weather scenarios for a show, flown through the digital twin and played back
-// (docs/4-condition_simulator.md §6, milestone C1). The rain rule (return to the holding area) is
-// not simulated yet: rain is drawn and its levels are marked, nothing reacts to it.
+// Conditions: weather scenarios for a show, flown through the digital twin and played back, and the
+// rain return readiness of the show (docs/4-condition_simulator.md §5, §6; milestones C1, C2). When a
+// scenario's rain reaches the alert level, the simulation flies the fleet home on its return paths.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { runJob } from "../bridge/api";
 import type {
   ConditionsInfo,
   JobExit,
+  RainReturn,
   RtkState,
   RunRecord,
   Scenario,
@@ -21,6 +22,7 @@ import { ReplayPlayer } from "../replay/ReplayPlayer";
 import type { ReplayData, ReplayFocus } from "../replay/types";
 import { compass, rainLabel, RTK_LABEL } from "../replay/weather";
 import { loadReplay } from "./ReplayView";
+import { ReadinessPanel } from "./ReadinessPanel";
 import { TimelineEditor, type Channel, type KeyRef } from "./TimelineEditor";
 
 /** Seconds the simulation keeps flying after the show (twin_sim/scenario_runner.py TAIL_SEC). */
@@ -44,6 +46,21 @@ function blankScenario(name: string, defaults: ConditionsInfo["defaults"], seed:
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** First show time the rain reaches `level` (twin_sim/scenario_runner.py `rain_crossing`). */
+function rainCrossing(keys: Scenario["rain"], level: number): number | null {
+  const k = [...keys].sort((a, b) => a.t - b.t);
+  if (!k.length) return level <= 0 ? 0 : null;
+  if (k[0].mm_h >= level) return 0;
+  for (let i = 1; i < k.length; i++) {
+    if (k[i].mm_h >= level) {
+      const a = k[i - 1];
+      const b = k[i];
+      return b.t === a.t ? b.t : a.t + ((level - a.mm_h) / (b.mm_h - a.mm_h)) * (b.t - a.t);
+    }
+  }
+  return null;
+}
 const pct = (v: number) => `${Math.round(v * 100)} %`;
 
 function errorOf(events: { type: string }[], fallback: string): { message: string; errors: string[] } {
@@ -174,6 +191,33 @@ function Conditions({ run, onFinished }: Props) {
     startSimulate(run.run_id, run.run_dir, id, device, (exit: JobExit) => {
       void reload(id).then(() => {
         // 0 = passed, 1 = a criterion failed; a killed process can also exit with 1, hence `cancelled`.
+        if (!exit.cancelled && (exit.code === 0 || exit.code === 1)) {
+          setFocus(null);
+          setMode("playback");
+        }
+      });
+      onFinished();
+    }).catch((e) => setProblem({ message: String(e), errors: [] }));
+  }
+
+  /** §5.4 "Fly this": a copy of the scenario whose rain reaches the alert level at `alert` and the limit
+   *  level `window` seconds later, simulated straight away. */
+  async function flyThis(alert: number, window: number) {
+    if (!draft) return;
+    const rule = draft.rain_rule;
+    const t = Math.round(alert * 10) / 10;
+    const w = Math.round(window * 10) / 10;
+    const rain = [
+      ...(t > 0 ? [{ t: 0, mm_h: 0 }] : []),
+      { t, mm_h: rule.alert_mm_h },
+      { t: t + w, mm_h: rule.limit_mm_h },
+      { t: t + w + 30, mm_h: Math.max(rule.limit_mm_h * 1.5, rule.limit_mm_h + 1) },
+    ];
+    const id = await save({ ...draft, name: `${draft.name}, rain at ${formatTime(t)} (${w} s to the limit)`, rain }, null);
+    if (!id) return;
+    const device = run.stage3?.monte_carlo?.config?.device ?? "auto";
+    startSimulate(run.run_id, run.run_dir, id, device, (exit: JobExit) => {
+      void reload(id).then(() => {
         if (!exit.cancelled && (exit.code === 0 || exit.code === 1)) {
           setFocus(null);
           setMode("playback");
@@ -327,6 +371,32 @@ function Conditions({ run, onFinished }: Props) {
                 }
               />
             </label>
+            <label className="field field-narrow">
+              <span className="field-label">Reaction (s)</span>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={draft.rain_rule.reaction_s}
+                disabled={running}
+                onChange={(e) =>
+                  setDraft({ ...draft, rain_rule: { ...draft.rain_rule, reaction_s: Math.max(0, Number(e.target.value) || 0) } })
+                }
+              />
+            </label>
+            <label className="field field-narrow">
+              <span className="field-label">Margin (s)</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={draft.rain_rule.margin_s}
+                disabled={running}
+                onChange={(e) =>
+                  setDraft({ ...draft, rain_rule: { ...draft.rain_rule, margin_s: Math.max(0, Number(e.target.value) || 0) } })
+                }
+              />
+            </label>
           </div>
 
           <div className="timeline-wrap">
@@ -345,8 +415,8 @@ function Conditions({ run, onFinished }: Props) {
               />
               <p className="muted small timeline-help">
                 Click a lane to add a key. Drag a key to move it; on Wind and Rain, drag up or down to change the value.
-                With a key focused, the arrow keys nudge it (Shift for 5 s) and Delete removes it. Rain is drawn and its
-                levels are marked; the return to the holding area isn't simulated yet.
+                With a key focused, the arrow keys nudge it (Shift for 5 s) and Delete removes it. When the rain reaches
+                the alert level, the simulated fleet is called home after the reaction time.
               </p>
             </div>
             <Inspector
@@ -360,6 +430,25 @@ function Conditions({ run, onFinished }: Props) {
               }}
             />
           </div>
+
+          {info.readiness.error ? (
+            <p className="notice notice-warn">Rain return readiness isn't available: {info.readiness.error}</p>
+          ) : (
+            <ReadinessPanel
+              run={run}
+              readiness={info.readiness}
+              scenario={draft}
+              duration={timelineDuration}
+              scenarioWindow={(() => {
+                const a = rainCrossing(draft.rain, draft.rain_rule.alert_mm_h);
+                const l = rainCrossing(draft.rain, draft.rain_rule.limit_mm_h);
+                return a !== null && l !== null ? l - a : null;
+              })()}
+              disabled={running || busy}
+              onPlanned={() => void reload()}
+              onFlyThis={(t, w) => void flyThis(t, w)}
+            />
+          )}
 
           <div className="actions">
             {running ? null : (
@@ -566,11 +655,22 @@ function Result({
   const stale = !!r.stage2_ended_at && r.stage2_ended_at !== run.stage2.ended_at;
   const crashes = r.crash_pairs.length;
   const low = r.low_soc_drones.length;
+  // Lists default to empty, so a result written by an earlier build still shows.
+  const home: RainReturn | null = r.rain.return
+    ? { ...r.rain.return, not_home: r.rain.return.not_home ?? [], off_slot_drones: r.rain.return.off_slot_drones ?? [] }
+    : null;
+  const late = !!home && (!home.all_home || home.home_by_deadline === false);
   const headline = r.passed
-    ? "The show held up in this weather"
+    ? home && home.formation >= 0
+      ? "Every drone was home before the rain got too heavy"
+      : "The show held up in this weather"
     : crashes
       ? `${crashes} ${crashes === 1 ? "pair" : "pairs"} of drones came within ${metres(r.criteria.d_crash_m, 1)}`
-      : `${low} ${low === 1 ? "drone landed" : "drones landed"} with less than ${pct(r.criteria.min_landing_soc)} battery`;
+      : late
+        ? !home!.all_home
+          ? `${home!.not_home.length} ${home!.not_home.length === 1 ? "drone didn't" : "drones didn't"} get home`
+          : `The last drone got home ${seconds(-(home!.spare_sec ?? 0))} after the rain limit`
+        : `${low} ${low === 1 ? "drone landed" : "drones landed"} with less than ${pct(r.criteria.min_landing_soc)} battery`;
   return (
     <section className="sim-result" aria-labelledby="sim-result-title">
       {stale && (
@@ -625,14 +725,17 @@ function Result({
           </dd>
         </div>
       </dl>
+      {home && home.formation >= 0 && <RainReturnFacts home={home} reaction={r.rain.reaction_s} onOpen={onOpen} />}
+      {r.rain.not_applied && (
+        <p className="notice notice-warn">The rain rule wasn't applied: {r.rain.not_applied}.</p>
+      )}
       <p className="muted small">
         {r.closest && <>Closest pair: drones {r.closest.a} and {r.closest.b} at {formatTime(r.closest.time_sec)}. </>}
         Furthest from plan: drone {r.largest_deviation.drone} at {formatTime(r.largest_deviation.time_sec)}.{" "}
         {r.rain.alert_time_sec !== null && (
           <>
             Rain reaches the alert level at {formatTime(r.rain.alert_time_sec)}
-            {r.rain.limit_time_sec !== null && <> and the limit at {formatTime(r.rain.limit_time_sec)}</>}; the return to
-            the holding area isn't simulated yet.{" "}
+            {r.rain.limit_time_sec !== null && <> and the limit at {formatTime(r.rain.limit_time_sec)}</>}.{" "}
           </>
         )}
         Flown on {r.device.replace(/\s*\(opencl:\d+:\d+\)$/, "").replace(/\((R|TM)\)/g, "")} in{" "}
@@ -676,6 +779,98 @@ function Result({
         </div>
       )}
     </section>
+  );
+}
+
+const seconds = (v: number) => `${Math.round(v)} s`;
+
+const HOW: Record<RainReturn["method"], string> = {
+  return_path: "its planned return path",
+  return_leg: "the show's own return leg",
+  rest_of_show: "the rest of the show (no return path from there)",
+  none: "nothing: there is no way home from there",
+  landed: "nothing: the show had landed",
+};
+
+function RainReturnFacts({
+  home,
+  reaction,
+  onOpen,
+}: {
+  home: RainReturn;
+  reaction: number | undefined;
+  onOpen: (time: number, drones: number[]) => void;
+}) {
+  const deadline = home.deadline_sec;
+  const spare = home.spare_sec;
+  return (
+    <div className="rain-return">
+      <h3>The return to the holding area</h3>
+      <dl className="facts facts-wide">
+        <div>
+          <dt>Return called</dt>
+          <dd>
+            <button className="fact-link" onClick={() => onOpen(home.command_sec, [])}>
+              {formatTime(home.command_sec)}
+            </button>
+          </dd>
+        </div>
+        <div>
+          <dt>Flying home from</dt>
+          <dd>
+            <button className="fact-link" onClick={() => onOpen(home.start_sec, [])}>
+              {home.formation_name ?? "n/a"} at {formatTime(home.start_sec)}
+            </button>
+          </dd>
+        </div>
+        <div>
+          <dt>Last drone home</dt>
+          <dd className={home.all_home ? undefined : "tone-bad"}>
+            {home.last_landing_sec !== null && home.all_home ? (
+              <button className="fact-link" onClick={() => onOpen(home.last_landing_sec!, home.last_drone !== null ? [home.last_drone] : [])}>
+                {formatTime(home.last_landing_sec)}
+              </button>
+            ) : (
+              `${home.not_home.length} not home`
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Rain limit</dt>
+          <dd className={deadline === null ? undefined : !home.all_home || (spare ?? 0) < 0 ? "tone-bad" : "tone-ok"}>
+            {deadline === null ? (
+              "not reached"
+            ) : (
+              <button className="fact-link" onClick={() => onOpen(deadline, [])}>
+                {formatTime(deadline)}
+                {!home.all_home ? (
+                  " (missed)"
+                ) : (
+                  spare !== null && <> ({spare >= 0 ? `${seconds(spare)} to spare` : `${seconds(-spare)} late`})</>
+                )}
+              </button>
+            )}
+          </dd>
+        </div>
+      </dl>
+      <p className="muted small">
+        The return was called at {formatTime(home.command_sec)}
+        {reaction !== undefined && <>, {seconds(reaction)} after the rain alert</>}. The fleet finished the move it was in
+        and flew {HOW[home.method]}
+        {home.planned_home_sec !== null && <>; the plan has it home at {formatTime(home.planned_home_sec)}</>}
+        {home.lag_sec !== null && home.all_home && (
+          <> and the last drone was within {metres(home.home_radius_m, 1)} of its slot {home.lag_sec >= 0 ? `${home.lag_sec.toFixed(1)} s after that` : `${(-home.lag_sec).toFixed(1)} s before that`}</>
+        )}
+        .{" "}
+        {home.not_home.length > 0 && <>Not home at the end: drones {home.not_home.slice(0, 12).join(", ")}{home.not_home.length > 12 ? " and more" : ""}. </>}
+        {home.farthest_from_slot_m !== null && (
+          <>
+            Farthest from its slot at the end: drone {home.farthest_from_slot_drone}, {metres(home.farthest_from_slot_m, 2)}
+            {home.off_slot_drones.length > 0 && <> ({home.off_slot_drones.length} more than 0.3 m off)</>}.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 

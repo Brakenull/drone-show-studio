@@ -51,8 +51,16 @@ TURBULENCE_MODES = 8
 GUST_MIN_SPEED_MPS = 2.0
 AMBIENT_C = 25.0
 
-# Rain rule defaults until the drone-profile keys of §4.3 exist (milestone C2); placeholders (§10).
+# Rain rule (§3.1, §4.3): alert, limit and reaction come from the drone profile's `environment` keys
+# (placeholders until the drone's water protection rating is known, §10); the margin is a planning choice.
 DEFAULT_RAIN_RULE = {"alert_mm_h": 0.5, "limit_mm_h": 2.5, "reaction_s": 5.0, "margin_s": 10.0}
+
+
+def rain_rule_defaults(profile: DroneProfile) -> dict[str, float]:
+    return {"alert_mm_h": float(profile.get("environment.rain_alert_mm_h")),
+            "limit_mm_h": float(profile.get("environment.rain_limit_mm_h")),
+            "reaction_s": float(profile.get("environment.return_reaction_s")),
+            "margin_s": DEFAULT_RAIN_RULE["margin_s"]}
 
 # Meteorological rain scale (§3.2), upper bounds in mm/h.
 RAIN_SCALE = (("drizzle", 0.5), ("light", 2.5), ("moderate", 7.6), ("heavy", math.inf))
@@ -78,8 +86,9 @@ class Scenario:
     rain_rule: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_RAIN_RULE))
 
     @classmethod
-    def from_dict(cls, data: Any) -> "Scenario":
-        """Validated scenario; keys are sorted by time. Raises ScenarioError listing every problem."""
+    def from_dict(cls, data: Any, rule_defaults: dict[str, float] | None = None) -> "Scenario":
+        """Validated scenario; keys are sorted by time. Raises ScenarioError listing every problem.
+        Rain-rule values the scenario leaves out come from `rule_defaults` (the drone profile's)."""
         errors = validate_scenario(data)
         if errors:
             raise ScenarioError(errors)
@@ -91,7 +100,7 @@ class Scenario:
             gusts=by_t(data.get("gusts", [])),
             rtk=by_t(data.get("rtk", [])),
             rain=by_t(data.get("rain", [])),
-            rain_rule={**DEFAULT_RAIN_RULE, **(data.get("rain_rule") or {})},
+            rain_rule={**(rule_defaults or DEFAULT_RAIN_RULE), **(data.get("rain_rule") or {})},
         )
 
     def to_dict(self) -> dict[str, Any]:

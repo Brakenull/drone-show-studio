@@ -121,3 +121,73 @@ def test_simulate_writes_the_playback_and_is_deterministic(passed_run):
     strip = lambda r: {k: v for k, v in r.items() if k not in TIMING}  # noqa: E731
     assert strip(again) == strip(result)
     assert np.array_equal(np.fromfile(folder / "positions.f32", "<f4"), positions)
+
+
+# --------------------------------------------------------------------------- #
+# Milestone C2: readiness and the rain rule (section 5, B7)
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture(scope="module")
+def run_with_legs(tmp_path_factory) -> Path:
+    if not drone_core_available():
+        pytest.skip("drone_core extension not built")
+    phase1 = build_phase1_json()
+    phase1["project_metadata"]["version"] = "1.6.0"
+    phase1["project_metadata"]["legs"] = {"takeoff": {"duration_sec": None}, "return": {"duration_sec": None}}
+    run_dir = new_run(tmp_path_factory.mktemp("rain"), phase1)
+    code, _ = bridge("stage2", str(run_dir))
+    assert code == 0
+    return run_dir
+
+
+def test_readiness_follows_the_planned_returns(run_with_legs):
+    code, events = bridge("readiness", str(run_with_legs), "--window-s", "1000")
+    assert code == 0
+    before = first(events, "readiness")
+    assert not before["returns"]["planned"]
+    methods = [p["method"] for p in before["pieces"]]
+    assert methods[0] == "rest_of_show" and methods[-1] == "landed" and "return_leg" in methods
+    assert before["coverage"]["covered_fraction"] == 1.0
+
+    code, _ = bridge("stage2-returns", str(run_with_legs))       # formation 0: the takeoff flown backwards
+    assert code == 0
+    code, events = bridge("readiness", str(run_with_legs), "--window-s", "5")
+    after = first(events, "readiness")
+    assert after["returns"]["planned"] and after["formations"][0]["return_sec"] > 0
+    assert after["pieces"][0]["method"] == "return_path"
+    cov = after["coverage"]
+    assert cov["covered_fraction"] < 1.0 and cov["uncovered"]
+    # W_req = R + max H(t + R) + M, with the profile's reaction (5 s) and the default margin (10 s); the
+    # largest H is the takeoff's start: H(5) = value0 - 5 (finish the takeoff, then fly it backwards).
+    assert cov["required_window_sec"] == pytest.approx(5 + after["pieces"][0]["value0"] - 5 + 10)
+
+    code, events = bridge("conditions", str(run_with_legs))
+    info = first(events, "conditions")
+    assert info["readiness"]["pieces"] == after["pieces"]
+    assert info["defaults"]["rain_rule"]["alert_mm_h"] == 0.5 and info["defaults"]["rain_rule"]["reaction_s"] == 5.0
+
+
+@pytest.mark.skipif(not opencl_available(), reason="no OpenCL device")
+def test_rain_in_the_takeoff_flies_the_fleet_home(run_with_legs):
+    bridge("stage2-returns", str(run_with_legs))
+    takeoff_end = json.loads((run_with_legs / "stage2" / "trajectory_splines.json").read_text(encoding="utf-8"))[
+        "metadata"]["legs"]["takeoff"]["end_time_sec"]
+    rain = {"name": "Rain at takeoff", "seed": 5, "wind": [], "gusts": [], "rtk": [],
+            "rain": [{"t": 0, "mm_h": 0.0}, {"t": 2, "mm_h": 1.0}, {"t": 400, "mm_h": 3.0}],
+            "rain_rule": {"alert_mm_h": 0.5, "limit_mm_h": 2.5, "reaction_s": 1.0, "margin_s": 5.0}}
+    code, events = bridge("scenario-save", str(run_with_legs), "--json", json.dumps(rain))
+    sid = first(events, "scenario_saved")["id"]
+    code, events = bridge("simulate", str(run_with_legs), "--scenario", sid)
+    result = first(events, "sim_result")["result"]
+    home = result["rain"]["return"]
+    assert home["command_sec"] == pytest.approx(2.0)                    # alert at 1 s, reaction 1 s
+    assert (home["formation"], home["method"]) == (0, "return_path")
+    assert home["start_sec"] == pytest.approx(takeoff_end, abs=1e-3)   # finish the takeoff first
+    assert home["all_home"] and home["home_by_deadline"] and home["spare_sec"] > 0
+    assert home["farthest_from_slot_m"] < 0.3
+    assert result["passed"] and code == 0
+    sim = json.loads((run_with_legs / "stage3" / "scenarios" / sid / "replay.json").read_text(encoding="utf-8"))[
+        "overlays"]["simulation"]
+    assert sim["rain_return"]["planned_home_sec"] == pytest.approx(home["planned_home_sec"])
+    # The fleet never flew past the first formation: the flight is the takeoff, then back down.
+    assert result["sim_duration_sec"] < home["planned_home_sec"] + 11.0

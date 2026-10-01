@@ -3,7 +3,9 @@
 * `conditions <run>`                     -- the show's timing and the run's scenarios with their last results
 * `scenario-save <run> --json J [--id I]` -- create (no id) or replace a scenario, validated
 * `scenario-delete <run> --id I`         -- remove a scenario and its results
-* `simulate <run> --scenario I`          -- fly the scenario through the digital twin (B6) and record it (B8)
+* `simulate <run> --scenario I`          -- fly the scenario through the digital twin (B6) and record it (B8);
+                                           the rain rule flies the return paths (B7)
+* `readiness <run> [--scenario I] [--window-s W]` -- time to home and coverage (section 5.1, 5.2)
 
 Scenarios live in `stage3/scenarios/<id>/scenario.json`; `<id>` is the folder name made from the name the
 scenario was created with and never changes (renaming only changes `name`). A simulation writes, next to
@@ -82,6 +84,62 @@ def _drop_scenario_record(run_dir: Path, scenario_id: str) -> None:
 # conditions / scenario-save / scenario-delete
 # --------------------------------------------------------------------------- #
 
+def rule_defaults() -> dict[str, float]:
+    from stage3_simulation_packer.twin_sim.profile import load_profile
+    from stage3_simulation_packer.twin_sim.weather import rain_rule_defaults
+
+    return rain_rule_defaults(load_profile())
+
+
+def load_returns(run_dir: Path, record: dict[str, Any]) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
+    """The run's planned return paths (B4) by formation, and their status for the UI. Returns planned from an
+    earlier Stage 2 result are ignored (they no longer start where the show is)."""
+    from .returns_job import INDEX_FILE, RETURNS_DIR, return_file
+
+    folder = run_dir / "stage2" / RETURNS_DIR
+    index_path = folder / INDEX_FILE
+    status: dict[str, Any] = {"planned": False, "stale": False, "entries": []}
+    if not index_path.exists():
+        return {}, status
+    index = _load_json(index_path)
+    if index.get("stage2_ended_at") != record.get("stage2", {}).get("ended_at"):
+        status["stale"] = True
+        return {}, status
+    returns = {}
+    for entry in index["returns"]:
+        k = entry["keyframe_index"]
+        path = folder / return_file(k)
+        if entry["status"] == "succeeded" and path.exists():
+            returns[k] = _load_json(path)
+    status.update(planned=bool(returns), entries=index["returns"])
+    return returns, status
+
+
+def readiness_data(run_dir: Path, record: dict[str, Any], contract: dict[str, Any],
+                   names: list[str]) -> dict[str, Any]:
+    """H(t) as pieces (section 5.1) and what it is made of; the UI computes coverage for any window."""
+    from dataclasses import asdict
+
+    from stage3_simulation_packer.twin_sim.rain_return import ShowTiming, time_to_home
+
+    returns, status = load_returns(run_dir, record)
+    try:
+        timing = ShowTiming.from_contract(contract["metadata"], names)
+    except ValueError as exc:
+        return {"error": str(exc), "returns": status}
+    durations = {k: float(r["metadata"]["total_duration_sec"]) for k, r in returns.items()}
+    pieces = time_to_home(timing, durations)
+    return {
+        "error": None,
+        "end_sec": timing.end,
+        "pieces": [asdict(p) for p in pieces],
+        "formations": [{"index": k, "name": n, "arrival_sec": timing.arrival[k],
+                        "return_sec": durations.get(k)} for k, n in enumerate(names)],
+        "return_leg_sec": None if timing.return_leg is None else timing.return_leg[1] - timing.return_leg[0],
+        "returns": status,
+    }
+
+
 def show_timing(contract: dict[str, Any], keyframes: list[str]) -> dict[str, Any]:
     meta = contract["metadata"]
     return {
@@ -114,15 +172,17 @@ def list_scenarios(run_dir: Path) -> list[dict[str, Any]]:
 def run_conditions(run_dir: Path) -> int:
     from stage3_simulation_packer.twin_sim import weather
 
-    contract_path, _ = _passed_stage2(run_dir)
+    contract_path, record = _passed_stage2(run_dir)
     if contract_path is None:
         return _input_error("Conditions need a run whose Stage 2 passed; this one hasn't.")
     phase1 = _load_json(run_dir / "input" / "phase1.json")
+    names = [kf["shape_name"] for kf in phase1["keyframes"]]
     contract = _load_json(contract_path)
     emit("conditions",
-         show=show_timing(contract, [kf["shape_name"] for kf in phase1["keyframes"]]),
+         show=show_timing(contract, names),
          scenarios=list_scenarios(run_dir),
-         defaults={"rain_rule": weather.DEFAULT_RAIN_RULE, "rtk_states": list(weather.RTK_STATES),
+         readiness=readiness_data(run_dir, record, contract, names),
+         defaults={"rain_rule": rule_defaults(), "rtk_states": list(weather.RTK_STATES),
                    "limits": weather.LIMITS})
     emit("done", status="succeeded", exit_code=EXIT_OK)
     return EXIT_OK
@@ -146,7 +206,7 @@ def save_scenario(run_dir: Path, text: str, scenario_id: str | None) -> int:
 
     try:
         data = json.loads(text)
-        scenario = Scenario.from_dict(data)
+        scenario = Scenario.from_dict(data, rule_defaults())
     except json.JSONDecodeError as exc:
         return _input_error(f"The scenario isn't valid JSON: {exc}", errors=[str(exc)])
     except ScenarioError as exc:
@@ -232,6 +292,9 @@ def _weather_overlay(scenario, flight) -> dict[str, Any]:
         "gusts": gusts,
         "field_center": [round(float(c), 4) for c in flight.field_center],
         "rain_rule": scenario.rain_rule,
+        # The rain rule's return (scenario_runner `rain.return`), for the timeline marks.
+        "rain_return": flight.report["rain"]["return"],
+        "alert_time_sec": flight.report["rain"]["alert_time_sec"],
     }
 
 
@@ -305,19 +368,20 @@ def _simulate(run_dir: Path, folder: Path, contract_path: Path, device: str, sta
     from stage3_simulation_packer.twin_sim.weather import Scenario, ScenarioError
 
     try:
-        scenario = Scenario.from_dict(_load_json(folder / SCENARIO_FILE))
+        scenario = Scenario.from_dict(_load_json(folder / SCENARIO_FILE), rule_defaults())
     except ScenarioError as exc:
         emit("error", code="input", message=f"The scenario has problems: {exc}", errors=exc.errors)
         return finish("failed_input", EXIT_INPUT, message=str(exc))
 
     contract = _load_json(contract_path)
-    total = round(float(contract["metadata"]["total_duration_sec"]) + TAIL_SEC, 1)
+    total = round(float(contract["metadata"]["total_duration_sec"]) + TAIL_SEC, 1)  # until the twin knows
     emit("phase", name="simulating", detail=f"flying {scenario.name!r} through the digital twin")
     emit("progress", stage="simulate", done=0.0, total=total)
     try:
-        flight = fly_scenario(str(contract_path), scenario, device=device,
-                              on_progress=lambda f: emit("progress", stage="simulate", done=round(f * total, 1),
-                                                         total=total))
+        returns, _ = load_returns(run_dir, read_run(run_dir))
+        flight = fly_scenario(str(contract_path), scenario, device=device, returns=returns,
+                              on_progress=lambda done, all_: emit("progress", stage="simulate", done=round(done, 1),
+                                                                   total=round(all_, 1)))
     except (TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
         emit("error", code="input", message=str(exc))
         return finish("failed_input", EXIT_INPUT, message=str(exc))
@@ -341,3 +405,44 @@ def _simulate(run_dir: Path, folder: Path, contract_path: Path, device: str, sta
     return finish("succeeded" if passed else "failed_safety", EXIT_OK if passed else EXIT_CRITERION,
                   passed=passed, closest_m=closest, largest_deviation_m=report["largest_deviation"]["distance_m"],
                   lowest_soc=report["lowest_battery"]["soc"])
+
+
+# --------------------------------------------------------------------------- #
+# readiness
+# --------------------------------------------------------------------------- #
+
+def run_readiness(run_dir: Path, scenario_id: str | None, window: float | None) -> int:
+    """Section 5.1-5.2: H(t), coverage for the window (given, else the scenario's alert-to-limit time) and
+    the required window, without any physics."""
+    from dataclasses import asdict
+
+    from stage3_simulation_packer.twin_sim.rain_return import Piece, coverage
+    from stage3_simulation_packer.twin_sim.scenario_runner import rain_crossing
+    from stage3_simulation_packer.twin_sim.weather import Scenario, ScenarioError
+
+    contract_path, record = _passed_stage2(run_dir)
+    if contract_path is None:
+        return _input_error("Readiness needs a run whose Stage 2 passed; this one hasn't.")
+    rule = rule_defaults()
+    if scenario_id is not None:
+        path = scenarios_dir(run_dir) / scenario_id / SCENARIO_FILE
+        if Path(scenario_id).name != scenario_id or not path.exists():
+            return _input_error(f"This run has no scenario {scenario_id!r}.")
+        try:
+            scenario = Scenario.from_dict(_load_json(path), rule)
+        except ScenarioError as exc:
+            return _input_error(f"The scenario has problems: {exc}", errors=exc.errors)
+        rule = scenario.rain_rule
+        if window is None:
+            alert, limit = rain_crossing(scenario, rule["alert_mm_h"]), rain_crossing(scenario, rule["limit_mm_h"])
+            if alert is not None and limit is not None:
+                window = limit - alert
+    phase1 = _load_json(run_dir / "input" / "phase1.json")
+    data = readiness_data(run_dir, record, _load_json(contract_path), [kf["shape_name"] for kf in phase1["keyframes"]])
+    if data["error"]:
+        return _input_error(data["error"])
+    pieces = [Piece(**p) for p in data["pieces"]]
+    cov = coverage(pieces, data["end_sec"], rule["reaction_s"], rule["margin_s"], window)
+    emit("readiness", **data, rain_rule=rule, coverage=asdict(cov))
+    emit("done", status="succeeded", exit_code=EXIT_OK)
+    return EXIT_OK

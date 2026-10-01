@@ -152,23 +152,10 @@ def reversed_takeoff(show: dict[str, Any], first_formation: str) -> dict[str, An
 
 def compose_abort_show(show: dict[str, Any], ret: dict[str, Any]) -> dict[str, Any]:
     """One contract: the show until the return's abort time, then the return shifted to start there."""
-    info = ret["metadata"]["return_path"]
-    t_abort = float(info["abort_time_sec"])
-    returns = {t["drone_id"]: t["segments"] for t in ret["trajectories"]}
-    trajectories = []
-    for traj in show["trajectories"]:
-        segments = [dict(s) for s in traj["segments"] if s["end_time_sec"] <= t_abort + 1e-9]
-        for seg in returns[traj["drone_id"]]:
-            segments.append({**seg,
-                             "start_time_sec": seg["start_time_sec"] + t_abort,
-                             "end_time_sec": seg["end_time_sec"] + t_abort,
-                             "color_keyframes": [{**c, "time_sec": c["time_sec"] + t_abort}
-                                                 for c in seg.get("color_keyframes", [])]})
-        for i, seg in enumerate(segments):
-            seg["segment_index"] = i
-        trajectories.append({"drone_id": traj["drone_id"], "segments": segments})
-    meta = {**show["metadata"], "total_duration_sec": t_abort + float(ret["metadata"]["total_duration_sec"])}
-    return {"metadata": meta, "trajectories": trajectories}
+    from stage3_simulation_packer.twin_sim.rain_return import compose
+
+    t_abort = float(ret["metadata"]["return_path"]["abort_time_sec"])
+    return compose(show, ret, t_abort, t_abort)
 
 
 def build_return_replay(run_dir: Path, show: dict[str, Any], ret: dict[str, Any]) -> dict[str, Any]:

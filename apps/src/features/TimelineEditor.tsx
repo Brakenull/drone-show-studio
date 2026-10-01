@@ -24,8 +24,8 @@ interface Props {
   disabled?: boolean;
 }
 
-const LABEL_W = 92;
-const PAD_R = 16;
+export const LABEL_W = 92;
+export const PAD_R = 16;
 const AXIS_H = 22;
 const LANES: { id: Channel | "show"; label: string; h: number }[] = [
   { id: "wind", label: "Wind", h: 84 },

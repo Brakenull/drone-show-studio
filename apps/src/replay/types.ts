@@ -76,6 +76,17 @@ export interface SimWeather {
   }[];
   field_center: [number, number];
   rain_rule: { alert_mm_h: number; limit_mm_h: number; reaction_s: number; margin_s: number };
+  alert_time_sec?: number | null;
+  /** The rain rule's return to the holding area, when the rain reached the alert level. */
+  rain_return?: {
+    command_sec: number;
+    formation_name: string | null;
+    method: string;
+    start_sec: number;
+    planned_home_sec: number | null;
+    deadline_sec: number | null;
+    last_landing_sec: number | null;
+  } | null;
 }
 
 export interface Separation {

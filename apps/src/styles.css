@@ -1807,3 +1807,116 @@ input[type="radio"]:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Rain return readiness (docs/4-condition_simulator.md §5, §6): the chart shares the timeline's axis. */
+.readiness {
+  margin-top: 2rem;
+}
+.readiness-title {
+  font-size: var(--step-2);
+  margin-bottom: 0.5rem;
+}
+.readiness-about {
+  max-width: 70ch;
+  margin-bottom: 1rem;
+}
+.readiness-plan .actions {
+  margin-top: 0.75rem;
+}
+.readiness-planning {
+  margin: 1rem 0;
+  padding: 1rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 56rem;
+}
+.readiness-chart {
+  padding: 0.5rem 0.75rem 0;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  /* Same width as the timeline column beside the inspector, so the time axes line up. */
+  margin-right: calc(17rem + 1.25rem);
+}
+.rc-svg {
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+  font-size: 12px;
+}
+.rc-uncovered {
+  fill: rgb(239 68 68 / 0.16);
+  pointer-events: none;
+}
+.rc-none {
+  fill: rgb(239 68 68 / 0.3);
+  pointer-events: none;
+}
+.rc-line {
+  stroke: var(--text);
+  stroke-width: 2;
+  pointer-events: none;
+}
+.rc-window {
+  stroke: var(--accent);
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+.rc-window-label {
+  fill: var(--accent);
+  font-size: 11px;
+  pointer-events: none;
+}
+.rc-pick {
+  stroke: var(--primary);
+  stroke-width: 2;
+  pointer-events: none;
+}
+.rc-hover {
+  stroke: var(--text-muted);
+  stroke-dasharray: 2 3;
+  pointer-events: none;
+}
+.readiness-readout {
+  min-height: 1.5em;
+  margin: 0.5rem 0 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.readiness-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem 1.5rem;
+}
+.readiness-window {
+  flex: 1 1 22rem;
+  max-width: 34rem;
+}
+.readiness-window input[type="range"] {
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.readiness-controls button {
+  min-height: 44px;
+}
+.rain-return {
+  margin-top: 1.5rem;
+}
+.page .rain-return h3 {
+  margin: 0 0 0.25rem;
+  font-size: var(--step-1);
+}
+.hud-return {
+  font-size: var(--step--1);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+  .readiness-chart {
+    margin-right: 0;
+  }
+}

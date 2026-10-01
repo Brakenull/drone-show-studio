@@ -13,6 +13,13 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 - **Playback with weather:** each drone's planned position next to its simulated one (a red line when they are more than 0.5 m apart), wind streaks, rain, gust fronts sweeping across the field, a heads-up display of wind, rain and RTK, and the largest deviation from plan as a second line on the timeline strip.
 - **Digital twin:** time-varying wind, turbulence and RTK quality and any number of gust fronts (`twin_sim/weather.py`), and a scenario runner with recording for playback (`twin_sim/scenario_runner.py`, also a command-line tool). Stress-test results are unchanged.
 
+#### Condition simulator — rain return planning
+
+- **Rain return readiness:** for every moment of the show, the time it would take to get every drone back to the holding area if the rain started then (reaction, finishing the current move, the planned return path, a margin), drawn under the weather timeline against the time the rain takes from its alert to its limit level. It shows the share of the show covered, the uncovered moments and by how much, and the rain window the show needs. Pointing at a moment explains what the fleet would do. Missing return paths can be planned from the panel.
+- **The rain rule in the simulator:** when a scenario's rain reaches the alert level, the simulated fleet is called home after the reaction time: it finishes its move and flies the planned return path of that formation. The result says when the return was called, the last drone home, and whether every drone was home before the rain limit (now a pass criterion), and the playback marks the alert, the call and the limit.
+- **Fly this:** pick a moment on the readiness chart and simulate rain reaching the alert level then, with the chosen window.
+- **Drone profile:** new `environment` keys for the rain alert level, the rain limit level and the reaction time (placeholders until the drone model's water rating is known).
+
 ## [1.1.0] — 2026-09-30
 
 Real shows now plan end to end. Both real test shows, 150 and 200 drones, plan with every transition passing the safety check on its first attempt: the path planner was reworked to judge its paths the way the safety check does, to start from flyable paths, and to stop setting up drones to cross where it can't adjust their paths. The Blender add-on gains takeoff and return legs, a ground level and holding-area safety checks, and the digital twin now runs on any GPU (OpenCL instead of NVIDIA Warp).

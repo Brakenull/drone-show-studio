@@ -146,9 +146,14 @@ export function SeparationStrip({
       ctx.stroke();
     }
 
+    // A label that would run into the previous one goes on the next row.
+    const rowEnds: number[] = [];
     for (const m of marks ?? []) {
       if (m.time < t0 || m.time > t1) continue;
       const x = xOf(m.time);
+      let row = rowEnds.findIndex((end) => x + 4 >= end);
+      if (row < 0) row = rowEnds.length;
+      rowEnds[row] = x + 4 + ctx.measureText(m.label).width + 8;
       ctx.strokeStyle = m.tone === "bad" ? COLORS.bad : COLORS.warn;
       ctx.lineWidth = 1;
       ctx.setLineDash(m.tone === "bad" ? [] : [3, 3]);
@@ -160,7 +165,7 @@ export function SeparationStrip({
       ctx.fillStyle = ctx.strokeStyle;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText(m.label, x + 4, PAD.top);
+      ctx.fillText(m.label, x + 4, PAD.top + row * 14);
     }
 
     if (floor !== null) {

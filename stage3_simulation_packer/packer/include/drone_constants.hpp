@@ -62,6 +62,12 @@ inline constexpr double kTolGnssRtkNoiseM = 0.02;                               
 inline constexpr double kTolGnssDriftRateMPerSqrtS = 0.01;                           // profile: tolerances.gnss_drift_rate_m_per_sqrt_s
 inline constexpr double kTolInitialPositionErrorM = 0.05;                            // profile: tolerances.initial_position_error_m
 
+// environment: the rain rule (docs/4-condition_simulator.md §4.3). Placeholders until the drone
+// model's water protection rating is known (§10).
+inline constexpr double kRainAlertMmH = 0.5;                                         // profile: environment.rain_alert_mm_h
+inline constexpr double kRainLimitMmH = 2.5;                                         // profile: environment.rain_limit_mm_h
+inline constexpr double kReturnReactionS = 5.0;                                      // profile: environment.return_reaction_s
+
 // Not profile-backed: fixed by the flight file format / safety standard.
 inline constexpr std::uint16_t kSamplingDtMs = 50;   // 20 Hz waypoint rate (§4)
 inline constexpr double kNominalSeparationM = 1.5;   // d_min, planned by Phase 2 (§3.4)
