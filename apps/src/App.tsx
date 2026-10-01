@@ -4,6 +4,7 @@ import type { DoctorCheck, RunRecord, Settings, SimDevice } from "./bridge/types
 import { STATUS, runName } from "./app/format";
 import { isStage2Running } from "./app/stage2Jobs";
 import { isStage3Running, useStage3Job } from "./app/stage3Jobs";
+import { isSimulateRunning, useSimulateJob } from "./app/simulateJobs";
 import { Sidebar } from "./features/Sidebar";
 import { NewRun } from "./features/NewRun";
 import { InputView } from "./features/InputView";
@@ -11,23 +12,25 @@ import { Stage2View } from "./features/Stage2View";
 import { Stage3View } from "./features/Stage3View";
 import { ReplayView, type ReplaySource } from "./features/ReplayView";
 import { CompareView } from "./features/CompareView";
+import { ConditionsView } from "./features/ConditionsView";
 import { SettingsView } from "./features/SettingsView";
 import type { ReplayFocus } from "./replay/types";
 import "./styles.css";
 
 type View = "new" | "run" | "settings";
-type Tab = "input" | "stage2" | "stage3" | "replay" | "compare";
+type Tab = "input" | "stage2" | "stage3" | "conditions" | "replay" | "compare";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "input", label: "Input" },
   { id: "stage2", label: "Stage 2" },
   { id: "stage3", label: "Stage 3" },
+  { id: "conditions", label: "Conditions" },
   { id: "replay", label: "Replay" },
   { id: "compare", label: "Compare" },
 ];
 
 const runTone = (run: RunRecord) =>
-  (isStage2Running(run.run_id) || isStage3Running(run.run_id) ? STATUS.running : STATUS[run.stage2.status]).tone;
+  (isStage2Running(run.run_id) || isStage3Running(run.run_id) || isSimulateRunning(run.run_id) ? STATUS.running : STATUS[run.stage2.status]).tone;
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -76,6 +79,7 @@ export default function App() {
   // Re-render when the selected run's Stage 3 jobs start or stop, so its status light follows them.
   useStage3Job(selected, "monte_carlo");
   useStage3Job(selected, "pack");
+  useSimulateJob(selected);
   const missing = checks?.filter((c) => !c.ok && ["stage2", "validate", "replay", "all"].includes(c.required_for));
 
   function openRun(runId: string, nextTab: Tab = "stage2") {
@@ -203,6 +207,7 @@ export default function App() {
                   }}
                 />
               )}
+              {tab === "conditions" && <ConditionsView run={run} onFinished={() => void refreshRuns()} />}
               {tab === "replay" && (
                 <ReplayView
                   run={run}

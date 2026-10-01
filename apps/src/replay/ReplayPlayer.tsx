@@ -1,14 +1,21 @@
 // 3D replay with the separation timeline as scrubber (docs/5-studio_gui.md §6.4).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReplayScene } from "./ReplayScene";
 import { SeparationStrip } from "./SeparationStrip";
 import { distanceAt, formatTime, metres, nearestTo, positionAt } from "./sampling";
-import type { ReplayData, ReplayFocus } from "./types";
+import type { ReplayData, ReplayFocus, SimWeather } from "./types";
+import { WeatherHud } from "./WeatherHud";
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
 
 const placeName = (keyframe: string) => (keyframe === "holding_area" ? "holding area" : keyframe);
+
+/** First sampled time at which the rain reaches `level`, or null. */
+function rainReaches(w: SimWeather, level: number): number | null {
+  const i = w.rain_mm_h.findIndex((v) => v >= level);
+  return i < 0 ? null : i / w.hz;
+}
 
 interface Props {
   data: ReplayData;
@@ -31,7 +38,25 @@ export function ReplayPlayer({ data, focus, label }: Props) {
   const panelRef = useRef<HTMLElement>(null);
 
   const failure = header.overlays.failure;
-  const floor = header.overlays.gatekeeper_floor_m ?? null;
+  const sim = header.overlays.simulation ?? null;
+  // A simulated flight is judged by the crash distance, a plan by the planner's required distance.
+  const floor = sim ? separation.crash_m : (header.overlays.gatekeeper_floor_m ?? null);
+  const deviation = separation.deviation_m ?? null;
+  const furthest = useMemo(() => {
+    if (!deviation?.length) return null;
+    let k = 0;
+    deviation.forEach((d, i) => d > deviation[k] && (k = i));
+    return { time: separation.times[k], distance: deviation[k], drone: separation.deviation_drone?.[k] ?? -1 };
+  }, [deviation, separation]);
+  const marks = useMemo(() => {
+    if (!sim) return [];
+    const out: { time: number; label: string; tone: "warn" | "bad" }[] = [];
+    const alert = rainReaches(sim, sim.rain_rule.alert_mm_h);
+    const limit = rainReaches(sim, sim.rain_rule.limit_mm_h);
+    if (alert !== null) out.push({ time: alert, label: "Rain alert level", tone: "warn" });
+    if (limit !== null) out.push({ time: limit, label: "Rain limit level", tone: "bad" });
+    return out;
+  }, [sim]);
 
   const pick = useCallback((drone: number | null) => {
     if (drone === null) {
@@ -137,6 +162,7 @@ export function ReplayPlayer({ data, focus, label }: Props) {
     <div className="replay" onKeyDown={onKeyDown}>
       <div className="replay-stage">
         <div className="replay-canvas" ref={hostRef} />
+        {sim && <WeatherHud weather={sim} time={time} />}
         <aside className="replay-panel" ref={panelRef}>
           <p className="replay-kind">{label}</p>
           {focus?.note && <p className="replay-note">{focus.note}</p>}
@@ -152,9 +178,18 @@ export function ReplayPlayer({ data, focus, label }: Props) {
               </dd>
             </div>
             <div>
-              <dt>Required</dt>
-              <dd>{metres(floor, 2)}</dd>
+              <dt>{sim ? "Crash" : "Required"}</dt>
+              <dd>
+                {sim && "< "}
+                {metres(floor, 2)}
+              </dd>
             </div>
+            {furthest && (
+              <div>
+                <dt>Furthest from plan</dt>
+                <dd className={furthest.distance > 0.5 ? "tone-warn" : undefined}>{metres(furthest.distance, 2)}</dd>
+              </div>
+            )}
           </dl>
           <button
             className="link"
@@ -163,6 +198,16 @@ export function ReplayPlayer({ data, focus, label }: Props) {
           >
             Go to closest approach ({formatTime(worst.time_sec)}, drones {worst.a} and {worst.b})
           </button>
+          {furthest && (
+            <button className="link" onClick={() => seekTo(furthest.time, [furthest.drone])}>
+              Go to the furthest from plan ({formatTime(furthest.time)}, drone {furthest.drone})
+            </button>
+          )}
+          {sim && (
+            <p className="muted hint">
+              Grey dots are where the plan puts each drone; a red line joins a drone more than 0.5 m from its plan.
+            </p>
+          )}
 
           {pair && (
             <section className="panel-block">
@@ -265,6 +310,9 @@ export function ReplayPlayer({ data, focus, label }: Props) {
         floor={floor}
         nominal={header.overlays.nominal_min_distance_m ?? null}
         span={span}
+        floorLabel={sim ? "crash" : "required"}
+        deviation={deviation}
+        marks={marks}
         onSeek={(t) => {
           setPlaying(false);
           setTime(t);

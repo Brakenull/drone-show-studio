@@ -1468,3 +1468,342 @@ input[type="radio"]:focus-visible {
   gap: 0.75rem;
   margin-top: 1.25rem;
 }
+
+/* Conditions: weather scenarios (docs/4-condition_simulator.md §6). Each weather channel has its own
+   colour, kept apart from the status colours: wind mint, gusts silver, RTK violet, rain blue. The rain
+   alert line is caution yellow and the limit line danger red, as everywhere else. */
+:root {
+  --wind: #7dd3c0;
+  --gust: #e6e6e6;
+  --rtk: #a78bfa;
+  --rain: #6b9cff;
+}
+.page-wide {
+  max-width: 90rem;
+}
+.scenario-bar,
+.scenario-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem 1rem;
+}
+.scenario-bar .field select {
+  min-width: 16rem;
+}
+.scenario-bar button {
+  min-height: 44px;
+}
+.scenario-meta {
+  margin: 1.5rem 0 1.25rem;
+}
+.scenario-meta .field input {
+  width: 18rem;
+}
+.scenario-meta .field-narrow input {
+  width: 10rem;
+}
+.empty-scenarios {
+  margin-top: 1.5rem;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+.timeline-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 17rem;
+  gap: 1.25rem;
+  align-items: start;
+}
+.timeline {
+  min-width: 0;
+  padding: 0.75rem 0.75rem 0.25rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.tl-svg {
+  display: block;
+  touch-action: none;
+  user-select: none;
+  font-size: 12px;
+}
+.tl-grid {
+  stroke: var(--border-soft);
+}
+.tl-tick,
+.tl-scale {
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tl-scale {
+  font-size: 11px;
+}
+.tl-lane-label {
+  fill: var(--text);
+  font-weight: 500;
+}
+.tl-lane {
+  fill: var(--surface);
+  stroke: var(--border);
+}
+.tl-lane-edit {
+  cursor: crosshair;
+}
+.tl-tail {
+  fill: rgb(255 255 255 / 0.025);
+  pointer-events: none;
+}
+.tl-area {
+  pointer-events: none;
+}
+.tl-area-wind {
+  fill: rgb(125 211 192 / 0.12);
+}
+.tl-area-rain {
+  fill: rgb(107 156 255 / 0.16);
+}
+.tl-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.tl-line-wind {
+  stroke: var(--wind);
+}
+.tl-line-rain {
+  stroke: var(--rain);
+}
+.tl-arrow {
+  fill: var(--wind);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.tl-key {
+  cursor: grab;
+  stroke: var(--background);
+  stroke-width: 2;
+  outline: none;
+  transition: stroke var(--fast) ease;
+}
+.tl-key:active {
+  cursor: grabbing;
+}
+.tl-key-wind {
+  fill: var(--wind);
+}
+.tl-key-rain {
+  fill: var(--rain);
+}
+.tl-key-gusts {
+  fill: rgb(230 230 230 / 0.75);
+  stroke-width: 1;
+}
+.tl-key-rtk {
+  fill: var(--rtk);
+  stroke-width: 1;
+}
+.tl-key.is-selected,
+.tl-key:focus-visible {
+  stroke: var(--primary);
+  stroke-width: 3;
+}
+.tl-rtk {
+  rx: 3px;
+}
+.tl-rtk-fixed {
+  fill: rgb(167 139 250 / 0.08);
+}
+.tl-rtk-float {
+  fill: rgb(167 139 250 / 0.3);
+}
+.tl-rtk-gps {
+  fill: rgb(167 139 250 / 0.6);
+}
+.tl-rtk-label {
+  fill: var(--text);
+  font-size: 11px;
+}
+.tl-level {
+  stroke-width: 1;
+  pointer-events: none;
+}
+.tl-level-alert {
+  stroke: var(--warning);
+  stroke-dasharray: 4 3;
+}
+.tl-level-limit {
+  stroke: var(--danger);
+}
+.tl-level-label {
+  font-size: 11px;
+  pointer-events: none;
+}
+.tl-level-label-alert {
+  fill: var(--warning);
+}
+.tl-level-label-limit {
+  fill: var(--danger);
+}
+.tl-hold {
+  fill: #3a3a3a;
+}
+.tl-transition {
+  fill: var(--text-muted);
+  opacity: 0.6;
+}
+.tl-show-label {
+  fill: var(--text);
+  font-size: 11px;
+}
+.timeline-help {
+  max-width: 80ch;
+  margin-top: 0.75rem;
+}
+
+.inspector {
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.page .inspector h3 {
+  margin: 0 0 0.75rem;
+  font-size: var(--step-0);
+}
+.inspector-fields {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.inspector .field input,
+.inspector .field select {
+  width: 100%;
+}
+
+.sim-running {
+  margin-top: 1.5rem;
+}
+.sim-result {
+  margin-top: 2rem;
+  max-width: 56rem;
+}
+.fact-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgb(255 255 255 / 0.25);
+  text-underline-offset: 4px;
+}
+.fact-link:hover:not(:disabled) {
+  background: none;
+  text-decoration-color: currentColor;
+}
+
+/* Playback heads-up display: bottom left of the 3D view. */
+.hud {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 1;
+  display: grid;
+  gap: 0.5rem;
+  width: 15rem;
+  padding: 0.75rem 1rem;
+  background: rgb(15 15 15 / 0.82);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+}
+.hud p {
+  margin: 0;
+}
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.hud-arrow {
+  width: 2.25rem;
+  height: 2.25rem;
+  fill: var(--wind);
+  flex: none;
+}
+.hud-dial {
+  fill: none;
+  stroke: var(--border);
+}
+.hud-value {
+  font-family: var(--font-heading);
+  font-size: var(--step-1);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.hud-label {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+.hud-gust {
+  font-size: var(--step--1);
+  color: var(--gust);
+}
+.hud-gauge {
+  position: relative;
+  height: 6px;
+  margin-top: 0.375rem;
+  background: var(--border);
+  border-radius: var(--radius-pill);
+}
+.hud-gauge-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--rain);
+}
+.hud-gauge-warn {
+  background: var(--warning);
+}
+.hud-gauge-bad {
+  background: var(--danger);
+}
+.hud-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+}
+.hud-tick-alert {
+  background: var(--warning);
+}
+.hud-tick-limit {
+  background: var(--danger);
+}
+.hud-rtk {
+  font-size: var(--step--1);
+  color: var(--rtk);
+}
+.hud-rtk-fixed {
+  color: var(--text-muted);
+}
+.strip-key {
+  display: inline-block;
+  width: 0.75rem;
+  height: 2px;
+  margin-right: 0.375rem;
+  vertical-align: middle;
+}
+.strip-key-deviation {
+  background: var(--accent);
+}
+
+@media (max-width: 1100px) {
+  .timeline-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

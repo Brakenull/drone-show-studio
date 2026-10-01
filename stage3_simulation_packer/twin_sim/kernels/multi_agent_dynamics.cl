@@ -63,7 +63,7 @@ __kernel void init_state(__global const uint* seeds, __global const float* runp,
 }
 
 __kernel void step_dynamics(
-    float t, int step_index, __global const uint* seeds, __global const float* runp,
+    float t, int step_index, __global const uint* seeds, __global const float* runp, __global const float* weather,
     // references (eval_reference), one per drone, shared by all runs
     __global const float4* ref_p, __global const float4* ref_v, __global const float4* ref_a,
     __global const float* led_frac,
@@ -96,10 +96,10 @@ __kernel void step_dynamics(
     uint rng = rng_init(seeds[r] + (uint)step_index, (uint)d);
     float3 bias = gnss_bias[gid].xyz;
     float decay = DT / GNSS_CORR_TIME;
-    float diffusion = rp[RP_GNSS_DRIFT] * sqrt(DT);
+    float diffusion = gnss_param(rp, weather, t, RP_GNSS_DRIFT, WX_GNSS_DRIFT) * sqrt(DT);
     bias = bias * (1.0f - decay) + randn3(&rng) * diffusion;
     gnss_bias[gid] = (float4)(bias, 0.0f);
-    float3 p_meas = p + bias + randn3(&rng) * rp[RP_GNSS_NOISE];
+    float3 p_meas = p + bias + randn3(&rng) * gnss_param(rp, weather, t, RP_GNSS_NOISE, WX_GNSS_NOISE);
 
     // ---- arming: motors spin up once the reference leaves the pad ----
     int is_armed = armed[gid];
@@ -157,7 +157,7 @@ __kernel void step_dynamics(
     total_thrust[gid] = wrench.x;
 
     float m = mass[gid];
-    float3 v_air = wind_at(rp, p, t) + (float3)(0.0f, 0.0f, downwash_z[gid]);
+    float3 v_air = wind_at(rp, weather, p, t) + (float3)(0.0f, 0.0f, downwash_z[gid]);
     float3 v_rel = v - v_air;
     float3 f_drag = v_rel * (-0.5f * RHO_AIR * drag_cd[gid] * DRAG_AREA * length(v_rel));
     float3 f_thrust = qrot(q, (float3)(0.0f, 0.0f, wrench.x));

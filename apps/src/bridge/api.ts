@@ -58,7 +58,7 @@ export interface Job {
 }
 
 /** A part of run.json a job owns; it picks the log file and what a cancel marks cancelled. */
-export type RunSection = "stage2" | "stage2_returns" | "monte_carlo" | "pack";
+export type RunSection = "stage2" | "stage2_returns" | "monte_carlo" | "pack" | "simulate";
 
 /** Start `python -m tools.studio_bridge <args>`; `run` ties it to a run folder section (log + cancel state). */
 export async function startJob(

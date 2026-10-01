@@ -81,6 +81,107 @@ export interface RunRecord {
   stage3?: { monte_carlo?: MonteCarloPart; pack?: PackPart };
   /** Return paths from abort points (tools/studio_bridge/returns_job.py, docs/4-condition_simulator.md B4). */
   stage2_returns?: Stage3Part & { formations?: number[]; planned?: number[] };
+  /** Condition simulator (tools/studio_bridge/conditions_job.py): the `simulate` job and each scenario's last outcome. */
+  conditions?: {
+    simulate?: Stage3Part & { scenario?: string };
+    scenarios?: Record<string, Stage3Part & { passed?: boolean }>;
+  };
+}
+
+// ---- Condition simulator (docs/4-condition_simulator.md §3, §6) ----
+
+export type RtkState = "fixed" | "float" | "gps";
+export interface WindKey {
+  t: number;
+  speed_mps: number;
+  from_deg: number;
+  turbulence: number;
+}
+export interface GustKey {
+  t: number;
+  peak_mps: number;
+  duration_s: number;
+  from_deg: number;
+}
+export interface RtkKey {
+  t: number;
+  state: RtkState;
+}
+export interface RainKey {
+  t: number;
+  mm_h: number;
+}
+export interface RainRule {
+  alert_mm_h: number;
+  limit_mm_h: number;
+  reaction_s: number;
+  margin_s: number;
+}
+/** stage3/scenarios/<id>/scenario.json */
+export interface Scenario {
+  name: string;
+  seed: number;
+  wind: WindKey[];
+  gusts: GustKey[];
+  rtk: RtkKey[];
+  rain: RainKey[];
+  rain_rule: RainRule;
+}
+
+/** stage3/scenarios/<id>/result.json (twin_sim/scenario_runner.py). */
+export interface ScenarioResult {
+  scenario: Scenario;
+  device: string;
+  fleet_size: number;
+  show_duration_sec: number;
+  sim_duration_sec: number;
+  wall_time_sec: number;
+  realtime_factor: number;
+  criteria: { d_crash_m: number; d_warning_m: number; min_landing_soc: number };
+  passed: boolean;
+  closest: { distance_m: number; a: number; b: number; time_sec: number } | null;
+  largest_deviation: { distance_m: number; drone: number; time_sec: number };
+  lowest_battery: { soc: number; drone: number };
+  crash_pairs: McPair[];
+  warning_pairs: McPair[];
+  low_soc_drones: number[];
+  brownout_drones: number[];
+  min_voltage_v: number;
+  rain: {
+    alert_mm_h: number;
+    limit_mm_h: number;
+    alert_time_sec: number | null;
+    limit_time_sec: number | null;
+    peak_mm_h: number;
+  };
+  stage2_ended_at: string | null;
+  simulated_at: string;
+}
+
+export interface ScenarioEntry {
+  id: string;
+  scenario: Scenario;
+  result: ScenarioResult | null;
+  playback: boolean;
+}
+
+export interface ShowTransition {
+  index: number;
+  from_keyframe: string;
+  to_keyframe: string;
+  start_time_sec: number;
+  end_time_sec: number;
+}
+
+export interface ConditionsInfo {
+  show: {
+    duration_sec: number;
+    keyframes: string[];
+    transitions: ShowTransition[];
+    legs: { takeoff?: { start_time_sec: number; end_time_sec: number } | null; return?: { start_time_sec: number; end_time_sec: number } | null };
+  };
+  scenarios: ScenarioEntry[];
+  defaults: { rain_rule: RainRule; rtk_states: RtkState[]; limits: Record<string, [number, number]> };
 }
 
 /** One formation's return path in stage2/returns/index.json. */
@@ -352,7 +453,11 @@ export type BridgeEvent =
   | { type: "config"; fields: ConfigField[]; overrides: Overrides; warnings: ConfigWarning[] }
   | { type: "config_warnings"; warnings: ConfigWarning[] }
   | ({ type: "return_result" } & ReturnEntry)
-  | { type: "error"; code: string; message: string }
+  | ({ type: "conditions" } & ConditionsInfo)
+  | { type: "scenario_saved"; id: string; scenario: Scenario }
+  | { type: "scenario_deleted"; id: string }
+  | { type: "sim_result"; id: string; result: ScenarioResult }
+  | { type: "error"; code: string; message: string; errors?: string[] }
   | { type: "done"; status: RunStatus; exit_code: number }
   | { type: "stdout"; line: string };
 

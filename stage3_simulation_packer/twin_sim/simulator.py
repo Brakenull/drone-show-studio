@@ -22,15 +22,19 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 import pyopencl as cl
 
-from . import physics
+from . import physics, weather
 from .devices import DeviceInfo, select_device
 from .loaders.arrow_loader import ShowTrajectories
 from .loaders.spline_evaluator import PiecewiseTrajectories, build_piecewise, evaluate_numpy
 from .profile import DroneProfile
+
+if TYPE_CHECKING:
+    from .weather import WeatherTable
 
 CONTROL_RATE_HZ = 200.0
 GNSS_CORRELATION_TIME_S = 60.0
@@ -66,6 +70,17 @@ class Disturbances:
     gnss_noise_m: float
     gnss_drift_m_per_sqrt_s: float
     initial_position_error_m: float
+    # Condition simulator (docs/4-condition_simulator.md B6). `gusts`: (G, 9) gust fronts (peak vector
+    # xyz, sweep direction xyz, start, duration, speed) replacing the single gust above. `weather`: a
+    # timeline that replaces the constant mean wind and GNSS values and scales the turbulence modes.
+    gusts: np.ndarray | None = None
+    weather: "WeatherTable | None" = None
+
+    def gust_rows(self) -> np.ndarray:
+        if self.gusts is not None:
+            return np.asarray(self.gusts, float).reshape(-1, 9)
+        return np.concatenate([self.gust_vec, self.gust_dir,
+                               [self.gust_start, self.gust_duration, self.gust_speed]]).reshape(1, 9)
 
     @classmethod
     def nominal(cls, profile: DroneProfile, fleet_size: int, seed: int = 0, ambient_c: float = 25.0) -> "Disturbances":
@@ -101,7 +116,7 @@ class Disturbances:
 class SimConfig:
     dt: float = 1.0 / CONTROL_RATE_HZ
     tail_sec: float = 0.0          # keep simulating after the show ends (settling)
-    record_hz: float = 0.0         # >0: record positions at this rate (single scenario only)
+    record_hz: float = 0.0         # >0: record positions at this rate from t = 0 (single scenario only)
 
 
 @dataclass
@@ -137,7 +152,7 @@ KERNEL_FILES = ("common.cl", "references.cl", "grid.cl", "aerodynamics.cl", "bat
 GRID_CELL_M = PROXIMITY_RADIUS_M  # neighbour-grid cell size
 GRID_G = 16                       # cells per axis before the grid wraps (power of two)
 SCAN_WG = 256                     # work-group size of grid_scan; divides GRID_G ** 3
-RP_MODES = 20                     # first turbulence-mode slot in the per-run block (common.cl)
+RP_MODES = 12                     # first turbulence-mode slot in the per-run block (common.cl)
 LOCAL_SIZE = 64                   # global sizes are padded to a multiple of this
 
 
@@ -211,16 +226,18 @@ class DigitalTwin:
         self.color_t = self._buffer((pw.color_t - origin).astype(f32), True)
         self.color_rgb = self._buffer(vec4(pw.color_rgb), True)
 
-    def _program(self, runs: int, dt: float, max_modes: int) -> dict[str, cl.Kernel]:
-        """Kernels for this batch size / dt / wind-mode count, built once and cached."""
-        key = (runs, dt, max_modes)
+    def _program(self, runs: int, dt: float, max_modes: int, max_gusts: int = 1) -> dict[str, cl.Kernel]:
+        """Kernels for this batch size / dt / wind-mode / gust count, built once and cached."""
+        key = (runs, dt, max_modes, max_gusts)
         if key in self._kernels:
             return self._kernels[key]
         p = self.profile
         defines = {name: _c_float(value) for name, value in physics.kernel_defines().items()}
         defines.update({
             "N_DRONES": str(self.n), "N_RUNS": str(runs), "N_COEF": str(self.pw.n_coef),
-            "RUN_STRIDE": str(RP_MODES + 8 * max_modes),
+            "RUN_STRIDE": str(RP_MODES + 8 * max_modes + 9 * max_gusts),
+            "RP_GUSTS": str(RP_MODES + 8 * max_modes),
+            "WX_STRIDE": str(weather.WX_STRIDE), "WX_HZ": _c_float(weather.TABLE_HZ),
             "GRID_G": str(GRID_G), "INV_CELL": _c_float(1.0 / GRID_CELL_M), "SCAN_WG": str(SCAN_WG),
             "DT": _c_float(dt), "GROUND_Z": _c_float(self.ground_z),
             "PROX_R": _c_float(PROXIMITY_RADIUS_M), "WAKE_DEPTH": _c_float(self.wake_depth),
@@ -264,28 +281,37 @@ class DigitalTwin:
         return kernels
 
     @staticmethod
-    def _run_params(dists: list[Disturbances], max_modes: int) -> np.ndarray:
-        """Per-run parameter blocks, laid out as in common.cl (RP_*)."""
-        out = np.zeros((len(dists), RP_MODES + 8 * max_modes), np.float32)
+    def _run_params(dists: list[Disturbances], max_modes: int, max_gusts: int) -> tuple[np.ndarray, np.ndarray]:
+        """Per-run parameter blocks, laid out as in common.cl (RP_*), and the weather rows of every
+        run that has a timeline, concatenated (one dummy row when none has)."""
+        out = np.zeros((len(dists), RP_MODES + 8 * max_modes + 9 * max_gusts), np.float32)
+        tables: list[np.ndarray] = []
+        first = 0
         for row, d in zip(out, dists):
             row[0] = d.ambient_c
             row[1] = d.gnss_noise_m
             row[2] = d.gnss_drift_m_per_sqrt_s
             row[3] = d.initial_position_error_m
             row[4:7] = d.mean_wind
-            row[7:10] = d.gust_vec
-            row[10:13] = d.gust_dir
-            row[13] = d.gust_start
-            row[14] = d.gust_duration
-            row[15] = d.gust_speed
             m = d.mode_amp.shape[0]
-            row[16] = m
+            row[7] = m
             modes = row[RP_MODES:RP_MODES + 8 * m].reshape(m, 8)
             modes[:, 0:3] = d.mode_amp
             modes[:, 3:6] = d.mode_k
             modes[:, 6] = d.mode_omega
             modes[:, 7] = d.mode_phase
-        return out.reshape(-1)
+            gusts = d.gust_rows()
+            row[8] = gusts.shape[0]
+            base = RP_MODES + 8 * max_modes
+            row[base:base + 9 * gusts.shape[0]] = gusts.reshape(-1)
+            if d.weather is not None:
+                if d.weather.hz != weather.TABLE_HZ:
+                    raise ValueError(f"weather tables must be sampled at {weather.TABLE_HZ} Hz")
+                row[9], row[10] = first, d.weather.rows.shape[0]
+                tables.append(d.weather.rows)
+                first += d.weather.rows.shape[0]
+        rows = np.concatenate(tables) if tables else np.zeros((1, weather.WX_STRIDE))
+        return out.reshape(-1), rows.astype(np.float32).reshape(-1)
 
     # ------------------------------------------------------------------ #
 
@@ -321,14 +347,18 @@ class DigitalTwin:
             cl.enqueue_copy(self.queue, array, buf)
         return host[0][:, :3], host[1][:, :3], host[2][:, :3], host[3]
 
-    def run(self, dist: Disturbances, config: SimConfig | None = None) -> SimResult:
-        return self.run_batch([dist], config)[0]
+    def run(self, dist: Disturbances, config: SimConfig | None = None,
+            on_progress: Callable[[float], None] | None = None) -> SimResult:
+        return self.run_batch([dist], config, on_progress)[0]
 
-    def run_batch(self, dists: list[Disturbances], config: SimConfig | None = None) -> list[SimResult]:
+    def run_batch(self, dists: list[Disturbances], config: SimConfig | None = None,
+                  on_progress: Callable[[float], None] | None = None) -> list[SimResult]:
         """Simulate every scenario in `dists` together; one SimResult per scenario, in order.
 
         Each result reports the batch's wall time divided by the batch size.
-        Recording (`config.record_hz`) needs a single scenario.
+        Recording (`config.record_hz`) needs a single scenario: the state at t = 0 and then every
+        1 / record_hz seconds, plus the final state. `on_progress(fraction)` is called about once per
+        simulated second (after the device has caught up, so it is a true fraction).
         """
         config = config or SimConfig()
         runs, n = len(dists), self.n
@@ -338,7 +368,8 @@ class DigitalTwin:
         if config.record_hz > 0 and runs != 1:
             raise ValueError("record_hz needs a single scenario")
         max_modes = max(1, max(d.mode_amp.shape[0] for d in dists))
-        kernels = self._program(runs, float(config.dt), max_modes)
+        max_gusts = max(1, max(d.gust_rows().shape[0] for d in dists))
+        kernels = self._program(runs, float(config.dt), max_modes, max_gusts)
         q, f32, i32 = self.queue, np.float32, np.int32
 
         def per_run(attr: str) -> np.ndarray:
@@ -351,7 +382,9 @@ class DigitalTwin:
             return self._buffer(np.full(rn, value, dtype))
 
         seeds = self._buffer(np.array([int(d.seed) & 0x3FFFFFFF for d in dists], np.uint32), True)
-        runp = self._buffer(self._run_params(dists, max_modes), True)
+        run_params, weather_rows = self._run_params(dists, max_modes, max_gusts)
+        runp = self._buffer(run_params, True)
+        weather_buf = self._buffer(weather_rows, True)
         mass, max_thrust, motor_tau, drag_cd, capacity, r_int = (
             self._buffer(per_run(a), True) for a in
             ("mass_kg", "max_thrust_n", "motor_tau_s", "drag_cd", "capacity_ah", "internal_resistance_ohm"))
@@ -399,7 +432,7 @@ class DigitalTwin:
         k_aero.set_args(f32(0.0), pos, quat, total_thrust, hover_thrust, starts, sorted_ids,
                         lift, downwash, min_sep, min_sep_partner, min_sep_time)
         k_step = kernels["step_dynamics"]
-        k_step.set_args(f32(0.0), i32(0), seeds, runp, ref_p, ref_v, ref_a, led, lift, downwash,
+        k_step.set_args(f32(0.0), i32(0), seeds, runp, weather_buf, ref_p, ref_v, ref_a, led, lift, downwash,
                         mass, max_thrust, motor_tau, drag_cd, capacity, r_int,
                         pos, vel, quat, omega, thrust, vel_int, gnss_bias, armed, total_thrust,
                         soc, soc_comp, temp, voltage, low_timer, brownout, max_track, min_volt, brown_t)
@@ -416,12 +449,23 @@ class DigitalTwin:
         enqueue(q, k_init, g_rn, local)
 
         record_every = int(round(1.0 / (config.record_hz * config.dt))) if config.record_hz > 0 else 0
+        progress_every = max(1, int(round(1.0 / config.dt)))
         rec_t, rec_p = [], []
         host_pos = np.empty((rn, 4), f32)
+
+        def record(k: int) -> None:
+            cl.enqueue_copy(q, host_pos, pos)
+            rec_t.append(k * config.dt)
+            rec_p.append(host_pos[:, :3].copy())     # float32: long recordings of big fleets
 
         q.finish()
         wall_start = time.perf_counter()
         for k in range(steps):
+            if record_every and k % record_every == 0:
+                record(k)     # the state at t = k * dt, before step k
+            if on_progress and k and k % progress_every == 0:
+                q.finish()
+                on_progress(k / steps)
             t_rel = f32(k * config.dt)
             k_ref.set_arg(0, t_rel)
             enqueue(q, k_ref, g_n, local)
@@ -434,13 +478,13 @@ class DigitalTwin:
             k_step.set_arg(0, t_rel)
             k_step.set_arg(1, i32(k))
             enqueue(q, k_step, g_rn, local)
-            if record_every and k % record_every == 0:
-                cl.enqueue_copy(q, host_pos, pos)
-                rec_t.append(k * config.dt + config.dt)
-                rec_p.append(host_pos[:, :3].astype(np.float64))
-            elif k % 64 == 63:
+            if k % 64 == 63:
                 q.flush()
+        if record_every and (not rec_t or rec_t[-1] < steps * config.dt - 1e-9):
+            record(steps)     # the final state
         q.finish()
+        if on_progress:
+            on_progress(1.0)
         wall = time.perf_counter() - wall_start
 
         def read(buf: cl.Buffer, dtype=f32, width: int = 1) -> np.ndarray:

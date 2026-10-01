@@ -14,6 +14,7 @@ export interface ReplayViolation {
 
 export interface ReplayHeader {
   fleet_size: number;
+  files?: { positions: string; colors: string; separation: string; reference?: string };
   fps: number;
   frames: number;
   t0: number;
@@ -48,7 +49,33 @@ export interface ReplayHeader {
       duration_sec: number;
       method: "planned" | "reversed_takeoff";
     };
+    /** A condition-simulator flight (docs/4-condition_simulator.md §6): the weather to draw. */
+    simulation?: SimWeather;
   };
+}
+
+/** The scenario's weather sampled at `hz` from t = 0 (tools/studio_bridge/conditions_job.py). */
+export interface SimWeather {
+  hz: number;
+  speed_mps: number[];
+  from_deg: number[];
+  turbulence: number[];
+  rain_mm_h: number[];
+  rtk: number[];
+  rtk_states: string[];
+  gusts: {
+    t: number;
+    /** When the front passes the ENU origin; it reaches the field centre at `t`. */
+    start_sec: number;
+    duration_s: number;
+    peak_mps: number;
+    from_deg: number;
+    speed_mps: number;
+    /** Unit direction the front moves in (ENU x, y). */
+    dir: [number, number];
+  }[];
+  field_center: [number, number];
+  rain_rule: { alert_mm_h: number; limit_mm_h: number; reaction_s: number; margin_s: number };
 }
 
 export interface Separation {
@@ -59,6 +86,9 @@ export interface Separation {
   worst: { frame: number; time_sec: number; distance_m: number | null; a: number; b: number };
   crash_m: number;
   sampled_fps: number;
+  /** Simulated flights only: per frame, the largest gap between a drone and its planned position. */
+  deviation_m?: number[];
+  deviation_drone?: number[];
 }
 
 export interface ReplayData {
@@ -66,6 +96,8 @@ export interface ReplayData {
   separation: Separation;
   positions: Float32Array; // frames x n x 3, ENU metres
   colors: Uint8Array; // frames x n x 3
+  /** Simulated flights only: planned positions at the same frames. */
+  reference?: Float32Array;
 }
 
 /** A moment to jump to, e.g. a violation picked in the Stage 2 failure panel. */

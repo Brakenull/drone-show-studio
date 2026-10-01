@@ -4,6 +4,15 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 
 ## [Unreleased]
 
+### Added
+
+#### Condition simulator — weather scenarios (desktop app, `twin_sim`)
+
+- **Conditions tab:** write the weather for a show as a timeline (wind speed, direction and turbulence; gust fronts; RTK quality: fixed, float or GPS only; rain), all free to change during the show. Lanes are aligned with the show's formations; click to add a key, drag to move it, and set exact values beside the timeline. Scenarios are saved with the run; New, Duplicate and Delete.
+- **Simulate a scenario:** the whole show is flown once through the digital twin under the timeline, with progress and Cancel, and judged like the stress test (no pair under 0.5 m, every drone lands with at least 15 % battery). The result gives the closest approach, the largest deviation from plan and the lowest battery, each linked to its moment in the playback, and says when the rain reaches its alert and limit levels. Rain does not yet trigger the return to the holding area.
+- **Playback with weather:** each drone's planned position next to its simulated one (a red line when they are more than 0.5 m apart), wind streaks, rain, gust fronts sweeping across the field, a heads-up display of wind, rain and RTK, and the largest deviation from plan as a second line on the timeline strip.
+- **Digital twin:** time-varying wind, turbulence and RTK quality and any number of gust fronts (`twin_sim/weather.py`), and a scenario runner with recording for playback (`twin_sim/scenario_runner.py`, also a command-line tool). Stress-test results are unchanged.
+
 ## [1.1.0] — 2026-09-30
 
 Real shows now plan end to end. Both real test shows, 150 and 200 drones, plan with every transition passing the safety check on its first attempt: the path planner was reworked to judge its paths the way the safety check does, to start from flyable paths, and to stop setting up drones to cross where it can't adjust their paths. The Blender add-on gains takeoff and return legs, a ground level and holding-area safety checks, and the digital twin now runs on any GPU (OpenCL instead of NVIDIA Warp).

@@ -189,6 +189,30 @@ def cmd_pack(args: argparse.Namespace) -> int:
     return run_pack_job(Path(args.run_dir))
 
 
+def cmd_conditions(args: argparse.Namespace) -> int:
+    from .conditions_job import run_conditions
+
+    return run_conditions(Path(args.run_dir))
+
+
+def cmd_scenario_save(args: argparse.Namespace) -> int:
+    from .conditions_job import save_scenario
+
+    return save_scenario(Path(args.run_dir), args.json, args.id)
+
+
+def cmd_scenario_delete(args: argparse.Namespace) -> int:
+    from .conditions_job import delete_scenario
+
+    return delete_scenario(Path(args.run_dir), args.id)
+
+
+def cmd_simulate(args: argparse.Namespace) -> int:
+    from .conditions_job import run_simulate
+
+    return run_simulate(Path(args.run_dir), args.scenario, args.device)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="studio_bridge", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -237,6 +261,23 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("pack")
     p.add_argument("run_dir")
     p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("conditions", help="The show's timing and the run's weather scenarios")
+    p.add_argument("run_dir")
+    p.set_defaults(fn=cmd_conditions)
+    p = sub.add_parser("scenario-save", help="Create (no --id) or replace a weather scenario")
+    p.add_argument("run_dir")
+    p.add_argument("--json", required=True, help="The scenario (docs/4-condition_simulator.md section 3.1)")
+    p.add_argument("--id", default=None, help="The scenario to replace")
+    p.set_defaults(fn=cmd_scenario_save)
+    p = sub.add_parser("scenario-delete")
+    p.add_argument("run_dir")
+    p.add_argument("--id", required=True)
+    p.set_defaults(fn=cmd_scenario_delete)
+    p = sub.add_parser("simulate", help="Fly a weather scenario through the digital twin")
+    p.add_argument("run_dir")
+    p.add_argument("--scenario", required=True, help="The scenario's id (its folder name)")
+    p.add_argument("--device", default="auto", help="OpenCL device: auto (first GPU), gpu, cpu or opencl:P:D")
+    p.set_defaults(fn=cmd_simulate)
     args = parser.parse_args(argv)
     reserve_stdout()
     try:

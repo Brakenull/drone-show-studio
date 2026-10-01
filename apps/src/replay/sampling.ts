@@ -23,17 +23,26 @@ export function nearestFrame(times: number[], t: number): number {
   return frac > 0.5 && k + 1 < times.length ? k + 1 : k;
 }
 
-export function positionAt(data: ReplayData, drone: number, t: number, out: V3 = [0, 0, 0]): V3 {
+function sampleFrames(data: ReplayData, frames: Float32Array, drone: number, t: number, out: V3): V3 {
   const { k, frac } = locate(data.separation.times, t);
   const n = data.header.fleet_size;
   const i0 = (k * n + drone) * 3;
   const k1 = Math.min(k + 1, data.header.frames - 1);
   const i1 = (k1 * n + drone) * 3;
-  const p = data.positions;
+  const p = frames;
   out[0] = p[i0] + (p[i1] - p[i0]) * frac;
   out[1] = p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * frac;
   out[2] = p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * frac;
   return out;
+}
+
+export function positionAt(data: ReplayData, drone: number, t: number, out: V3 = [0, 0, 0]): V3 {
+  return sampleFrames(data, data.positions, drone, t, out);
+}
+
+/** Planned position of a drone in a simulated flight (the flown one when there is no plan). */
+export function referenceAt(data: ReplayData, drone: number, t: number, out: V3 = [0, 0, 0]): V3 {
+  return sampleFrames(data, data.reference ?? data.positions, drone, t, out);
 }
 
 export function distanceAt(data: ReplayData, a: number, b: number, t: number): number {

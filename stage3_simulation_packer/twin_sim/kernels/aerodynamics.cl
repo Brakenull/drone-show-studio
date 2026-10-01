@@ -1,17 +1,34 @@
 // Wind field + fast downwash proxy (docs/3-phase-3.md §3.2); model in physics.py.
 
-inline float3 wind_at(__global const float* rp, float3 p, float t) {
+// Mean wind + turbulence modes + gust fronts. With a weather table the mean wind, the turbulence
+// scale and the distance the modes have been carried come from it; without one (Monte Carlo) they are
+// the run's constants, the scale is 1 and the modes move with time (omega already includes the speed).
+inline float3 wind_at(__global const float* rp, __global const float* weather, float3 p, float t) {
     float3 w = vload3(0, rp + RP_MEAN);
+    float scale = 1.0f;
+    float carried = t;
+    if (rp[RP_WX_ROWS] > 0.5f) {
+        __global const float* a;
+        __global const float* b;
+        float f = wx_locate(rp, weather, t, &a, &b);
+        w = vload3(0, a + WX_WIND) + (vload3(0, b + WX_WIND) - vload3(0, a + WX_WIND)) * f;
+        scale = a[WX_TURB] + (b[WX_TURB] - a[WX_TURB]) * f;
+        carried = a[WX_ADVECT] + (b[WX_ADVECT] - a[WX_ADVECT]) * f;
+    }
     int nm = (int)rp[RP_NMODES];
     for (int m = 0; m < nm; ++m) {
         __global const float* md = rp + RP_MODES + m * 8;
-        w += vload3(0, md) * sin(dot(vload3(0, md + 3), p) - md[6] * t + md[7]);
+        w += vload3(0, md) * (scale * sin(dot(vload3(0, md + 3), p) - md[6] * carried + md[7]));
     }
-    float dur = rp[RP_GUST_DUR];
-    if (dur > 0.0f) {
-        float local_t = t - rp[RP_GUST_START] - dot(p, vload3(0, rp + RP_GUST_DIR)) / fmax(rp[RP_GUST_SPEED], 0.1f);
-        if (local_t > 0.0f && local_t < dur)
-            w += vload3(0, rp + RP_GUST_VEC) * (0.5f * (1.0f - cos(2.0f * PI_F * local_t / dur)));
+    int ng = (int)rp[RP_NGUSTS];
+    for (int g = 0; g < ng; ++g) {
+        __global const float* gd = rp + RP_GUSTS + g * 9;
+        float dur = gd[7];
+        if (dur > 0.0f) {
+            float local_t = t - gd[6] - dot(p, vload3(0, gd + 3)) / fmax(gd[8], 0.1f);
+            if (local_t > 0.0f && local_t < dur)
+                w += vload3(0, gd) * (0.5f * (1.0f - cos(2.0f * PI_F * local_t / dur)));
+        }
     }
     return w;
 }

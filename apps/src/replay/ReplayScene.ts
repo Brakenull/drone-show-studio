@@ -4,8 +4,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
-import { locate, positionAt } from "./sampling";
+import { locate, positionAt, referenceAt } from "./sampling";
 import type { ReplayData, V3 } from "./types";
+import { WeatherLayer } from "./WeatherLayer";
 
 const NIGHT = 0x0f0f0f;
 const GRID_MAJOR = 0x2d2d2d;
@@ -14,6 +15,8 @@ const PAD = 0x4a4a4a;
 const AMBER = 0xffa34d; // SkySync primary: selection and the closest pair
 const RED = 0xef4444;
 const LED_OFF = new THREE.Color(0x5c5c5c); // drone body when its LEDs are dark
+const PLANNED = 0x8a8a8a; // a simulated drone's planned position
+const GAP_M = 0.5; // a simulated drone this far from its plan gets a red line to it
 
 const toThree = (p: V3, out = new THREE.Vector3()) => out.set(p[0], p[2], -p[1]);
 
@@ -39,6 +42,11 @@ export class ReplayScene {
   private color = new THREE.Color();
   private p: V3 = [0, 0, 0];
   private rightInset = 0; // px covered by an overlay panel; the view centres on the rest
+  // Simulated flights (docs/4-condition_simulator.md §6): planned positions, gaps to them, weather.
+  private planned: THREE.Points | null = null;
+  private gaps: THREE.LineSegments | null = null;
+  private weather: WeatherLayer | null = null;
+  private q: V3 = [0, 0, 0];
 
   constructor(
     private container: HTMLElement,
@@ -98,6 +106,7 @@ export class ReplayScene {
     this.dots.frustumCulled = false;
     this.scene.add(this.dots);
     this.addViolationMarkers();
+    this.addSimulation();
 
     this.pairLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
@@ -181,6 +190,58 @@ export class ReplayScene {
     this.scene.add(this.markers);
   }
 
+  private addSimulation() {
+    const { header } = this.data;
+    const n = header.fleet_size;
+    if (this.data.reference) {
+      this.planned = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3)),
+        new THREE.PointsMaterial({
+          color: PLANNED,
+          size: 5,
+          sizeAttenuation: false,
+          map: roundDot(),
+          transparent: true,
+          opacity: 0.6,
+          alphaTest: 0.3,
+        }),
+      );
+      this.planned.frustumCulled = false;
+      this.scene.add(this.planned);
+      const gapGeometry = new THREE.BufferGeometry();
+      gapGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 6), 3));
+      gapGeometry.setDrawRange(0, 0);
+      this.gaps = new THREE.LineSegments(gapGeometry, new THREE.LineBasicMaterial({ color: RED }));
+      this.gaps.frustumCulled = false;
+      this.scene.add(this.gaps);
+    }
+    if (header.overlays.simulation) {
+      this.weather = new WeatherLayer(header.overlays.simulation, header);
+      this.scene.add(this.weather.group);
+    }
+  }
+
+  private updateSimulation() {
+    this.weather?.update(this.time);
+    if (!this.planned || !this.gaps) return;
+    const n = this.data.header.fleet_size;
+    const planned = this.planned.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const gapPos = (this.gaps.geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
+    let gaps = 0;
+    for (let i = 0; i < n; i++) {
+      const r = referenceAt(this.data, i, this.time, this.q);
+      planned.setXYZ(i, r[0], r[2], -r[1]);
+      const p = positionAt(this.data, i, this.time, this.p);
+      if (Math.hypot(p[0] - r[0], p[1] - r[1], p[2] - r[2]) > GAP_M) {
+        gapPos.set([p[0], p[2], -p[1], r[0], r[2], -r[1]], gaps * 6);
+        gaps++;
+      }
+    }
+    planned.needsUpdate = true;
+    this.gaps.geometry.setDrawRange(0, gaps * 2);
+    this.gaps.geometry.getAttribute("position").needsUpdate = true;
+  }
+
   frameAll() {
     const { bounds_min: lo, bounds_max: hi } = this.data.header;
     const center = toThree([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]);
@@ -262,6 +323,7 @@ export class ReplayScene {
     this.cores.instanceColor!.needsUpdate = true;
     this.halos.instanceColor!.needsUpdate = true;
     this.updatePair();
+    this.updateSimulation();
     this.requestRender();
   }
 

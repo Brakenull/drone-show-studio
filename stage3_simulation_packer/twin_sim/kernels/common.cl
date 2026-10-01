@@ -22,13 +22,43 @@
 #define RP_GNSS_DRIFT 2
 #define RP_INIT_ERR 3
 #define RP_MEAN 4
-#define RP_GUST_VEC 7
-#define RP_GUST_DIR 10
-#define RP_GUST_START 13
-#define RP_GUST_DUR 14
-#define RP_GUST_SPEED 15
-#define RP_NMODES 16
-#define RP_MODES 20          // 8 floats per turbulence mode: amp xyz, k xyz, omega, phase
+#define RP_NMODES 7
+#define RP_NGUSTS 8
+#define RP_WX_FIRST 9        // first row of this run's weather table in `weather`
+#define RP_WX_ROWS 10        // 0: constant weather, the values above
+#define RP_MODES 12          // 8 floats per turbulence mode: amp xyz, k xyz, omega, phase
+// RP_GUSTS (= RP_MODES + 8 * max modes) is defined by the host: 9 floats per gust front:
+// peak vector xyz, sweep direction xyz, start, duration, sweep speed.
+
+// Weather table (twin_sim/weather.py, docs/4-condition_simulator.md B6): rows of WX_STRIDE
+// floats at WX_HZ over show time. Wind columns are interpolated, RTK columns step.
+#define WX_WIND 0
+#define WX_TURB 3
+#define WX_ADVECT 4
+#define WX_GNSS_NOISE 5
+#define WX_GNSS_DRIFT 6
+
+// Rows a and b around time t and the blend fraction between them.
+inline float wx_locate(__global const float* rp, __global const float* weather, float t,
+                       __global const float** a, __global const float** b) {
+    int rows = (int)rp[RP_WX_ROWS];
+    __global const float* base = weather + (int)rp[RP_WX_FIRST] * WX_STRIDE;
+    float x = fmax(t * WX_HZ, 0.0f);
+    int i0 = min((int)floor(x), rows - 1);
+    int i1 = min(i0 + 1, rows - 1);
+    *a = base + i0 * WX_STRIDE;
+    *b = base + i1 * WX_STRIDE;
+    return clamp(x - (float)i0, 0.0f, 1.0f);
+}
+
+// A GNSS parameter (RP_GNSS_NOISE / RP_GNSS_DRIFT, or its WX_ column) at time t.
+inline float gnss_param(__global const float* rp, __global const float* weather, float t, int rp_index, int column) {
+    if (rp[RP_WX_ROWS] < 0.5f) return rp[rp_index];
+    __global const float* a;
+    __global const float* b;
+    wx_locate(rp, weather, t, &a, &b);
+    return a[column];
+}
 
 // ------------------------------------------------------------------ math --
 

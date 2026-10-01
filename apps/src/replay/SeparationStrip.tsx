@@ -10,9 +10,15 @@ interface Props {
   t0: number;
   t1: number;
   floor: number | null; // gatekeeper floor: below it Stage 2 rejects a show
+  /** Text after the floor value on its line (default "required"). */
+  floorLabel?: string;
   nominal: number | null; // min_distance_m from the Phase 1 file
   /** Shaded window: a rejected transition ("bad"), or a return path's flight home ("info"). */
   span: { start: number; end: number; label: string; tone?: "bad" | "info" } | null;
+  /** Simulated flights: per frame, the largest gap between a drone and its planned position (second line). */
+  deviation?: number[] | null;
+  /** Moments marked across the strip, e.g. when the rain reaches its alert and limit levels. */
+  marks?: { time: number; label: string; tone: "warn" | "bad" }[];
   onSeek: (t: number) => void;
 }
 
@@ -26,6 +32,8 @@ const COLORS = {
   span: "rgba(239, 68, 68, 0.07)",
   spanInfo: "rgba(0, 217, 255, 0.08)",
   playhead: "#ffa34d",
+  deviation: "#00d9ff",
+  warn: "#facc15",
 };
 
 const PAD = { left: 56, right: 16, top: 14, bottom: 22 };
@@ -36,7 +44,19 @@ function niceStep(span: number, target: number): number {
   return [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
 }
 
-export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span, onSeek }: Props) {
+export function SeparationStrip({
+  separation,
+  time,
+  t0,
+  t1,
+  floor,
+  floorLabel = "required",
+  nominal,
+  span,
+  deviation,
+  marks,
+  onSeek,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<number | null>(null);
@@ -118,6 +138,31 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
       ctx.stroke();
     }
 
+    if (deviation) {
+      ctx.strokeStyle = COLORS.deviation;
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      deviation.forEach((d, i) => (i ? ctx.lineTo(xOf(times[i]), yOf(d)) : ctx.moveTo(xOf(times[i]), yOf(d))));
+      ctx.stroke();
+    }
+
+    for (const m of marks ?? []) {
+      if (m.time < t0 || m.time > t1) continue;
+      const x = xOf(m.time);
+      ctx.strokeStyle = m.tone === "bad" ? COLORS.bad : COLORS.warn;
+      ctx.lineWidth = 1;
+      ctx.setLineDash(m.tone === "bad" ? [] : [3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, PAD.top);
+      ctx.lineTo(x, size.h - PAD.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(m.label, x + 4, PAD.top);
+    }
+
     if (floor !== null) {
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = COLORS.floor;
@@ -131,7 +176,7 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
       ctx.fillStyle = COLORS.floor;
       ctx.textAlign = "right";
       ctx.textBaseline = "bottom";
-      ctx.fillText(`${floor.toFixed(2)} m required`, size.w - PAD.right - 4, y - 3);
+      ctx.fillText(`${floor.toFixed(2)} m ${floorLabel}`, size.w - PAD.right - 4, y - 3);
     }
 
     const worst = separation.worst;
@@ -151,7 +196,7 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
     ctx.moveTo(px, PAD.top - 4);
     ctx.lineTo(px, size.h - PAD.bottom);
     ctx.stroke();
-  }, [size, separation, time, t0, t1, floor, yMax, span]);
+  }, [size, separation, time, t0, t1, floor, floorLabel, yMax, span, deviation, marks]);
 
   const readoutTime = hover ?? time;
   const k = nearestFrame(separation.times, readoutTime);
@@ -188,6 +233,13 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
             </span>
           )}
         </span>
+        {deviation && (
+          <span>
+            <span className="strip-key strip-key-deviation" aria-hidden="true" />
+            Furthest from plan <strong>{metres(deviation[k], 2)}</strong>
+            <span className="strip-pair"> drone {separation.deviation_drone?.[k]}</span>
+          </span>
+        )}
         {span && <span className={`strip-window ${span.tone === "info" ? "strip-window-info" : ""}`}>{span.label}</span>}
       </div>
       <canvas

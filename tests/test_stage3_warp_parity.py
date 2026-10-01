@@ -31,8 +31,10 @@ def test_matches_the_warp_reference():
     from stage3_simulation_packer.twin_sim.simulator import DigitalTwin, Disturbances, SimConfig
 
     ref = np.load(REFERENCE)
-    dist = Disturbances(**{f.name: ref[f"dist_{f.name}"][()] if ref[f"dist_{f.name}"].ndim == 0
-                           else ref[f"dist_{f.name}"] for f in dataclasses.fields(Disturbances)})
+    # Fields added after the recording (gusts, weather timeline) keep their defaults: the Monte Carlo path.
+    names = [f.name for f in dataclasses.fields(Disturbances) if f"dist_{f.name}" in ref]
+    dist = Disturbances(**{name: ref[f"dist_{name}"][()] if ref[f"dist_{name}"].ndim == 0
+                           else ref[f"dist_{name}"] for name in names})
     show = parse_contract_dict(json.loads(str(ref["contract_json"])))
     got = DigitalTwin(show, load_profile()).run(dist, SimConfig(tail_sec=1.0))
 

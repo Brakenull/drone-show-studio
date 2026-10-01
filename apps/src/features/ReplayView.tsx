@@ -14,22 +14,26 @@ const folder = (source: ReplaySource) =>
 
 const cache = new Map<string, { stamp: string; data: ReplayData }>();
 
-async function loadReplay(runId: string, dir: string): Promise<ReplayData | null> {
+/** A replay folder: the Stage 2 replay format, plus `reference.f32` for a simulated flight. */
+export async function loadReplay(runId: string, dir: string): Promise<ReplayData | null> {
   const header = await readRunJson<ReplayHeader>(runId, `${dir}/replay.json`);
   if (!header) return null;
-  const [separation, positions, colors] = await Promise.all([
+  const refFile = header.files?.reference;
+  const [separation, positions, colors, reference] = await Promise.all([
     readRunJson<Separation>(runId, `${dir}/separation.json`),
     readRunBytes(runId, `${dir}/positions.f32`),
     readRunBytes(runId, `${dir}/colors.u8`),
+    refFile ? readRunBytes(runId, `${dir}/${refFile}`) : Promise.resolve(null),
   ]);
   if (!separation) return null;
   const expected = header.frames * header.fleet_size * 3;
   const pos = new Float32Array(positions);
   const col = new Uint8Array(colors);
-  if (pos.length !== expected || col.length !== expected) {
+  const ref = reference ? new Float32Array(reference) : undefined;
+  if (pos.length !== expected || col.length !== expected || (ref && ref.length !== expected)) {
     throw new Error(`replay files don't match replay.json (${pos.length} values, expected ${expected}); rebuild it`);
   }
-  return { header, separation, positions: pos, colors: col };
+  return { header, separation, positions: pos, colors: col, reference: ref };
 }
 
 export function ReplayView({
