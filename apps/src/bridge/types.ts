@@ -87,6 +87,8 @@ export interface RunRecord {
 export interface ReturnEntry {
   keyframe_index: number;
   from_keyframe: string;
+  /** "reversed_takeoff": the first formation with staggered takeoff on, the takeoff flown backwards. */
+  method?: "planned" | "reversed_takeoff";
   status: RunStatus;
   message: string | null;
   abort_time_sec: number;
@@ -97,6 +99,8 @@ export interface ReturnEntry {
   worst_separation_m: number | null;
   required_separation_m?: number;
   wall_time_sec: number;
+  /** stage2/returns/replay_<k>/ was built (the show up to the formation, then the flight home). */
+  replay?: boolean;
 }
 
 export interface ReturnIndex {
@@ -232,6 +236,8 @@ export interface ValidationSummary {
     gatekeeper_floor_m: number | null;
   };
   first_formation_targets_in_holding_area: number;
+  /** Drones the first formation doesn't use, left parked on their holding slots (not an overlap). */
+  first_formation_parked?: number;
 }
 
 export interface Validation {

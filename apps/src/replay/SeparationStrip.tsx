@@ -11,7 +11,8 @@ interface Props {
   t1: number;
   floor: number | null; // gatekeeper floor: below it Stage 2 rejects a show
   nominal: number | null; // min_distance_m from the Phase 1 file
-  span: { start: number; end: number; label: string } | null; // rejected transition, shaded
+  /** Shaded window: a rejected transition ("bad"), or a return path's flight home ("info"). */
+  span: { start: number; end: number; label: string; tone?: "bad" | "info" } | null;
   onSeek: (t: number) => void;
 }
 
@@ -23,6 +24,7 @@ const COLORS = {
   bad: "#ef4444",
   floor: "#facc15",
   span: "rgba(239, 68, 68, 0.07)",
+  spanInfo: "rgba(0, 217, 255, 0.08)",
   playhead: "#ffa34d",
 };
 
@@ -73,7 +75,7 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
     ctx.textBaseline = "middle";
 
     if (span) {
-      ctx.fillStyle = COLORS.span;
+      ctx.fillStyle = span.tone === "info" ? COLORS.spanInfo : COLORS.span;
       const x0 = xOf(span.start);
       ctx.fillRect(x0, PAD.top, xOf(span.end) - x0, size.h - PAD.top - PAD.bottom);
     }
@@ -186,7 +188,7 @@ export function SeparationStrip({ separation, time, t0, t1, floor, nominal, span
             </span>
           )}
         </span>
-        {span && <span className="strip-window">{span.label}</span>}
+        {span && <span className={`strip-window ${span.tone === "info" ? "strip-window-info" : ""}`}>{span.label}</span>}
       </div>
       <canvas
         ref={canvasRef}

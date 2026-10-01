@@ -40,6 +40,14 @@ export interface ReplayHeader {
       worst_separation_m: number;
       violations: ReplayViolation[];
     };
+    /** A return path's replay: the show until abort_time_sec, then the flight home. */
+    return_path?: {
+      keyframe_index: number;
+      from_keyframe: string;
+      abort_time_sec: number;
+      duration_sec: number;
+      method: "planned" | "reversed_takeoff";
+    };
   };
 }
 

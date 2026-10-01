@@ -25,6 +25,8 @@ interface Props {
   onChanged: () => void;
   onFinished: (runId: string, exit: JobExit) => void;
   onShowInReplay: (time: number, drones: number[]) => void;
+  /** Open a return path's replay (the show up to that formation, then the flight home) at its abort time. */
+  onViewReturn: (keyframe: number, from: string, abortTime: number) => void;
   /** A copy of this run was made ("Try these settings in a new run"). */
   onCreated: (runId: string) => void;
 }
@@ -36,7 +38,7 @@ const PHASE_TEXT: Record<string, string> = {
   replay: "Preparing the 3D replay",
 };
 
-export function Stage2View({ run, runsDir, onChanged, onFinished, onShowInReplay, onCreated }: Props) {
+export function Stage2View({ run, runsDir, onChanged, onFinished, onShowInReplay, onViewReturn, onCreated }: Props) {
   const job = useStage2Job(run.run_id);
   const running = !!job && !job.exit;
   const status = running ? "running" : run.stage2.status;
@@ -111,6 +113,7 @@ export function Stage2View({ run, runsDir, onChanged, onFinished, onShowInReplay
           }
           onShowInReplay={onShowInReplay}
           onChanged={onChanged}
+          onViewReturn={onViewReturn}
         />
       )}
     </div>
@@ -213,9 +216,10 @@ interface OutcomeProps {
   controls: React.ReactNode;
   onShowInReplay: (time: number, drones: number[]) => void;
   onChanged: () => void;
+  onViewReturn: (keyframe: number, from: string, abortTime: number) => void;
 }
 
-function Outcome({ run, status, job, controls, onShowInReplay, onChanged }: OutcomeProps) {
+function Outcome({ run, status, job, controls, onShowInReplay, onChanged, onViewReturn }: OutcomeProps) {
   if (status === "not_run") {
     return (
       <section className="outcome">
@@ -245,7 +249,7 @@ function Outcome({ run, status, job, controls, onShowInReplay, onChanged }: Outc
     return (
       <>
         {note}
-        <Passed run={run} again={again} onChanged={onChanged} />
+        <Passed run={run} again={again} onChanged={onChanged} onViewReturn={onViewReturn} />
       </>
     );
   if (status === "failed_safety")
@@ -258,7 +262,17 @@ function Outcome({ run, status, job, controls, onShowInReplay, onChanged }: Outc
   return <Stopped run={run} status={status} job={job} again={again} />;
 }
 
-function Passed({ run, again, onChanged }: { run: RunRecord; again: React.ReactNode; onChanged: () => void }) {
+function Passed({
+  run,
+  again,
+  onChanged,
+  onViewReturn,
+}: {
+  run: RunRecord;
+  again: React.ReactNode;
+  onChanged: () => void;
+  onViewReturn: (keyframe: number, from: string, abortTime: number) => void;
+}) {
   const [sep, setSep] = useState<Separation | null>(null);
   useEffect(() => {
     readRunJson<Separation>(run.run_id, "stage2/replay/separation.json").then(setSep).catch(() => setSep(null));
@@ -284,7 +298,7 @@ function Passed({ run, again, onChanged }: { run: RunRecord; again: React.ReactN
           <dd>{duration(run.stage2.wall_time_sec)}</dd>
         </div>
       </dl>
-      <ReturnPaths run={run} onChanged={onChanged} />
+      <ReturnPaths run={run} onChanged={onChanged} onView={onViewReturn} />
       {again}
     </section>
   );

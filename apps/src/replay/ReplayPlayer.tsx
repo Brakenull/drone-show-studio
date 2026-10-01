@@ -109,13 +109,22 @@ export function ReplayPlayer({ data, focus, label }: Props) {
   const worst = separation.worst;
   const pair = highlight.length === 2 ? highlight : null;
   const pairDistance = pair ? distanceAt(data, pair[0], pair[1], time) : null;
+  const back = header.overlays.return_path;
   const span = failure
     ? {
         start: failure.transition.start_time_sec,
         end: failure.transition.start_time_sec + failure.transition.duration_sec,
         label: `Rejected: ${placeName(failure.transition.from_keyframe)} to ${placeName(failure.transition.to_keyframe)}`,
+        tone: "bad" as const,
       }
-    : null;
+    : back
+      ? {
+          start: back.abort_time_sec,
+          end: back.abort_time_sec + back.duration_sec,
+          label: `Flight home from ${back.from_keyframe}`,
+          tone: "info" as const,
+        }
+      : null;
 
   const seekTo = (t: number, drones: number[]) => {
     setPlaying(false);

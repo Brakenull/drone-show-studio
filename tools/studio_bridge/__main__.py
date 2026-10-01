@@ -168,6 +168,10 @@ def cmd_config(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
+    if args.return_from is not None:
+        from .returns_job import rebuild_return_replay
+
+        return rebuild_return_replay(Path(args.run_dir), args.return_from)
     from .stage2_job import rebuild_replay
 
     return rebuild_replay(Path(args.run_dir))
@@ -217,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_config)
     p = sub.add_parser("replay")
     p.add_argument("run_dir")
+    p.add_argument("--return", dest="return_from", type=int, default=None, metavar="K",
+                   help="Rebuild the replay of formation K's return path instead of the show's")
     p.set_defaults(fn=cmd_replay)
     p = sub.add_parser("monte_carlo")
     p.add_argument("run_dir")

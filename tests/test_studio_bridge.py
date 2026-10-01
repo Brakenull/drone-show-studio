@@ -92,6 +92,24 @@ def test_validate_warns_when_first_formation_overlaps_holding_area(tmp_path):
     assert any("inside the holding area" in w["message"] for w in validation["warnings"])
 
 
+def test_validate_does_not_warn_about_parked_drones(tmp_path):
+    # A target exactly on a holding slot is a drone the formation doesn't use, left parked (150_cone's
+    # Shape_1 has 55): not an overlap.
+    sys.path.insert(0, str(REPO))
+    from tools.studio_bridge.validate import holding_positions
+
+    data = build_phase1_json()
+    slots = holding_positions(data["project_metadata"])
+    data["keyframes"][0]["points"][0]["pos"] = slots[0].tolist()
+    data["keyframes"][0]["points"][0]["color"] = [0, 0, 0]
+    code, events = bridge("validate", str(write(tmp_path, "parked.json", data)))
+    assert code == 0
+    validation = first(events, "validation")
+    assert validation["summary"]["first_formation_targets_in_holding_area"] == 0
+    assert validation["summary"]["first_formation_parked"] == 1
+    assert not any("inside the holding area" in w["message"] for w in validation["warnings"])
+
+
 def test_new_run_copies_input_and_records_it(tmp_path):
     source = write(tmp_path, "demo.json", build_phase1_json())
     code, events = bridge("new-run", str(source), "--runs-dir", str(tmp_path / "runs"))

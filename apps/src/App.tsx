@@ -9,7 +9,7 @@ import { NewRun } from "./features/NewRun";
 import { InputView } from "./features/InputView";
 import { Stage2View } from "./features/Stage2View";
 import { Stage3View } from "./features/Stage3View";
-import { ReplayView } from "./features/ReplayView";
+import { ReplayView, type ReplaySource } from "./features/ReplayView";
 import { CompareView } from "./features/CompareView";
 import { SettingsView } from "./features/SettingsView";
 import type { ReplayFocus } from "./replay/types";
@@ -40,6 +40,7 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("stage2");
   const [focus, setFocus] = useState<ReplayFocus | null>(null);
+  const [replaySource, setReplaySource] = useState<ReplaySource>({ kind: "show" });
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -82,6 +83,7 @@ export default function App() {
     setView("run");
     setTab(nextTab);
     setFocus(null);
+    setReplaySource({ kind: "show" });
   }
 
   return (
@@ -151,7 +153,14 @@ export default function App() {
                     role="tab"
                     aria-selected={tab === t.id}
                     className={tab === t.id ? "is-current" : ""}
-                    onClick={() => setTab(t.id)}
+                    onClick={() => {
+                      // The Replay tab itself always opens the show; a return path is opened from Stage 2.
+                      if (t.id === "replay") {
+                        setReplaySource({ kind: "show" });
+                        setFocus(null);
+                      }
+                      setTab(t.id);
+                    }}
                   >
                     {t.label}
                   </button>
@@ -171,7 +180,13 @@ export default function App() {
                   onChanged={refreshRuns}
                   onFinished={() => void refreshRuns()}
                   onShowInReplay={(time, drones) => {
+                    setReplaySource({ kind: "show" });
                     setFocus({ time, drones, key: Date.now() });
+                    setTab("replay");
+                  }}
+                  onViewReturn={(keyframe, from, abortTime) => {
+                    setReplaySource({ kind: "return", keyframe, from });
+                    setFocus({ time: abortTime, drones: [], key: Date.now() });
                     setTab("replay");
                   }}
                 />
@@ -182,12 +197,23 @@ export default function App() {
                   devices={devices}
                   onFinished={() => void refreshRuns()}
                   onShowInReplay={(time, drones, note) => {
+                    setReplaySource({ kind: "show" });
                     setFocus({ time, drones, note, key: Date.now() });
                     setTab("replay");
                   }}
                 />
               )}
-              {tab === "replay" && <ReplayView run={run} focus={focus} />}
+              {tab === "replay" && (
+                <ReplayView
+                  run={run}
+                  focus={focus}
+                  source={replaySource}
+                  onShowPlayback={() => {
+                    setReplaySource({ kind: "show" });
+                    setFocus(null);
+                  }}
+                />
+              )}
               {tab === "compare" && <CompareView key={run.run_id} run={run} runs={runs} />}
             </div>
           </div>

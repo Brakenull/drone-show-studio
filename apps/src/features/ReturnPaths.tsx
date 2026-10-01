@@ -1,8 +1,8 @@
 // "Return paths" on a passed Stage 2 run (docs/4-condition_simulator.md B4, §6): plan, after the show
 // passed, a checked flight from each formation straight back to the holding area.
 
-import { useEffect, useState } from "react";
-import { readRunJson } from "../bridge/api";
+import { useEffect, useRef, useState } from "react";
+import { readRunJson, readRunText, runJob } from "../bridge/api";
 import type { JobExit, ReturnEntry, ReturnIndex, RunRecord } from "../bridge/types";
 import { cancelReturns, startReturns, useReturnsJob, type ReturnsJob } from "../app/returnsJobs";
 import { solveFraction } from "../app/stage2Jobs";
@@ -12,6 +12,8 @@ import { formatTime, metres } from "../replay/sampling";
 interface Props {
   run: RunRecord;
   onChanged: () => void;
+  /** Open the replay of a planned return at its abort time. */
+  onView: (keyframe: number, from: string, abortTime: number) => void;
 }
 
 interface Phase1Head {
@@ -24,13 +26,18 @@ const ROW_STATUS: Record<string, string> = {
   failed_error: "Error",
 };
 
-export function ReturnPaths({ run, onChanged }: Props) {
+export function ReturnPaths({ run, onChanged, onView }: Props) {
   const job = useReturnsJob(run.run_id);
   const running = !!job && !job.exit;
   const [index, setIndex] = useState<ReturnIndex | null>(null);
   const [hasReturnLeg, setHasReturnLeg] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const section = run.stage2_returns;
+  /** Formations whose 3D view (stage2/returns/replay_<k>/) exists on disk. */
+  const [built, setBuilt] = useState<Set<number> | null>(null);
+  const [replayCheck, setReplayCheck] = useState(0);
+  /** The planned return whose missing 3D view the dialog offers to build. */
+  const [toBuild, setToBuild] = useState<{ keyframe: number; from: string; abortTime: number } | null>(null);
 
   useEffect(() => {
     readRunJson<Phase1Head>(run.run_id, "input/phase1.json")
@@ -42,6 +49,23 @@ export function ReturnPaths({ run, onChanged }: Props) {
       .then((i) => setIndex(i && i.stage2_ended_at === run.stage2.ended_at ? i : null))
       .catch(() => setIndex(null));
   }, [run.run_id, run.stage2.ended_at, section?.ended_at, job?.results.length]);
+
+  useEffect(() => {
+    const planned = (index?.returns ?? []).filter((e) => e.status === "succeeded").map((e) => e.keyframe_index);
+    let live = true;
+    Promise.all(
+      planned.map((k) =>
+        readRunText(run.run_id, `stage2/returns/replay_${k}/replay.json`)
+          .then((text) => (text !== null ? k : null))
+          .catch(() => null),
+      ),
+    ).then((found) => {
+      if (live) setBuilt(new Set(found.filter((k): k is number => k !== null)));
+    });
+    return () => {
+      live = false;
+    };
+  }, [run.run_id, index, replayCheck]);
 
   const names = run.input.keyframes;
   const byFormation = new Map<number, ReturnEntry>((index?.returns ?? []).map((e) => [e.keyframe_index, e]));
@@ -62,7 +86,8 @@ export function ReturnPaths({ run, onChanged }: Props) {
       <p className="muted">
         If the show has to stop, for example when rain starts, the drones fly from the formation they are at
         straight back to the holding area. Plan these flights now and each one is checked like the show itself.
-        Each takes about as long to plan as one transition of the show.
+        Each takes about as long to plan as one transition of the show. With staggered takeoff the drones stop at
+        the first formation, so its flight home is simply the takeoff flown backwards.
       </p>
 
       <table className="table">
@@ -73,6 +98,7 @@ export function ReturnPaths({ run, onChanged }: Props) {
             <th scope="col" className="num">Flight home</th>
             <th scope="col" className="num">Closest</th>
             <th scope="col">Status</th>
+            <th scope="col">3D view</th>
             <th scope="col">
               <span className="visually-hidden">Actions</span>
             </th>
@@ -90,11 +116,14 @@ export function ReturnPaths({ run, onChanged }: Props) {
                   <td className="num">–</td>
                   <td className="num">–</td>
                   <td className="muted">The show's own return leg</td>
+                  <td className="muted">In the show</td>
                   <td />
                 </tr>
               );
             }
             const tone = planning ? "busy" : entry ? STATUS[entry.status].tone : "idle";
+            const reversed = entry?.method === "reversed_takeoff" && entry.status === "succeeded";
+            const viewable = entry?.status === "succeeded" ? (built ? built.has(k) : null) : undefined;
             return (
               <tr key={k}>
                 <td>{name}</td>
@@ -108,10 +137,40 @@ export function ReturnPaths({ run, onChanged }: Props) {
                 </td>
                 <td title={entry?.message ?? undefined}>
                   <span className={`light light-${tone}`} aria-hidden="true" />
-                  {planning ? "Planning" : entry ? (ROW_STATUS[entry.status] ?? STATUS[entry.status].label) : "Not planned"}
+                  {planning
+                    ? "Planning"
+                    : reversed
+                      ? "Takeoff flown backwards"
+                      : entry
+                        ? (ROW_STATUS[entry.status] ?? STATUS[entry.status].label)
+                        : "Not planned"}
+                </td>
+                <td>
+                  {viewable === undefined ? (
+                    "–"
+                  ) : viewable === null ? (
+                    <span className="muted">Checking</span>
+                  ) : (
+                    <>
+                      <span className={`light light-${viewable ? "ok" : "idle"}`} aria-hidden="true" />
+                      {viewable ? "Ready" : "Not built"}
+                    </>
+                  )}
                 </td>
                 <td className="row-action">
-                  {!running && (
+                  {entry?.status === "succeeded" && (
+                    <button
+                      className="link"
+                      onClick={() =>
+                        viewable
+                          ? onView(k, name, entry.abort_time_sec)
+                          : setToBuild({ keyframe: k, from: name, abortTime: entry.abort_time_sec })
+                      }
+                    >
+                      View
+                    </button>
+                  )}
+                  {!running && !reversed && (
                     <button className="link" onClick={() => plan([k])}>
                       {entry ? "Plan again" : "Plan"}
                     </button>
@@ -124,6 +183,19 @@ export function ReturnPaths({ run, onChanged }: Props) {
       </table>
 
       {startError && <p className="notice notice-bad">Could not start planning: {startError}</p>}
+      {toBuild && (
+        <BuildViewDialog
+          runDir={run.run_dir}
+          fleet={run.input.fleet_size}
+          target={toBuild}
+          onClose={() => setToBuild(null)}
+          onBuilt={() => {
+            setReplayCheck((n) => n + 1);
+            setToBuild(null);
+            onView(toBuild.keyframe, toBuild.from, toBuild.abortTime);
+          }}
+        />
+      )}
       {running ? (
         <ReturnsRunning job={job!} runId={run.run_id} names={names} />
       ) : (
@@ -142,6 +214,76 @@ export function ReturnPaths({ run, onChanged }: Props) {
         </>
       )}
     </section>
+  );
+}
+
+/** Asks before building a return's missing 3D view, builds it in place, then opens it. */
+function BuildViewDialog({
+  runDir,
+  fleet,
+  target,
+  onClose,
+  onBuilt,
+}: {
+  runDir: string;
+  fleet: number;
+  target: { keyframe: number; from: string };
+  onClose: () => void;
+  onBuilt: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const primaryRef = useRef<HTMLButtonElement>(null);
+  const [building, setBuilding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    ref.current?.showModal();
+    primaryRef.current?.focus(); // showModal() focuses the first button; the expected action is building
+  }, []);
+
+  async function build() {
+    setBuilding(true);
+    setError(null);
+    try {
+      const { exit, events } = await runJob(["replay", runDir, "--return", String(target.keyframe)]);
+      if (exit.code !== 0) {
+        const err = events.find((e) => e.type === "error");
+        throw new Error(err && err.type === "error" ? err.message : `exit code ${exit.code}`);
+      }
+      onBuilt();
+    } catch (e) {
+      setError(String(e));
+      setBuilding(false);
+    }
+  }
+
+  return (
+    <dialog
+      ref={ref}
+      className="dialog"
+      aria-labelledby="build-view-title"
+      // Escape closes the dialog; while building it stays open until the build ends.
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!building) onClose();
+      }}
+    >
+      <h2 id="build-view-title">No 3D view yet</h2>
+      <p>
+        The flight home from {target.from} hasn't been prepared for the 3D view. Building it samples the show up to{" "}
+        {target.from} and the flight home; for {fleet} drones that takes{" "}
+        {fleet >= 150 ? "about 10 to 20 seconds" : "a few seconds"}.
+      </p>
+      {building && <div className="bar bar-indeterminate" role="progressbar" aria-label="Building the 3D view"><span /></div>}
+      {error && <p className="notice notice-bad">Could not build the 3D view: {error}</p>}
+      <div className="dialog-actions">
+        <button onClick={onClose} disabled={building}>
+          Not now
+        </button>
+        <button ref={primaryRef} className="primary" onClick={build} disabled={building}>
+          {building ? "Building…" : "Build and view"}
+        </button>
+      </div>
+    </dialog>
   );
 }
 

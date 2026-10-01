@@ -1389,6 +1389,11 @@ input[type="radio"]:focus-visible {
 }
 .returns .table {
   margin-top: 1rem;
+  max-width: 64rem;
+}
+.returns .table .num,
+.returns .table .row-action {
+  white-space: nowrap;
 }
 .returns > p {
   max-width: 50rem;
@@ -1404,4 +1409,62 @@ input[type="radio"]:focus-visible {
 }
 .returns-running .bar {
   margin-top: 1rem;
+}
+
+/* Replay of a return path: the flight home is the accent window, not a rejection. */
+.strip-window-info {
+  color: var(--accent);
+}
+.replay-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.replay-back {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 2;
+  padding: 0.375rem 0.75rem;
+  background: rgb(26 26 26 / 0.92);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.row-action .link + .link {
+  margin-left: 1rem;
+}
+
+/* Modal dialog (native <dialog>): a raised panel over a dimmed page. */
+.dialog {
+  width: min(30rem, calc(100vw - 2rem));
+  padding: 1.5rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.dialog::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+.dialog h2 {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-heading);
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+.dialog p {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+}
+.dialog .bar {
+  margin-bottom: 1rem;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
 }

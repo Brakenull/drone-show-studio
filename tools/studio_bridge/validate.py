@@ -60,15 +60,26 @@ def holding_positions(meta: dict[str, Any]) -> np.ndarray:
                                      ha["max_height"], ha["grid_spacing_m"])
 
 
-def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray) -> int:
-    """Targets of a formation inside the holding area: the declared volume plus the parked grid padded by
-    half a grid step, the same region the Blender add-on checks (holding_region_bounds)."""
+PARKED_TOLERANCE_M = 1e-3
+
+
+def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray, slots: np.ndarray) -> tuple[int, int]:
+    """(overlapping, parked) targets of a formation inside the holding area: the declared volume plus the
+    parked grid padded by half a grid step, the same region the Blender add-on checks (holding_region_bounds).
+    A target exactly on a holding slot is a drone the formation doesn't use, left parked (2-phase_2.md
+    §1.15); only the others overlap the area."""
+    from scipy.spatial import cKDTree
+
     from stage1_designer.core.holding_area import holding_region_bounds
 
     ha = meta["holding_area"]
     lo, hi = holding_region_bounds(meta["fleet_size"], tuple(ha["center"]), tuple(ha["size"]),
                                    ha["max_height"], ha["grid_spacing_m"])
-    return int(np.all((targets >= lo) & (targets <= hi), axis=1).sum())
+    inside = targets[np.all((targets >= lo) & (targets <= hi), axis=1)]
+    if not len(inside):
+        return 0, 0
+    parked = int((cKDTree(slots).query(inside)[0] <= PARKED_TOLERANCE_M).sum())
+    return len(inside) - parked, parked
 
 
 def holding_capacity(meta: dict[str, Any], slots: np.ndarray) -> dict[str, Any]:
@@ -126,11 +137,12 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
 
     slots = holding_positions(meta)
     first = np.array([p["pos"] for p in data["keyframes"][0]["points"]], dtype=float)
-    overlap = targets_inside_holding_area(meta, first)
+    overlap, parked = targets_inside_holding_area(meta, first, slots)
     if overlap:
         warnings.append({"path": "/keyframes/0",
                          "message": f"{overlap} of the {len(first)} targets of the first formation "
-                                    f"({data['keyframes'][0]['shape_name']}) are inside the holding area. Drones "
+                                    f"({data['keyframes'][0]['shape_name']}) are inside the holding area, not on a "
+                                    "parking slot. Drones "
                                     "leaving the upper layers then have to pass through parked drones, which Stage 2 "
                                     "usually cannot make safe. Move the holding area away from the formation."})
 
@@ -164,6 +176,8 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
             "gatekeeper_floor_m": floor,
         },
         "first_formation_targets_in_holding_area": overlap,
+        # Drones the first formation doesn't use, exported on their own holding slots: not an overlap.
+        "first_formation_parked": parked,
     }
     return summary, warnings
 
