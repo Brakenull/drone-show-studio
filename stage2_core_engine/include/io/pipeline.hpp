@@ -103,4 +103,30 @@ private:
 PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config,
                             const ProgressCallback& progress = {});
 
+// Return path from one formation of an already planned show to the
+// holding-area slots (docs/4-condition_simulator.md B4, docs/2-phase_2.md
+// section 1.24). Planned after the show passed, from its saved result.
+struct ReturnPathResult {
+    // One transition (formation -> holding_area), timed from 0;
+    // return_leg holds its span and target.
+    ShowMetadata metadata;
+    std::vector<DroneTrajectory> trajectories;  // one entry per drone_id, ascending
+    int keyframe_index = 0;
+    std::string from_keyframe;
+    double abort_time_sec = 0.0;      // show time at which the fleet is at the formation
+    double worst_separation_m = 0.0;  // the passing attempt's, as the gatekeeper measured it
+};
+
+// `show` is the show's own result (trajectories in show time); `transitions`
+// its metadata.transitions. Every drone's state at the end of transition
+// `keyframe_index` (the one into project.keyframes[keyframe_index]) is the
+// return's start. `target_duration_sec` nullopt = Auto (T_min), otherwise
+// max(target, T_min) like a leg. Throws PipelineSafetyError when the
+// gatekeeper rejects the return, std::runtime_error on bad input.
+ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& config,
+                                  const std::vector<DroneTrajectory>& show,
+                                  const std::vector<TransitionTiming>& transitions, int keyframe_index,
+                                  std::optional<double> target_duration_sec,
+                                  const ProgressCallback& progress = {});
+
 }  // namespace drone_core::io

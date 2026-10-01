@@ -64,19 +64,15 @@ Eigen::MatrixXd build_hold_segment_control_points(const trajectory::BoundaryCond
     return trajectory::seed_control_points(state, hold_end, hold_duration, num_control_points);
 }
 
-}  // namespace
-
-PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_config,
-                            const ProgressCallback& progress) {
-    const int n = project.metadata.fleet_size;
+// The design's own safety settings on top of the resolved config, shared by
+// the show and its return paths.
+CoreConfig show_config(const ProjectData& project, const CoreConfig& base_config, const HoldingRegion& holding_region) {
     // Altitude floor (docs/2-phase_2.md section 1.13, bug-report P2-02): the
     // design's ground, when the file declares one.
     CoreConfig config = base_config;
     config.safety.altitude_floor_m = project.metadata.ground_z_m;
     // Holding-area keep-out zone (docs/2-phase_2.md section 1.14): the
     // designer's safe distance around the holding region, when declared.
-    const HoldingRegion holding_region = compute_holding_region(n, project.metadata.holding_area,
-                                                                project.metadata.holding_area.grid_spacing_m);
     if (project.metadata.holding_area.show_clearance_m) {
         KeepOutZone zone;
         for (int axis = 0; axis < 3; ++axis) {
@@ -86,6 +82,22 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         zone.clearance_m = *project.metadata.holding_area.show_clearance_m;
         config.safety.keep_out = zone;
     }
+    return config;
+}
+
+Eigen::Vector3i lerp_color(const Eigen::Vector3i& c0, const Eigen::Vector3i& c1, double frac) {
+    const Eigen::Vector3d result = c0.cast<double>() + frac * (c1.cast<double>() - c0.cast<double>());
+    return result.array().round().matrix().cast<int>();
+}
+
+}  // namespace
+
+PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_config,
+                            const ProgressCallback& progress) {
+    const int n = project.metadata.fleet_size;
+    const HoldingRegion holding_region = compute_holding_region(n, project.metadata.holding_area,
+                                                                project.metadata.holding_area.grid_spacing_m);
+    const CoreConfig config = show_config(project, base_config, holding_region);
     // A point inside the holding region is a launch slot or a parked drone:
     // drones starting or ending a transition there are exempt from the zone.
     auto in_holding_region = [&](const Eigen::Vector3d& p) {
@@ -441,11 +453,6 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             problems[slot] = problem;
         }
 
-        auto lerp_color = [](const Eigen::Vector3i& c0, const Eigen::Vector3i& c1, double frac) -> Eigen::Vector3i {
-            const Eigen::Vector3d result = c0.cast<double>() + frac * (c1.cast<double>() - c0.cast<double>());
-            return result.array().round().matrix().cast<int>();
-        };
-
         std::vector<optimizer::DroneTrajectorySolution> solutions;
         optimizer::SolveStats solve_stats;
         try {
@@ -741,6 +748,244 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     result.trajectories.reserve(trajectories_by_drone.size());
     for (auto& [drone_id, traj] : trajectories_by_drone) {
         result.trajectories.push_back(std::move(traj));
+    }
+    return result;
+}
+
+ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& base_config,
+                                  const std::vector<DroneTrajectory>& show,
+                                  const std::vector<TransitionTiming>& transitions, int keyframe_index,
+                                  std::optional<double> target_duration_sec, const ProgressCallback& progress) {
+    const int n = project.metadata.fleet_size;
+    const int keyframe_count = static_cast<int>(project.keyframes.size());
+    if (keyframe_index < 0 || keyframe_index >= keyframe_count) {
+        throw std::runtime_error("formation index " + std::to_string(keyframe_index) + " is outside [0, " +
+                                 std::to_string(keyframe_count) + ")");
+    }
+    const std::string& from_name = project.keyframes[keyframe_index].shape_name;
+    // Transition k is the one into keyframes[k] (0 = takeoff), in the show
+    // result as in run_pipeline().
+    if (keyframe_index >= static_cast<int>(transitions.size()) ||
+        transitions[keyframe_index].to_keyframe != from_name) {
+        throw std::runtime_error("the show result's transitions don't match the Phase 1 file (no transition " +
+                                 std::to_string(keyframe_index) + " into '" + from_name + "')");
+    }
+    const double abort_time = transitions[keyframe_index].end_time_sec;
+    if (static_cast<int>(show.size()) != n) {
+        throw std::runtime_error("the show result has " + std::to_string(show.size()) + " drones, the Phase 1 file " +
+                                 std::to_string(n));
+    }
+
+    const HoldingRegion holding_region = compute_holding_region(n, project.metadata.holding_area,
+                                                                project.metadata.holding_area.grid_spacing_m);
+    const CoreConfig config = show_config(project, base_config, holding_region);
+    auto in_holding_region = [&](const Eigen::Vector3d& p) {
+        return (p.array() >= holding_region.lo.array() - 1e-6).all() &&
+               (p.array() <= holding_region.hi.array() + 1e-6).all();
+    };
+
+    // Each drone's state and LED color at the abort time, from its own
+    // spline: the segment that ends there (every transition ends at a
+    // segment boundary), else the one that contains it.
+    Eigen::MatrixXd P(n, 3);
+    Eigen::MatrixXd start_velocity(n, 3);
+    Eigen::MatrixXi start_color(n, 3);
+    std::vector<int> drone_id_by_slot(n);
+    constexpr double kTimeTolerance = 1e-6;
+    for (int slot = 0; slot < n; ++slot) {
+        const DroneTrajectory& traj = show[slot];
+        drone_id_by_slot[slot] = traj.drone_id;
+        const TrajectorySegment* found = nullptr;
+        for (const auto& seg : traj.segments) {
+            if (std::abs(seg.end_time_sec - abort_time) <= kTimeTolerance) {
+                found = &seg;
+                break;
+            }
+            if (!found && seg.start_time_sec <= abort_time && abort_time <= seg.end_time_sec) found = &seg;
+        }
+        if (!found) {
+            throw std::runtime_error("drone " + std::to_string(traj.drone_id) + " has no segment at show time " +
+                                     std::to_string(abort_time) + " s");
+        }
+        const double seg_duration = found->end_time_sec - found->start_time_sec;
+        const double local_t = std::clamp(abort_time - found->start_time_sec, 0.0, seg_duration);
+        const trajectory::QuinticBSpline spline(found->control_points, seg_duration);
+        P.row(slot) = spline.position(local_t).transpose();
+        start_velocity.row(slot) = spline.velocity(local_t).transpose();
+
+        Eigen::Vector3i color = Eigen::Vector3i::Zero();
+        const auto& keys = found->color_keyframes;
+        if (!keys.empty()) {
+            color = keys.back().color_rgb;
+            for (size_t i = 0; i + 1 < keys.size(); ++i) {
+                if (abort_time <= keys[i + 1].time_sec) {
+                    const double span = keys[i + 1].time_sec - keys[i].time_sec;
+                    const double frac = span > 1e-12 ? std::clamp((abort_time - keys[i].time_sec) / span, 0.0, 1.0) : 1.0;
+                    color = lerp_color(keys[i].color_rgb, keys[i + 1].color_rgb, frac);
+                    break;
+                }
+            }
+        }
+        start_color.row(slot) = color.transpose();
+    }
+
+    // As the show's return leg: any free holding-area slot (the auction
+    // picks), landing at rest, LEDs fading to off.
+    const Eigen::MatrixXd Q = compute_holding_positions(n, project.metadata.holding_area,
+                                                        project.metadata.holding_area.grid_spacing_m);
+    assignment::AssignmentInput ain;
+    ain.P = P;
+    ain.Q = Q;
+    ain.v_in_xy = start_velocity.leftCols(2);
+    ain.w_distance = config.weights.w_distance;
+    ain.w_vertical_climb = config.weights.w_vertical_climb;
+    ain.w_heading_change = config.weights.w_heading_change;
+    const assignment::AssignmentResult assign_result = assignment::solve_auction(assignment::build_cost_matrix(ain));
+
+    double d_max = 0.0;
+    for (int slot = 0; slot < n; ++slot) {
+        d_max = std::max(d_max, (Q.row(assign_result.assignment[slot]) - P.row(slot)).norm());
+    }
+    // Timed like a leg: Auto = T_min, a target is flown as max(target, T_min).
+    const double t_min = trajectory::compute_min_transition_time(
+        d_max, trajectory::inscribed_axis_limit(config.kinematics.v_max_mps),
+        trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2),
+        trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3), config.solver.kinematic_slack_fraction);
+    const double duration = std::max({target_duration_sec.value_or(0.0), t_min, 1e-6});
+
+    std::vector<optimizer::DroneTransitionProblem> problems(n);
+    for (int slot = 0; slot < n; ++slot) {
+        optimizer::DroneTransitionProblem problem;
+        problem.drone_id = drone_id_by_slot[slot];
+        problem.start.position = P.row(slot).transpose();
+        problem.start.velocity = start_velocity.row(slot).transpose();
+        problem.start.acceleration = Eigen::Vector3d::Zero();
+        problem.end.position = Q.row(assign_result.assignment[slot]).transpose();
+        problem.end.velocity = Eigen::Vector3d::Zero();
+        problem.end.acceleration = Eigen::Vector3d::Zero();
+        // Every drone ends in the holding region, so all are exempt from the
+        // keep-out zone, exactly as on the show's return leg (section 1.14).
+        problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
+                           !in_holding_region(problem.end.position);
+        problems[slot] = problem;
+    }
+
+    const std::string to_name = "holding_area";
+    ProgressCallback transition_progress;
+    if (progress) {
+        transition_progress = [&](const ProgressEvent& solver_event) {
+            ProgressEvent e = solver_event;
+            e.transition_index = 0;
+            e.transition_count = 1;
+            e.from_keyframe = from_name;
+            e.to_keyframe = to_name;
+            progress(e);
+        };
+        ProgressEvent e;
+        e.kind = ProgressEvent::Kind::TransitionStart;
+        e.show_time_sec = 0.0;
+        transition_progress(e);
+    }
+
+    ReturnPathResult result;
+    result.keyframe_index = keyframe_index;
+    result.from_keyframe = from_name;
+    result.abort_time_sec = abort_time;
+    ShowMetadata& meta = result.metadata;
+    meta.fleet_size = n;
+    meta.spline_degree = trajectory::kDegree;
+    meta.min_distance_enforced_m = config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
+    meta.altitude_floor_m = config.safety.altitude_floor_m;
+    if (config.safety.keep_out) meta.holding_clearance_m = config.safety.keep_out->clearance_m;
+
+    std::vector<optimizer::DroneTrajectorySolution> solutions;
+    optimizer::SolveStats solve_stats;
+    try {
+        solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
+    } catch (const optimizer::SafetyViolationError& e) {
+        const optimizer::SafetyViolationReport& report = e.report();
+        TransitionSafetyFailure failure;
+        failure.solver = report;
+        failure.transition_index = 0;
+        failure.from_keyframe = from_name;
+        failure.to_keyframe = to_name;
+        failure.transition_start_time_sec = 0.0;
+        failure.transition_duration_sec = report.attempts.empty() ? duration : report.attempts.back().duration_sec;
+        failure.metadata = meta;
+        failure.metadata.total_duration_sec = failure.transition_duration_sec;
+        for (int slot = 0; slot < n && slot < static_cast<int>(report.rejected_solutions.size()); ++slot) {
+            DroneTrajectory traj;
+            traj.drone_id = drone_id_by_slot[slot];
+            double stage_t_start = 0.0;
+            for (const auto& stage : report.rejected_solutions[slot].stages) {
+                TrajectorySegment segment;
+                segment.segment_index = static_cast<int>(traj.segments.size());
+                segment.start_time_sec = stage_t_start;
+                segment.end_time_sec = stage_t_start + stage.duration;
+                segment.control_points = stage.control_points;
+                segment.knot_vector = trajectory::clamped_knot_vector(static_cast<int>(stage.control_points.rows()),
+                                                                      trajectory::kDegree, stage.duration);
+                segment.color_keyframes = {ColorKeyframe{segment.start_time_sec, start_color.row(slot)},
+                                           ColorKeyframe{segment.end_time_sec, start_color.row(slot)}};
+                traj.segments.push_back(std::move(segment));
+                stage_t_start += stage.duration;
+            }
+            failure.rejected_trajectories.push_back(std::move(traj));
+        }
+        std::sort(failure.rejected_trajectories.begin(), failure.rejected_trajectories.end(),
+                  [](const DroneTrajectory& a, const DroneTrajectory& b) { return a.drone_id < b.drone_id; });
+        failure.solver.rejected_solutions.clear();
+        throw PipelineSafetyError("Return path from '" + from_name + "' rejected: " + e.what(), std::move(failure));
+    } catch (const optimizer::KeepOutViolationError& e) {
+        // Not expected (every drone is exempt), kept so it can't escape untyped.
+        throw std::runtime_error("Return path from '" + from_name + "': " + e.what());
+    }
+
+    const double flown_duration = solve_stats.flown_duration_sec;
+    const Eigen::Vector3i off = Eigen::Vector3i::Zero();
+    std::map<int, DroneTrajectory> by_drone;
+    for (int slot = 0; slot < n; ++slot) {
+        DroneTrajectory& traj = by_drone[drone_id_by_slot[slot]];
+        traj.drone_id = drone_id_by_slot[slot];
+        double stage_t_start = 0.0;
+        for (const auto& stage : solutions[slot].stages) {
+            const double stage_t_end = stage_t_start + stage.duration;
+            TrajectorySegment segment;
+            segment.segment_index = static_cast<int>(traj.segments.size());
+            segment.start_time_sec = stage_t_start;
+            segment.end_time_sec = stage_t_end;
+            segment.control_points = stage.control_points;
+            segment.knot_vector = trajectory::clamped_knot_vector(static_cast<int>(stage.control_points.rows()),
+                                                                  trajectory::kDegree, stage.duration);
+            segment.color_keyframes = {
+                ColorKeyframe{stage_t_start, lerp_color(start_color.row(slot), off, stage_t_start / flown_duration)},
+                ColorKeyframe{stage_t_end, lerp_color(start_color.row(slot), off, stage_t_end / flown_duration)},
+            };
+            traj.segments.push_back(std::move(segment));
+            stage_t_start = stage_t_end;
+        }
+    }
+    for (auto& [drone_id, traj] : by_drone) result.trajectories.push_back(std::move(traj));
+
+    TransitionTiming timing;
+    timing.index = 0;
+    timing.from_keyframe = from_name;
+    timing.to_keyframe = to_name;
+    timing.start_time_sec = 0.0;
+    timing.end_time_sec = flown_duration;
+    timing.planned_duration_sec = duration;
+    timing.flown_duration_sec = flown_duration;
+    timing.attempts = solve_stats.attempts;
+    meta.transitions.push_back(timing);
+    meta.return_leg = LegTiming{0.0, flown_duration, target_duration_sec};
+    meta.total_duration_sec = flown_duration;
+    result.worst_separation_m = solve_stats.worst_separation_m;
+
+    if (transition_progress) {
+        ProgressEvent e;
+        e.kind = ProgressEvent::Kind::TransitionEnd;
+        e.show_time_sec = flown_duration;
+        transition_progress(e);
     }
     return result;
 }

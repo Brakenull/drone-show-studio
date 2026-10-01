@@ -79,6 +79,30 @@ export interface RunRecord {
   /** Set on a run made with "Copy to a new run": the run it copies. */
   copied_from?: string;
   stage3?: { monte_carlo?: MonteCarloPart; pack?: PackPart };
+  /** Return paths from abort points (tools/studio_bridge/returns_job.py, docs/4-condition_simulator.md B4). */
+  stage2_returns?: Stage3Part & { formations?: number[]; planned?: number[] };
+}
+
+/** One formation's return path in stage2/returns/index.json. */
+export interface ReturnEntry {
+  keyframe_index: number;
+  from_keyframe: string;
+  status: RunStatus;
+  message: string | null;
+  abort_time_sec: number;
+  target_duration_sec: number | null;
+  planned_duration_sec: number | null;
+  flown_duration_sec: number | null;
+  attempts: number;
+  worst_separation_m: number | null;
+  required_separation_m?: number;
+  wall_time_sec: number;
+}
+
+export interface ReturnIndex {
+  /** Stage 2's ended_at the returns were planned from. */
+  stage2_ended_at: string | null;
+  returns: ReturnEntry[];
 }
 
 /** One Stage 2 planner setting (tools/studio_bridge/config_fields.py). `path` is dotted, e.g.
@@ -264,6 +288,10 @@ interface SolveTransition {
   transition_count: number;
   from_keyframe: string;
   to_keyframe: string;
+  /** Only in a `stage2-returns` job: which return of the job, and its formation. */
+  return_index?: number;
+  return_count?: number;
+  keyframe_index?: number;
 }
 
 interface SolveAttempt extends SolveTransition {
@@ -317,6 +345,7 @@ export type BridgeEvent =
   | ({ type: "pack_result"; ok: boolean } & PackSummary)
   | { type: "config"; fields: ConfigField[]; overrides: Overrides; warnings: ConfigWarning[] }
   | { type: "config_warnings"; warnings: ConfigWarning[] }
+  | ({ type: "return_result" } & ReturnEntry)
   | { type: "error"; code: string; message: string }
   | { type: "done"; status: RunStatus; exit_code: number }
   | { type: "stdout"; line: string };

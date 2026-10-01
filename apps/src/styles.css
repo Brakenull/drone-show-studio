@@ -1382,3 +1382,26 @@ input[type="radio"]:focus-visible {
     width: 15rem;
   }
 }
+
+/* Stage 2: return paths (docs/4-condition_simulator.md B4) */
+.returns {
+  margin-top: 2rem;
+}
+.returns .table {
+  margin-top: 1rem;
+}
+.returns > p {
+  max-width: 50rem;
+}
+.returns-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.returns-running {
+  margin-top: 1rem;
+}
+.returns-running .bar {
+  margin-top: 1rem;
+}

@@ -223,6 +223,7 @@ Eigen::Vector3d floor_safe_velocity(const Eigen::Vector3d& position, const Eigen
 struct SolveStats {
     int attempts = 0;                  // 1 = passed first time
     double flown_duration_sec = 0.0;   // duration of the passing attempt
+    double worst_separation_m = 0.0;   // the passing attempt's (+inf: no pair near enough to measure)
 };
 std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProblem>& problems, double duration,
                                             const CoreConfig& config, const ProgressCallback& progress = {},

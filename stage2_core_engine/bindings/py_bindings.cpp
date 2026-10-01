@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <filesystem>
@@ -294,6 +295,112 @@ py::dict optimize_trajectories(const py::dict& phase1_intermediate_json, const p
     return out;
 }
 
+// A saved section 5 output (trajectory_splines.json) back into C++ types:
+// the trajectories and metadata.transitions, which plan_return_path() reads.
+std::vector<drone_core::DroneTrajectory> contract_trajectories(const nlohmann::json& contract) {
+    std::vector<drone_core::DroneTrajectory> out;
+    for (const auto& t : contract.at("trajectories")) {
+        drone_core::DroneTrajectory traj;
+        traj.drone_id = t.at("drone_id").get<int>();
+        for (const auto& s : t.at("segments")) {
+            drone_core::TrajectorySegment seg;
+            seg.segment_index = s.at("segment_index").get<int>();
+            seg.start_time_sec = s.at("start_time_sec").get<double>();
+            seg.end_time_sec = s.at("end_time_sec").get<double>();
+            const auto& knots = s.at("knot_vector");
+            seg.knot_vector.resize(static_cast<Eigen::Index>(knots.size()));
+            for (size_t i = 0; i < knots.size(); ++i) seg.knot_vector(static_cast<Eigen::Index>(i)) = knots[i].get<double>();
+            const auto& cps = s.at("control_points");
+            seg.control_points.resize(static_cast<Eigen::Index>(cps.size()), 3);
+            for (size_t i = 0; i < cps.size(); ++i) {
+                for (int axis = 0; axis < 3; ++axis) {
+                    seg.control_points(static_cast<Eigen::Index>(i), axis) = cps[i].at(axis).get<double>();
+                }
+            }
+            for (const auto& ck : s.value("color_keyframes", nlohmann::json::array())) {
+                drone_core::ColorKeyframe key;
+                key.time_sec = ck.at("time_sec").get<double>();
+                const auto& rgb = ck.at("color_rgb");
+                key.color_rgb = Eigen::Vector3i(rgb.at(0).get<int>(), rgb.at(1).get<int>(), rgb.at(2).get<int>());
+                seg.color_keyframes.push_back(key);
+            }
+            traj.segments.push_back(std::move(seg));
+        }
+        out.push_back(std::move(traj));
+    }
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.drone_id < b.drone_id; });
+    return out;
+}
+
+std::vector<drone_core::io::TransitionTiming> contract_transitions(const nlohmann::json& contract) {
+    const auto& meta = contract.at("metadata");
+    if (!meta.contains("transitions")) {
+        throw std::runtime_error("the show result has no metadata.transitions (planned before 2026-09-28); "
+                                 "run Stage 2 again");
+    }
+    std::vector<drone_core::io::TransitionTiming> out;
+    for (const auto& t : meta.at("transitions")) {
+        drone_core::io::TransitionTiming timing;
+        timing.index = t.at("index").get<int>();
+        timing.from_keyframe = t.at("from_keyframe").get<std::string>();
+        timing.to_keyframe = t.at("to_keyframe").get<std::string>();
+        timing.start_time_sec = t.at("start_time_sec").get<double>();
+        timing.end_time_sec = t.at("end_time_sec").get<double>();
+        timing.planned_duration_sec = t.value("planned_duration_sec", 0.0);
+        timing.flown_duration_sec = t.value("flown_duration_sec", 0.0);
+        timing.attempts = t.value("attempts", 1);
+        out.push_back(timing);
+    }
+    return out;
+}
+
+// docs/4-condition_simulator.md B4, docs/2-phase_2.md section 1.24. Same
+// output format as optimize_trajectories(), timed from 0, plus
+// metadata["return_path"].
+py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::dict& show_result, int keyframe_index,
+                          const py::dict& optional_config_overrides, const py::object& target_duration_sec,
+                          const py::object& progress_callback) {
+    const nlohmann::json phase1_json = drone_core::bindings::py_to_json(phase1_intermediate_json);
+    const nlohmann::json overrides_json = drone_core::bindings::py_to_json(optional_config_overrides);
+    const nlohmann::json show_json = drone_core::bindings::py_to_json(show_result);
+
+    const drone_core::io::ProjectData project = drone_core::io::parse_project(phase1_json);
+    const std::filesystem::path default_config_path = std::filesystem::path(DRONE_CORE_CONFIG_DIR) / "core_config.json";
+    const drone_core::CoreConfig config = drone_core::resolve_core_config(
+        std::optional<nlohmann::json>(project.metadata.raw), overrides_json, default_config_path);
+    const std::vector<drone_core::DroneTrajectory> show = contract_trajectories(show_json);
+    const std::vector<drone_core::io::TransitionTiming> transitions = contract_transitions(show_json);
+    const std::optional<double> target =
+        target_duration_sec.is_none() ? std::nullopt : std::optional<double>(target_duration_sec.cast<double>());
+
+    drone_core::ProgressCallback progress;
+    if (!progress_callback.is_none()) {
+        progress = [&progress_callback](const drone_core::ProgressEvent& e) {
+            py::gil_scoped_acquire gil;
+            progress_callback(progress_event_to_py(e));
+        };
+    }
+    drone_core::io::ReturnPathResult r;
+    {
+        py::gil_scoped_release no_gil;
+        r = drone_core::io::plan_return_path(project, config, show, transitions, keyframe_index, target, progress);
+    }
+
+    py::dict metadata = metadata_to_py(r.metadata);
+    py::dict info;
+    info["keyframe_index"] = r.keyframe_index;
+    info["from_keyframe"] = r.from_keyframe;
+    info["abort_time_sec"] = r.abort_time_sec;
+    info["worst_separation_m"] =
+        std::isfinite(r.worst_separation_m) ? py::object(py::float_(r.worst_separation_m)) : py::object(py::none());
+    info["target_duration_sec"] = target ? py::object(py::float_(*target)) : py::object(py::none());
+    metadata["return_path"] = info;
+    py::dict out;
+    out["metadata"] = metadata;
+    out["trajectories"] = trajectories_to_py(r.trajectories);
+    return out;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(drone_core, m) {
@@ -331,4 +438,12 @@ PYBIND11_MODULE(drone_core, m) {
           "`progress_callback`, if given, is called with one dict per progress event (transition "
           "start/end, gatekeeper attempt start/end, SCP iteration); an exception it raises aborts "
           "the solve and is re-raised.");
+
+    m.def("plan_return_path", &plan_return_path, py::arg("phase1_intermediate_json"), py::arg("show_result"),
+          py::arg("keyframe_index"), py::arg("optional_config_overrides") = py::dict(),
+          py::arg("target_duration_sec") = py::none(), py::arg("progress_callback") = py::none(),
+          "Plans the return path from formation `keyframe_index` of an already planned show (`show_result`, "
+          "the optimize_trajectories() output for the same Phase 1 file) to the holding-area slots. Returns "
+          "the same format timed from 0, with metadata['return_path']. `target_duration_sec` None = Auto "
+          "(T_min). Raises drone_core.SafetyViolationError when the gatekeeper rejects it.");
 }

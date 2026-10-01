@@ -1977,6 +1977,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             if (stats) {
                 stats->attempts = attempt + 1;
                 stats->flown_duration_sec = attempt_duration;
+                stats->worst_separation_m = worst_continuous_distance;
             }
             return result.trajectories;
         }

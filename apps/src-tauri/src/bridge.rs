@@ -112,7 +112,7 @@ fn append_log(path: &Option<PathBuf>, entry: &Value) {
 }
 
 /// `args` are the bridge's own arguments (e.g. ["stage2", "<run_dir>"]). `run_dir` ties the job to a
-/// run folder and `section` ("stage2", "monte_carlo" or "pack") to one part of its run.json: events are
+/// run folder and `section` ("stage2", "stage2_returns", "monte_carlo" or "pack") to one part of its run.json: events are
 /// appended to that section's log file, and a cancel marks that section cancelled.
 #[tauri::command]
 pub fn start_job(

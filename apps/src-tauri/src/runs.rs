@@ -12,8 +12,9 @@ use crate::settings;
 const RUN_FILE: &str = "run.json";
 
 /// The run.json sections a job can own: (name the UI passes, JSON pointer, log file in the run folder).
-const SECTIONS: [(&str, &str, &str); 3] = [
+const SECTIONS: [(&str, &str, &str); 4] = [
     ("stage2", "/stage2", "stage2/log.ndjson"),
+    ("stage2_returns", "/stage2_returns", "stage2/returns/log.ndjson"),
     ("monte_carlo", "/stage3/monte_carlo", "stage3/monte_carlo_log.ndjson"),
     ("pack", "/stage3/pack", "stage3/pack_log.ndjson"),
 ];

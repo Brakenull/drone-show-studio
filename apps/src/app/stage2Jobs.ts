@@ -29,7 +29,7 @@ export function solveFraction(s: SolveState): number {
   return Math.min((s.transition + inTransition) / Math.max(s.transitionCount, 1), 1);
 }
 
-function nextSolve(prev: SolveState | null, e: SolveProgress): SolveState {
+export function nextSolve(prev: SolveState | null, e: SolveProgress): SolveState {
   const base: SolveState =
     prev && prev.transition === e.transition
       ? prev

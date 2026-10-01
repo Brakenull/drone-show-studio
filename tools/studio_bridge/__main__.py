@@ -131,6 +131,27 @@ def cmd_stage2(args: argparse.Namespace) -> int:
     return run_stage2(Path(args.run_dir), overrides)
 
 
+def _formation_list(text: str) -> list[int]:
+    try:
+        return [int(part) for part in text.split(",") if part.strip()]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected formation indices like 0,2,3, got {text!r}") from None
+
+
+def _formation_duration(text: str) -> tuple[int, float]:
+    try:
+        k, seconds = text.split("=", 1)
+        return int(k), float(seconds)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected FORMATION=SECONDS like 2=30, got {text!r}") from None
+
+
+def cmd_stage2_returns(args: argparse.Namespace) -> int:
+    from .returns_job import run_stage2_returns
+
+    return run_stage2_returns(Path(args.run_dir), args.formations, dict(args.duration_s or []))
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     """The planner settings editor's data for a run (docs/5-studio_gui.md §6.2)."""
     import json
@@ -183,6 +204,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--overrides", default=None, help="JSON file passed as optional_config_overrides")
     p.add_argument("--overrides-json", default=None, help="The same as a JSON string (what the Studio sends)")
     p.set_defaults(fn=cmd_stage2)
+    p = sub.add_parser("stage2-returns")
+    p.add_argument("run_dir")
+    p.add_argument("--formations", type=_formation_list, default=None,
+                   help="Formation indices to plan returns from, e.g. 0,2 (default: every formation, except "
+                        "the last when the show has a return leg)")
+    p.add_argument("--duration-s", type=_formation_duration, action="append", metavar="K=SECONDS",
+                   help="Target duration of formation K's return (default: Auto, the minimum); repeatable")
+    p.set_defaults(fn=cmd_stage2_returns)
     p = sub.add_parser("config")
     p.add_argument("run_dir")
     p.set_defaults(fn=cmd_config)

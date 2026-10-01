@@ -100,6 +100,9 @@ def _run_stage2(run_dir: Path, overrides: dict[str, Any]) -> int:
     stage_dir.mkdir(exist_ok=True)
     for stale in (CONTRACT_JSON, CONTRACT_ARROW, FAILURE_FILE):
         (stage_dir / stale).unlink(missing_ok=True)
+    from .returns_job import clear_returns
+
+    clear_returns(run_dir)  # return paths belong to the Stage 2 result being replaced
     write_json_atomic(stage_dir / "config_overrides.json", overrides)
 
     # drone_core ignores unknown keys; refuse them so a typo can't pass for an applied setting.
