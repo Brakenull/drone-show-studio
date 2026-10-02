@@ -27,6 +27,7 @@ from stage1_designer.core.holding_area import compute_holding_positions  # noqa:
 
 AIR_A = [[-2.0, 20.0, 12.0], [0.0, 20.0, 12.0], [2.0, 20.0, 12.0]]
 AIR_B = [[-2.0, 24.0, 14.0], [0.0, 24.0, 14.0], [2.0, 24.0, 14.0]]
+HOVER_HEIGHT_M = 2.0  # core_config.json's landing_approach_height_m (2-phase_2.md section 1.28)
 
 
 @pytest.fixture(scope="module")
@@ -116,6 +117,8 @@ def test_a_drone_parking_mid_show_lands_at_rest_and_stays(drone_core):
     # line (3 flying) -> park_one (one of them lands on a free front-row pad) -> line_2
     # (it stays parked). Before 2026-09-29 it reached the pad at the fly-through speed
     # (~3 m/s sideways) and skidded into the neighbouring pad in the next transition.
+    # Since section 1.28 (2026-10-02) it reaches the hover point 2 m above the pad at rest,
+    # then descends straight onto the pad at the start of the next transition and stays.
     phase1, pads = parked_show()
     meta = phase1["project_metadata"]
     meta["legs"] = {"takeoff": {"duration_sec": None}, "return": {"duration_sec": None}}
@@ -138,10 +141,15 @@ def test_a_drone_parking_mid_show_lands_at_rest_and_stays(drone_core):
     transitions = result["metadata"]["transitions"]
     t_park = transitions[1]["end_time_sec"]  # "line" -> "park_one" ends: the landing
     t_next = transitions[2]["end_time_sec"]  # "park_one" -> "line_2" ends
-    lander = [d for d in range(9) if np.linalg.norm(position(result, d, t_park) - landing_pad) < 1e-6]
+    hover = np.array(landing_pad) + [0.0, 0.0, HOVER_HEIGHT_M]
+    lander = [d for d in range(9) if np.linalg.norm(position(result, d, t_park) - hover) < 1e-6]
     assert len(lander) == 1
     d = lander[0]
     speed = np.linalg.norm(position(result, d, t_park) - position(result, d, t_park - 0.01)) / 0.01
-    assert speed < 0.01, f"drone {d} reaches its pad at {speed:.2f} m/s"
-    path = np.array([position(result, d, t) for t in np.linspace(t_park, t_next, 200)])
-    assert np.abs(path - landing_pad).max() < 1e-6, "the landed drone must stay on its pad"
+    assert speed < 0.01, f"drone {d} reaches its hover point at {speed:.2f} m/s"
+    path = np.array([position(result, d, t) for t in np.linspace(t_park, t_next, 400)])
+    assert np.abs(path[:, :2] - np.array(landing_pad)[:2]).max() < 1e-6, "straight down, no sideways move"
+    assert np.all(np.diff(path[:, 2]) <= 1e-9), "never climbs on the way down"
+    on_pad = np.where(np.abs(path[:, 2] - landing_pad[2]) < 1e-6)[0]
+    assert on_pad.size and np.abs(path[on_pad[0]:] - landing_pad).max() < 1e-6, "lands, then stays on its pad"
+    assert transitions[2]["pad_moves"]["landed"] >= 1 and transitions[1]["pad_moves"]["parked"] == 1

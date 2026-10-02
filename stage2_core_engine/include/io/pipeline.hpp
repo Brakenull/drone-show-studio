@@ -35,6 +35,15 @@ struct LegTiming {
 // Planned vs flown timing of one transition (bug-report P2-03). A transition
 // that passes only after a gatekeeper retry is flown longer than planned; the
 // show timeline follows the flown duration.
+// Section 1.28: the vertical pad moves of one transition, per drone count.
+struct PadMoves {
+    int parked = 0;   // flown to the hover point above their pad
+    int landed = 0;   // descended onto their pad (in the transition or right after the last one)
+    int climbed = 0;  // climbed from their pad to its hover point
+    int hovered = 0;  // stayed at their hover point (the stop too short to land, or a descent given up)
+    int old_way = 0;  // reached or left a pad the old way (a vertical move couldn't be used)
+};
+
 struct TransitionTiming {
     int index = 0;
     std::string from_keyframe;
@@ -44,6 +53,7 @@ struct TransitionTiming {
     double planned_duration_sec = 0.0;  // max(nominal, T_min) before any retry
     double flown_duration_sec = 0.0;    // the passing attempt's duration
     int attempts = 1;
+    PadMoves pad_moves;  // section 1.28
 };
 
 struct ShowMetadata {

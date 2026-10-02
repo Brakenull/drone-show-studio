@@ -110,10 +110,18 @@ struct DroneWorkspace {
     int drone_id = 0;
     bool keep_out = false;  // section 1.14: this drone flies the show here
     bool fixed = false;     // section 1.15: parked, held as an obstacle and never solved
+    std::optional<double> floor_m;  // section 1.28: this drone's own floor, see drone_floor()
     Eigen::MatrixXd control_points;  // current iterate, num_control_points x 3
     DerivativeOperators ops;
     std::unique_ptr<QuinticBSpline> spline;  // rebuilt after every drone-level solve
 };
+
+// The altitude floor a drone keeps (section 1.13): the config's, or its own
+// (section 1.28) when that is higher. None without a config floor.
+std::optional<double> drone_floor(std::optional<double> own, const CoreConfig& config) {
+    if (!config.safety.altitude_floor_m) return std::nullopt;
+    return own ? std::max(*config.safety.altitude_floor_m, *own) : config.safety.altitude_floor_m;
+}
 
 void rebuild_spline(DroneWorkspace& ws, double duration) {
     ws.spline = std::make_unique<QuinticBSpline>(ws.control_points, duration);
@@ -523,12 +531,12 @@ std::vector<LinearRow> build_hard_kinematic_rows(const FreeIndexMap& map, const 
     // Altitude floor (section 1.13). Hard, like the kinematic box; the convex
     // hull property then keeps the whole spline above it (the pinned control
     // points are floor-safe by construction, see floor_safe_velocity()).
-    if (config.safety.altitude_floor_m) {
+    if (const std::optional<double> floor = drone_floor(ws.floor_m, config)) {
         for (int i = 0; i < num_free; ++i) {
             LinearRow r;
             r.coeffs = Eigen::RowVectorXd::Zero(dim);
             r.coeffs(2 * num_free + i) = 1.0;
-            r.lower = *config.safety.altitude_floor_m + kFloorPlanningMarginM;
+            r.lower = *floor + kFloorPlanningMarginM;
             r.upper = OSQP_INFTY;
             rows.push_back(std::move(r));
         }
@@ -1019,9 +1027,18 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     for (int i = 0; i < num_drones; ++i) {
         workspaces[i].drone_id = problems[i].drone_id;
         workspaces[i].keep_out = problems[i].keep_out;
-        workspaces[i].fixed = trajectory::is_stationary_hold(problems[i].start, problems[i].end);
-        workspaces[i].control_points = seeded_control_points[i];
-        if (config.safety.altitude_floor_m) {
+        // Section 1.28: a prescribed (held) drone is fixed like a parked one,
+        // with the control points it was given for this window.
+        const bool held = problems[i].held_control_points.rows() > 0;
+        if (held && problems[i].held_control_points.rows() != n) {
+            throw std::logic_error("held control points of drone " + std::to_string(problems[i].drone_id) + ": " +
+                                   std::to_string(problems[i].held_control_points.rows()) + " rows, expected " +
+                                   std::to_string(n));
+        }
+        workspaces[i].fixed = held || trajectory::is_stationary_hold(problems[i].start, problems[i].end);
+        workspaces[i].floor_m = problems[i].floor_m;
+        workspaces[i].control_points = held ? problems[i].held_control_points : seeded_control_points[i];
+        if (const std::optional<double> floor = drone_floor(workspaces[i].floor_m, config)) {
             // Lift a seed that dips below the floor's planning buffer onto
             // it, so the first iteration's trust region already contains a
             // floor-feasible point. A fixed (parked) drone keeps its constant
@@ -1029,7 +1046,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             if (!workspaces[i].fixed) {
                 for (int idx = map.free_begin; idx < map.free_end; ++idx) {
                     double& z = workspaces[i].control_points(idx, 2);
-                    z = std::max(z, *config.safety.altitude_floor_m + kFloorPlanningMarginM);
+                    z = std::max(z, *floor + kFloorPlanningMarginM);
                 }
             }
         }
@@ -1371,14 +1388,14 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             qp_cpu_sec += qp_sec;
 #pragma omp atomic
             collision_row_count += row_count;
-            if (config.safety.altitude_floor_m) {
+            if (const std::optional<double> floor = drone_floor(self_ws.floor_m, config)) {
                 // Section 1.13: whatever the QP tier returned (an inaccurate
                 // OSQP solution, or the unoptimized jittered iterate when all
                 // tiers failed), lift any free control point still under the
                 // floor onto it, so the floor holds by the convex hull property.
                 for (int k = map.free_begin; k < map.free_end; ++k) {
                     double& z = self_ws.control_points(k, 2);
-                    z = std::max(z, *config.safety.altitude_floor_m);
+                    z = std::max(z, *floor);
                 }
             }
             rebuild_spline(self_ws, duration);
@@ -1599,6 +1616,18 @@ struct TransitionSolveResult {
     double min_separation = std::numeric_limits<double>::infinity();
 };
 
+int substage_count(double duration, const CoreConfig& config) {
+    if (duration <= kMegaClusterThresholdS) return 1;
+    return std::max(1, static_cast<int>(std::ceil(duration / config.solver.max_substage_duration_s)));
+}
+
+int transition_num_control_points(const std::vector<DroneTransitionProblem>& problems, const CoreConfig& config) {
+    double d_max = 0.0;
+    for (const auto& p : problems) d_max = std::max(d_max, (p.end.position - p.start.position).norm());
+    return config.solver.adaptive_control_points ? adaptive_num_control_points(d_max, config.solver.num_control_points_min)
+                                                  : config.solver.num_control_points_min;
+}
+
 // `progress` is null when no callback is set; otherwise its event carries this
 // attempt's fields and gets the sub-stage fields filled in here.
 TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionProblem>& problems, double duration,
@@ -1608,12 +1637,27 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     result.trajectories.resize(num_drones);
     for (int i = 0; i < num_drones; ++i) result.trajectories[i].drone_id = problems[i].drone_id;
 
-    if (duration <= kMegaClusterThresholdS) {
+    // Computed from the *whole* transition's displacement so every
+    // sub-stage gets the same control-point budget an undecomposed solve
+    // over the full duration would have used (see solve_single_stage()'s
+    // forced_num_control_points doc comment). A single stage computes the
+    // same count itself; it is passed so prescribed paths (section 1.28) are
+    // built with it.
+    const int whole_transition_num_control_points = transition_num_control_points(problems, config);
+
+    if (substage_count(duration, config) == 1) {
         if (progress) {
             progress->event.substage = 1;
             progress->event.substage_count = 1;
         }
-        const SingleStageResult stage_result = solve_single_stage(problems, duration, config, 0, progress);
+        std::vector<DroneTransitionProblem> held_problems = problems;
+        for (auto& p : held_problems) {
+            if (p.prescribed) {
+                p.held_control_points = p.prescribed(0.0, duration, duration, whole_transition_num_control_points);
+            }
+        }
+        const SingleStageResult stage_result = solve_single_stage(held_problems, duration, config,
+                                                                  whole_transition_num_control_points, progress);
         for (int i = 0; i < num_drones; ++i) {
             result.trajectories[i].stages.push_back(
                 DroneTrajectorySolution::Stage{stage_result.control_points[i], duration});
@@ -1632,22 +1676,21 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     // whatever actually conflicts within that shorter time window, letting
     // OpenMP parallelize across sub-stages' many small/singleton clusters
     // again instead of one fleet-wide chain.
-    const int num_substages =
-        std::max(1, static_cast<int>(std::ceil(duration / config.solver.max_substage_duration_s)));
+    const int num_substages = substage_count(duration, config);
     const double substage_duration = duration / static_cast<double>(num_substages);
 
-    // Computed from the *whole* transition's displacement so every
-    // sub-stage gets the same control-point budget an undecomposed solve
-    // over the full duration would have used (see solve_single_stage()'s
-    // forced_num_control_points doc comment).
-    double whole_transition_d_max = 0.0;
-    for (const auto& p : problems) {
-        whole_transition_d_max = std::max(whole_transition_d_max, (p.end.position - p.start.position).norm());
+    // Section 1.28: a prescribed drone's control points per window. Its
+    // windows meet at rest, so its waypoint at boundary k is the first
+    // control point of window k.
+    std::vector<std::vector<Eigen::MatrixXd>> held(num_drones);
+    for (int i = 0; i < num_drones; ++i) {
+        if (!problems[i].prescribed) continue;
+        held[i].resize(num_substages);
+        for (int stage = 0; stage < num_substages; ++stage) {
+            held[i][stage] = problems[i].prescribed(stage * substage_duration, (stage + 1) * substage_duration, duration,
+                                                    whole_transition_num_control_points);
+        }
     }
-    const int whole_transition_num_control_points =
-        config.solver.adaptive_control_points
-            ? adaptive_num_control_points(whole_transition_d_max, config.solver.num_control_points_min)
-            : config.solver.num_control_points_min;
 
     const double enforced_min_distance =
         config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
@@ -1659,7 +1702,18 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     // see and correct the whole fleet's positions at that instant together.
     std::vector<std::vector<trajectory::BoundaryConditions>> waypoints(num_drones);
     std::vector<char> fixed(num_drones);
-    for (int i = 0; i < num_drones; ++i) fixed[i] = trajectory::is_stationary_hold(problems[i].start, problems[i].end);
+    for (int i = 0; i < num_drones; ++i) {
+        fixed[i] = !held[i].empty() || trajectory::is_stationary_hold(problems[i].start, problems[i].end);
+    }
+    // Where a fixed drone is at boundary k, at rest.
+    const auto fixed_waypoint = [&](int i, int k) {
+        if (held[i].empty()) return problems[i].start;  // stays at rest on its pad
+        trajectory::BoundaryConditions bc;
+        bc.position = held[i][k].row(0).transpose();
+        bc.velocity = Eigen::Vector3d::Zero();
+        bc.acceleration = Eigen::Vector3d::Zero();
+        return bc;
+    };
     for (int i = 0; i < num_drones; ++i) {
         waypoints[i].resize(num_substages + 1);
         waypoints[i].front() = problems[i].start;
@@ -1670,13 +1724,14 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
         const double frac = duration > 1e-9 ? waypoint_time / duration : 0.0;
         std::vector<Eigen::Vector3d> positions(num_drones);
         for (int i = 0; i < num_drones; ++i) {
-            positions[i] = bowed_waypoint_position(problems[i].start.position, problems[i].end.position, frac);
+            positions[i] = fixed[i] ? fixed_waypoint(i, k).position
+                                    : bowed_waypoint_position(problems[i].start.position, problems[i].end.position, frac);
         }
         declash_waypoints(positions, fixed, enforced_min_distance);
         const double remaining_time = duration - waypoint_time;
         for (int i = 0; i < num_drones; ++i) {
             if (fixed[i]) {
-                waypoints[i][k] = problems[i].start;  // stays at rest on its pad
+                waypoints[i][k] = fixed_waypoint(i, k);
                 continue;
             }
             trajectory::BoundaryConditions wp;
@@ -1695,8 +1750,8 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
                     if (deficit > 0.0) wp.position += deficit * plane.normal;
                 }
             }
-            if (config.safety.altitude_floor_m) {
-                wp.position.z() = std::max(wp.position.z(), *config.safety.altitude_floor_m);
+            if (const std::optional<double> floor = drone_floor(problems[i].floor_m, config)) {
+                wp.position.z() = std::max(wp.position.z(), *floor);
             }
             wp.velocity = remaining_time > 1e-6
                               ? Eigen::Vector3d((problems[i].end.position - wp.position) / remaining_time)
@@ -1739,6 +1794,8 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
         for (int i = 0; i < num_drones; ++i) {
             substage_problems[i] = DroneTransitionProblem{problems[i].drone_id, waypoints[i][stage],
                                                             waypoints[i][stage + 1], problems[i].keep_out};
+            substage_problems[i].floor_m = problems[i].floor_m;
+            if (!held[i].empty()) substage_problems[i].held_control_points = held[i][stage];
         }
         if (progress) {
             progress->event.substage = stage + 1;

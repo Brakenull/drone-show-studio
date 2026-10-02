@@ -1,6 +1,8 @@
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -90,6 +92,22 @@ struct DroneTransitionProblem {
     // Flies the show in this transition: keep out of config.safety.keep_out
     // (section 1.14). False for drones taking off, landing or parked.
     bool keep_out = false;
+    // Section 1.28: a parked drone's prescribed path in this transition
+    // (e.g. descend onto its pad, wait, climb again). Never solved: held like
+    // a stationary parked drone (section 1.15), an obstacle the others avoid.
+    // Called with a window [t0, t1] of the transition (seconds from its
+    // start), the transition's duration (which a gatekeeper retry may have
+    // stretched) and the window's control-point count; returns that window's
+    // control points, at rest at both ends. Empty = solved, or a stationary
+    // hold when start == end at rest.
+    std::function<Eigen::MatrixXd(double t0, double t1, double duration, int num_control_points)> prescribed;
+    // Section 1.28: this drone's own altitude floor, used in place of the
+    // config's when higher (a drone flying to or from a hover point above a
+    // pad keeps half the hover height). Only meaningful with a config floor.
+    std::optional<double> floor_m;
+    // Set by the solver for one sub-stage window from `prescribed`: the
+    // window's control points (internal; callers leave it empty).
+    Eigen::MatrixXd held_control_points;
 };
 
 // Rev 2.6 section 1.7: a transition longer than the mega-cluster threshold
@@ -219,6 +237,13 @@ private:
 double max_pinned_lead_time_s(const CoreConfig& config);
 Eigen::Vector3d floor_safe_velocity(const Eigen::Vector3d& position, const Eigen::Vector3d& velocity,
                                     const CoreConfig& config);
+
+// Section 1.28: how solve() splits a transition of `duration` into windows
+// (sub-stages, section 1.7) and how many control points each window gets, so
+// a caller can build a prescribed path (DroneTransitionProblem::prescribed)
+// that fits them. The count depends on the problems' largest displacement.
+int substage_count(double duration, const CoreConfig& config);
+int transition_num_control_points(const std::vector<DroneTransitionProblem>& problems, const CoreConfig& config);
 
 struct SolveStats {
     int attempts = 0;                  // 1 = passed first time

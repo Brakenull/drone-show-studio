@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -124,27 +125,9 @@ double vertical_move_duration(double height, const CoreConfig& config) {
     return duration;
 }
 
-// The config a landing's approach (or, section 1.27, a takeoff after its
-// climb) is solved with: the floor raised to half the hover height above the
-// lowest slot, so the solver can't route a drone under the others down to the
-// ground on its way between the hover points and the formation (first try on
-// 200_cube: 22 drones still flew sideways down to 6 cm, up to 3 m/s). Never
-// above the lowest point at the other end (`far_end`), which must stay
-// reachable. A design without a ground has no floor (section 1.13), and gets
-// none here either.
-CoreConfig hover_leg_config(const CoreConfig& config, const Eigen::MatrixXd& slots, double height,
-                            const Eigen::MatrixXd& far_end) {
-    CoreConfig approach = config;
-    const double raised = std::min(slots.col(2).minCoeff() + 0.5 * height, far_end.col(2).minCoeff());
-    if (approach.safety.altitude_floor_m && *approach.safety.altitude_floor_m < raised) {
-        approach.safety.altitude_floor_m = raised;
-    }
-    return approach;
-}
-
-// All landing drones descend by the same vector over the same time, so the
-// distance between any two of them during the descent is the distance
-// between their slots: the descent is safe exactly when the slots are.
+// Drones making the same vertical move together keep the distance between
+// their slots (section 1.28's lockstep groups), so the rule is only used when
+// the slots keep the gatekeeper's distance.
 bool slots_keep_distance(const Eigen::MatrixXd& slots, double min_distance) {
     for (int a = 0; a < slots.rows(); ++a) {
         for (int b = a + 1; b < slots.rows(); ++b) {
@@ -152,6 +135,399 @@ bool slots_keep_distance(const Eigen::MatrixXd& slots, double min_distance) {
         }
     }
     return true;
+}
+
+// ---- Section 1.28: every pad visit vertical ----------------------------------
+
+enum class PadKind { kAir, kHover, kOnPad };
+
+// Where a drone is at a transition boundary, relative to the holding area.
+struct PadState {
+    PadKind kind = PadKind::kAir;
+    Eigen::Vector3d pad = Eigen::Vector3d::Zero();  // its slot, when hovering above it or on it
+};
+
+// What a parked drone does in one transition (section 1.28's rule table).
+enum class PadMove {
+    kNone,          // not parked: flown (it may leave or reach a pad, see Leave / Arrive)
+    kStay,          // stationary, on its pad or at its hover point
+    kDescend,       // prescribed: down from its hover point at the start, then on the pad
+    kClimb,         // prescribed: on the pad, up to its hover point at the end
+    kDescendClimb,  // prescribed: both, resting on the pad in between
+};
+enum class Leave { kNone, kFromHover, kPrelude, kOldWay };  // a flown drone leaving a pad
+enum class Arrive { kNone, kToHover, kOldWay };             // a flown drone reaching a pad
+
+struct PadPlan {
+    PadMove move = PadMove::kNone;
+    Leave leave = Leave::kNone;
+    Arrive arrive = Arrive::kNone;
+    Eigen::Vector3d start = Eigen::Vector3d::Zero();  // the solver problem's boundary positions
+    Eigen::Vector3d end = Eigen::Vector3d::Zero();
+    Eigen::Vector3d pad = Eigen::Vector3d::Zero();    // the pad it leaves, stays on or reaches
+    bool final_descent = false;  // last transition: descends onto its pad after it
+    PadState next;               // its state at the end of the transition (after any final descent)
+
+    bool pad_related() const { return move != PadMove::kNone || leave != Leave::kNone || arrive != Arrive::kNone; }
+    bool prescribed() const {
+        return move == PadMove::kDescend || move == PadMove::kClimb || move == PadMove::kDescendClimb;
+    }
+};
+
+// A parked drone's prescribed control points for one window [t0, t1] of a
+// transition of `duration` (DroneTransitionProblem::prescribed): on its pad,
+// or descending from its hover point at the start of the transition and/or
+// climbing back to it at the end. Rest-ramp-rest control points (the first
+// and last three equal: at rest; six equal pad points between two ramps: a
+// real stop on the pad); each ramp gets the fewest control points whose
+// vertical velocity, acceleration and jerk stay within the per-axis limits.
+// The ramp's points follow the minimum-jerk S-curve 10x^3 - 15x^4 + 6x^5, not
+// a straight line: a straight ramp meets the rests with a corner whose jerk
+// grows with 1/span^3, and with 20 control points in a 10 s window (150_cone,
+// 2026-10-02) it was 4-30 m/s^3 against 2.89, so every mid-show descent and
+// climb there was given up. Empty when the window can't hold that.
+Eigen::MatrixXd pad_window_control_points(const Eigen::Vector3d& pad, double height, bool descend_at_start,
+                                          bool climb_at_end, double t0, double t1, double duration, int n,
+                                          const CoreConfig& config) {
+    const bool down = descend_at_start && t0 <= 1e-9;
+    const bool up = climb_at_end && t1 >= duration - 1e-9;
+    if (!down && !up) return pad.transpose().replicate(n, 1);
+    const Eigen::Vector3d hover = pad + Eigen::Vector3d(0.0, 0.0, height);
+    const double v = trajectory::inscribed_axis_limit(config.kinematics.v_max_mps);
+    const double a = trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2);
+    const double j = trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3);
+    const double window = t1 - t0;
+    const auto s_curve = [](double x) { return x * x * x * (10.0 - 15.0 * x + 6.0 * x * x); };
+    for (int r = 1;; ++r) {
+        const int rest = n - (down ? 3 + r : 0) - (up ? 3 + r : 0);
+        if (rest < ((down && up) ? 6 : 3)) return {};
+        Eigen::MatrixXd cp(n, 3);
+        int row = 0;
+        const auto put = [&](const Eigen::Vector3d& p) { cp.row(row++) = p.transpose(); };
+        if (down) {
+            for (int k = 0; k < 3; ++k) put(hover);
+            for (int k = 1; k <= r; ++k) put(hover + (pad - hover) * s_curve(static_cast<double>(k) / (r + 1)));
+        }
+        for (int k = 0; k < rest; ++k) put(pad);
+        if (up) {
+            for (int k = 1; k <= r; ++k) put(pad + (hover - pad) * s_curve(static_cast<double>(k) / (r + 1)));
+            for (int k = 0; k < 3; ++k) put(hover);
+        }
+        const trajectory::QuinticBSpline spline(cp, window);
+        bool within = true;
+        constexpr int kSamples = 200;
+        for (int i = 0; i <= kSamples && within; ++i) {
+            const double t = window * i / kSamples;
+            within = std::abs(spline.velocity(t).z()) <= v && std::abs(spline.acceleration(t).z()) <= a &&
+                     std::abs(spline.jerk(t).z()) <= j;
+        }
+        if (within) return cp;
+    }
+}
+
+// One drone's vertical range near its pad in one phase of a transition (a
+// point when lo == hi). Phases: 0 the first takeoff's climb before the solved
+// part, 1 the start, 2 the end, 3 the descent after the last transition.
+// `group` > 0: a move several drones make in lockstep (same phase, same
+// profile), so their spacing is their pads'; pairs within one group aren't
+// checked against each other. Group 0: a drone that stays still.
+struct Occupancy {
+    int plan = 0;
+    int phase = 0;
+    Eigen::Vector2d xy = Eigen::Vector2d::Zero();
+    double lo = 0.0;
+    double hi = 0.0;
+    int group = 0;
+};
+
+enum OccupancyGroup {
+    kStill = 0,
+    kDescendGroup = 1,
+    kDescendClimbDownGroup = 2,
+    kClimbGroup = 3,
+    kDescendClimbUpGroup = 4,
+    kPreludeGroup = 5,
+    kFinalGroup = 6,
+    kArriveHoverGroup = 7,
+    kLeaveHoverGroup = 8,
+};
+
+std::vector<Occupancy> pad_occupancies(const std::vector<PadPlan>& plans, double height) {
+    std::vector<Occupancy> out;
+    for (int i = 0; i < static_cast<int>(plans.size()); ++i) {
+        const PadPlan& p = plans[i];
+        if (!p.pad_related()) continue;
+        const Eigen::Vector3d hover = p.pad + Eigen::Vector3d(0.0, 0.0, height);
+        const auto at = [&](int phase, const Eigen::Vector3d& x, int group) {
+            out.push_back({i, phase, x.head<2>(), x.z(), x.z(), group});
+        };
+        const auto column = [&](int phase, int group) {
+            out.push_back({i, phase, p.pad.head<2>(), p.pad.z(), p.pad.z() + height, group});
+        };
+        switch (p.move) {
+            case PadMove::kStay:
+                for (int phase = 0; phase < 3; ++phase) at(phase, p.start, kStill);
+                if (p.final_descent) column(3, kFinalGroup); else at(3, p.start, kStill);
+                break;
+            case PadMove::kDescend:
+                column(1, kDescendGroup);
+                at(2, p.pad, kStill);
+                at(3, p.pad, kStill);
+                break;
+            case PadMove::kClimb:
+                at(0, p.pad, kStill);
+                at(1, p.pad, kStill);
+                column(2, kClimbGroup);
+                break;
+            case PadMove::kDescendClimb:
+                column(1, kDescendClimbDownGroup);
+                column(2, kDescendClimbUpGroup);
+                break;
+            case PadMove::kNone:
+                switch (p.leave) {
+                    case Leave::kPrelude:
+                        column(0, kPreludeGroup);
+                        at(1, hover, kLeaveHoverGroup);
+                        break;
+                    case Leave::kFromHover:
+                        at(1, hover, kLeaveHoverGroup);
+                        break;
+                    case Leave::kOldWay:
+                        at(0, p.start, kStill);
+                        at(1, p.start, kStill);
+                        break;
+                    case Leave::kNone:
+                        break;
+                }
+                switch (p.arrive) {
+                    case Arrive::kToHover:
+                        at(2, hover, kArriveHoverGroup);
+                        if (p.final_descent) column(3, kFinalGroup);
+                        break;
+                    case Arrive::kOldWay:
+                        at(2, p.end, kStill);
+                        at(3, p.end, kStill);
+                        break;
+                    case Arrive::kNone:
+                        break;
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+double occupancy_distance(const Occupancy& a, const Occupancy& b) {
+    const double gap = std::max(0.0, std::max(a.lo, b.lo) - std::min(a.hi, b.hi));
+    return std::hypot((a.xy - b.xy).norm(), gap);
+}
+
+// Drones whose vertical move (or hover point) comes closer than
+// `min_distance` to another pad-related drone in the same phase, outside its
+// own lockstep group. When both move, the later one gives way.
+std::vector<int> pad_conflicts(const std::vector<PadPlan>& plans, double height, double min_distance) {
+    const std::vector<Occupancy> occ = pad_occupancies(plans, height);
+    std::vector<int> conflicted;
+    for (size_t a = 0; a < occ.size(); ++a) {
+        for (size_t b = a + 1; b < occ.size(); ++b) {
+            const Occupancy& x = occ[a];
+            const Occupancy& y = occ[b];
+            if (x.plan == y.plan || x.phase != y.phase) continue;
+            if (x.group == kStill && y.group == kStill) continue;  // the slots' own spacing
+            if (x.group == y.group) continue;
+            if (occupancy_distance(x, y) >= min_distance) continue;
+            conflicted.push_back(y.group != kStill ? y.plan : x.plan);
+        }
+    }
+    std::sort(conflicted.begin(), conflicted.end());
+    conflicted.erase(std::unique(conflicted.begin(), conflicted.end()), conflicted.end());
+    return conflicted;
+}
+
+// Gives up a drone's vertical move: section 1.28's fallback, the old way.
+// False when it has none left to give up.
+bool downgrade_pad_plan(PadPlan& p, bool last) {
+    switch (p.move) {
+        case PadMove::kDescend:
+        case PadMove::kDescendClimb:
+            p.move = PadMove::kStay;  // stays at its hover point
+            p.end = p.start;
+            p.final_descent = last;
+            p.next = {last ? PadKind::kOnPad : PadKind::kHover, p.pad};
+            return true;
+        case PadMove::kClimb:
+            p.move = PadMove::kStay;  // stays on its pad, leaves it the old way next time
+            p.end = p.start;
+            p.next = {PadKind::kOnPad, p.pad};
+            return true;
+        case PadMove::kStay:
+            return false;
+        case PadMove::kNone:
+            if (p.arrive == Arrive::kToHover) {
+                p.arrive = Arrive::kOldWay;
+                p.final_descent = false;
+                p.end = p.pad;
+                p.next = {PadKind::kOnPad, p.pad};
+                return true;
+            }
+            if (p.leave == Leave::kPrelude) {
+                p.leave = Leave::kOldWay;
+                p.start = p.pad;
+                return true;
+            }
+            return false;
+    }
+    return false;
+}
+
+// Section 1.28's rule table for one transition. `state` and `P` are per slot
+// (the solver's drone order), `Q`, `target_is_pad` and `next_leaves` per
+// target: next_leaves = 1 when the drone parked there leaves in the next
+// transition. `first`: the show's first transition (a drone leaving its pad
+// climbs before the solved part). `last`: the show's last transition (drones
+// ending at a hover point descend after it).
+std::vector<PadPlan> plan_pad_moves(const std::vector<PadState>& state, const Eigen::MatrixXd& P,
+                                    const Eigen::MatrixXd& Q, const std::vector<int>& assignment,
+                                    const std::vector<char>& target_is_pad, const std::vector<int>& next_leaves,
+                                    bool first, bool last, double height, double min_distance) {
+    const int n = static_cast<int>(state.size());
+    const Eigen::Vector3d up(0.0, 0.0, height);
+    std::vector<PadPlan> plans(n);
+    for (int i = 0; i < n; ++i) {
+        const int j = assignment[i];
+        PadPlan& p = plans[i];
+        const PadState& s = state[i];
+        const Eigen::Vector3d q = Q.row(j).transpose();
+        p.start = P.row(i).transpose();
+        p.end = q;
+        p.next = {PadKind::kAir, Eigen::Vector3d::Zero()};
+        if (s.kind != PadKind::kAir && target_is_pad[j] && (q - s.pad).norm() < 1e-6) {
+            // Stays parked on (or above) its pad.
+            p.pad = s.pad;
+            const bool leaves_next = !last && next_leaves[j] == 1;
+            if (s.kind == PadKind::kHover) {
+                p.move = leaves_next ? PadMove::kDescendClimb : PadMove::kDescend;
+                p.end = leaves_next ? p.start : s.pad;
+                p.next = {leaves_next ? PadKind::kHover : PadKind::kOnPad, s.pad};
+            } else if (leaves_next) {
+                p.move = PadMove::kClimb;
+                p.end = s.pad + up;
+                p.next = {PadKind::kHover, s.pad};
+            } else {
+                p.move = PadMove::kStay;
+                p.end = p.start;
+                p.next = {PadKind::kOnPad, s.pad};
+            }
+            continue;
+        }
+        if (s.kind != PadKind::kAir && target_is_pad[j]) {
+            // A move to another pad: prohibited in the slot assignment and
+            // never seen; flown the old way, start to end.
+            p.pad = q;
+            p.leave = Leave::kOldWay;
+            p.arrive = Arrive::kOldWay;
+            p.next = {PadKind::kOnPad, q};
+            continue;
+        }
+        if (s.kind == PadKind::kHover) {
+            p.pad = s.pad;
+            p.leave = Leave::kFromHover;
+        } else if (s.kind == PadKind::kOnPad) {
+            p.pad = s.pad;
+            if (first) {
+                p.leave = Leave::kPrelude;
+                p.start = s.pad + up;
+            } else {
+                p.leave = Leave::kOldWay;  // its climb was given up earlier
+            }
+        } else if (target_is_pad[j]) {
+            p.pad = q;
+            p.arrive = Arrive::kToHover;
+            p.end = q + up;
+            p.next = {PadKind::kHover, q};
+            if (last) {
+                p.final_descent = true;
+                p.next = {PadKind::kOnPad, q};
+            }
+        }
+    }
+    // The column check: give up vertical moves until none comes too close to
+    // another pad-related drone.
+    for (int round = 0; round <= n; ++round) {
+        bool changed = false;
+        for (int i : pad_conflicts(plans, height, min_distance)) changed = downgrade_pad_plan(plans[i], last) || changed;
+        if (!changed) break;
+    }
+    return plans;
+}
+
+// Whether a prescribed pad move fits every window the solver may use for a
+// transition of `duration`: the planned one and every gatekeeper retry's
+// longer one (sub-stage windows, `count` control points each).
+bool prescribed_fits(const PadPlan& plan, double height, double duration, int count, const CoreConfig& config) {
+    const bool down = plan.move == PadMove::kDescend || plan.move == PadMove::kDescendClimb;
+    const bool up = plan.move == PadMove::kClimb || plan.move == PadMove::kDescendClimb;
+    std::vector<double> totals{duration};
+    const ContinuousGatekeeperConfig& gk = config.solver.continuous_gatekeeper;
+    if (gk.auto_retry_with_expansion) {
+        for (int r = 1; r <= gk.max_retry_count; ++r) totals.push_back(totals.back() * gk.expansion_factor);
+    }
+    for (double total : totals) {
+        const int windows = optimizer::substage_count(total, config);
+        for (int w = 0; w < windows; ++w) {
+            if (pad_window_control_points(plan.pad, height, down, up, w * total / windows, (w + 1) * total / windows,
+                                          total, count, config)
+                    .rows() == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Gives up prescribed moves that don't fit their windows and vertical moves
+// that fail the column check, rebuilding the solver problems after each
+// round (`rebuild`), until nothing changes.
+void settle_pad_plans(std::vector<PadPlan>& plans, const std::vector<optimizer::DroneTransitionProblem>& problems,
+                      const std::function<void()>& rebuild, double height, double duration, double min_distance,
+                      bool last, const CoreConfig& config) {
+    for (size_t round = 0; round <= plans.size(); ++round) {
+        const int count = optimizer::transition_num_control_points(problems, config);
+        bool changed = false;
+        for (PadPlan& plan : plans) {
+            if (plan.prescribed() && !prescribed_fits(plan, height, duration, count, config)) {
+                changed = downgrade_pad_plan(plan, last) || changed;
+            }
+        }
+        for (int i : pad_conflicts(plans, height, min_distance)) changed = downgrade_pad_plan(plans[i], last) || changed;
+        if (!changed) return;
+        rebuild();
+    }
+}
+
+// The planning distance (min_distance_m plus the collision margin).
+double meta_min_distance(const CoreConfig& config) {
+    return config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
+}
+
+// A drone waiting at rest at `at` (no vertical move).
+TrajectorySegment still_segment(const Eigen::Vector3d& at, double t_start, double duration, int num_control_points,
+                                const Eigen::Vector3i& color) {
+    return vertical_segment(at, 0.0, t_start, duration, num_control_points, color);
+}
+
+// The report of one transition's pad moves (TransitionTiming::pad_moves).
+PadMoves count_pad_moves(const std::vector<PadPlan>& plans) {
+    PadMoves m;
+    for (const PadPlan& p : plans) {
+        if (p.arrive == Arrive::kToHover) ++m.parked;
+        if (p.move == PadMove::kDescend || p.move == PadMove::kDescendClimb || p.final_descent) ++m.landed;
+        if (p.move == PadMove::kClimb || p.move == PadMove::kDescendClimb || p.leave == Leave::kPrelude) ++m.climbed;
+        if (p.move == PadMove::kStay && p.start.z() > p.pad.z() + 1e-6) ++m.hovered;
+        if (p.leave == Leave::kOldWay) ++m.old_way;
+        if (p.arrive == Arrive::kOldWay) ++m.old_way;
+    }
+    return m;
 }
 
 // The design's own safety settings on top of the resolved config, shared by
@@ -272,6 +648,43 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     std::map<int, DroneTrajectory> trajectories_by_drone;
     for (int i = 0; i < n; ++i) trajectories_by_drone[i].drone_id = i;
 
+    // Section 1.28: every pad visit vertical, through a hover point
+    // `pad_height` above the pad. Each drone's pad state per slot (every
+    // drone starts on its launch pad).
+    const double pad_height = std::max(config.solver.landing_approach_height_m, 0.0);
+    const bool pad_rule =
+        pad_height > 0.0 && slots_keep_distance(P, config.solver.continuous_gatekeeper.min_allowable_distance_m);
+    const double enforced_min_distance = result.metadata.min_distance_enforced_m;
+    std::vector<PadState> pad_state(n);
+    if (pad_rule) {
+        for (int i = 0; i < n; ++i) pad_state[i] = {PadKind::kOnPad, P.row(i).transpose()};
+    }
+    // The slot assignment, with a prohibitive cost for a parked drone moving
+    // to another pad (section 1.28; a hop along the ground). With the rule
+    // on, transition k+1's assignment is made while setting up k (to know
+    // which parked drones leave next) and reused.
+    constexpr double kPadChangeCost = 1e4;
+    const auto assign_slots = [&](const Eigen::MatrixXd& from, const Eigen::MatrixXd& to, const Eigen::MatrixXd& v_xy,
+                                  const std::vector<std::optional<Eigen::Vector3d>>& parked_pad) {
+        assignment::AssignmentInput ain;
+        ain.P = from;
+        ain.Q = to;
+        ain.v_in_xy = v_xy;
+        ain.w_distance = config.weights.w_distance;
+        ain.w_vertical_climb = config.weights.w_vertical_climb;
+        ain.w_heading_change = config.weights.w_heading_change;
+        Eigen::MatrixXd cost = assignment::build_cost_matrix(ain);
+        for (int i = 0; i < static_cast<int>(parked_pad.size()); ++i) {
+            if (!parked_pad[i]) continue;
+            for (int j = 0; j < to.rows(); ++j) {
+                const Eigen::Vector3d q = to.row(j).transpose();
+                if (in_holding_region(q) && (q - *parked_pad[i]).norm() > 1e-6) cost(i, j) += kPadChangeCost;
+            }
+        }
+        return assignment::solve_auction(cost);
+    };
+    std::optional<assignment::AssignmentResult> next_assignment;
+
     // One entry per transition: holding area -> keyframes[0] -> ... ->
     // keyframes[last], then, when the Phase 1 file has `legs` (schema 1.6.0,
     // 1-phase_1.md section 3.8), the return leg keyframes[last] -> holding
@@ -384,86 +797,28 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             transition_progress(e);
         }
 
-        // Section 1.26: a landing leg is solved to hover points straight above
-        // the slots, then every drone descends onto its slot together. Not
-        // when a drone starts parked in the holding region (it would have to
-        // take off to its hover point) or when the slots themselves are closer
-        // than the gatekeeper's distance (the descent keeps their spacing).
-        double landing_height = 0.0;
-        if (spec.lands && config.solver.landing_approach_height_m > 0.0) {
-            landing_height = config.solver.landing_approach_height_m;
-            for (int slot = 0; slot < n && landing_height > 0.0; ++slot) {
-                if (in_holding_region(P.row(slot).transpose())) landing_height = 0.0;
-            }
-            if (landing_height > 0.0 &&
-                !slots_keep_distance(spec.targets, config.solver.continuous_gatekeeper.min_allowable_distance_m)) {
-                landing_height = 0.0;
-            }
-        }
-        Eigen::MatrixXd Q = spec.targets;
-        if (landing_height > 0.0) Q.col(2).array() += landing_height;
-        const double landing_descent_s = landing_height > 0.0 ? vertical_move_duration(landing_height, config) : 0.0;
+        const Eigen::MatrixXd& Q = spec.targets;
         const Eigen::MatrixXi& Q_colors = spec.target_colors;
+        const bool last_transition = (kf_index + 1 == specs.size());
 
-        // Section 1.27 (bug-report P3-04), the mirror for the takeoff: every
-        // drone first climbs straight up from its pad by the same height, all
-        // together, and the transition is solved from those hover points. Not
-        // when a drone stays parked through the first formation (it would be
-        // under or beside a climbing one) or when the pads are closer than the
-        // gatekeeper's distance (the climb keeps their spacing).
-        double takeoff_height = 0.0;
-        if (spec.is_takeoff && config.solver.landing_approach_height_m > 0.0) {
-            takeoff_height = config.solver.landing_approach_height_m;
-            for (int slot = 0; slot < n && takeoff_height > 0.0; ++slot) {
-                if (!in_holding_region(P.row(slot).transpose()) || in_holding_region(Q.row(slot).transpose())) {
-                    takeoff_height = 0.0;
-                }
-            }
-            if (takeoff_height > 0.0 &&
-                !slots_keep_distance(P, config.solver.continuous_gatekeeper.min_allowable_distance_m)) {
-                takeoff_height = 0.0;
+        // Section 1.28: a target in the holding region is a pad (a drone
+        // parking there, or staying parked).
+        std::vector<char> target_is_pad(n, 0);
+        for (int j = 0; j < n; ++j) target_is_pad[j] = in_holding_region(Q.row(j).transpose()) ? 1 : 0;
+
+        std::vector<std::optional<Eigen::Vector3d>> parked_pad(n);
+        if (pad_rule) {
+            for (int i = 0; i < n; ++i) {
+                if (pad_state[i].kind != PadKind::kAir) parked_pad[i] = pad_state[i].pad;
             }
         }
-        const Eigen::MatrixXd pads = P;
-        if (takeoff_height > 0.0) P.col(2).array() += takeoff_height;
-        const double takeoff_climb_s = takeoff_height > 0.0 ? vertical_move_duration(takeoff_height, config) : 0.0;
+        const assignment::AssignmentResult assign_result =
+            next_assignment ? *next_assignment : assign_slots(P, Q, v_in_xy, parked_pad);
+        next_assignment.reset();
 
-        assignment::AssignmentInput ain;
-        ain.P = P;
-        ain.Q = Q;
-        ain.v_in_xy = v_in_xy;
-        ain.w_distance = config.weights.w_distance;
-        ain.w_vertical_climb = config.weights.w_vertical_climb;
-        ain.w_heading_change = config.weights.w_heading_change;
-        const assignment::AssignmentResult assign_result = assignment::solve_auction(assignment::build_cost_matrix(ain));
-
-        double d_max = 0.0;
-        for (int slot = 0; slot < n; ++slot) {
-            const int target_slot = assign_result.assignment[slot];
-            d_max = std::max(d_max, (Q.row(target_slot) - P.row(slot)).norm());
-        }
-
-        // The solved part starts after the takeoff's climb (section 1.27);
-        // the transition itself, and its leg, start at t_cursor.
+        // The transition and its leg start at t_cursor; the solved part after
+        // the first takeoff's climb (section 1.28), set below.
         const double t_leg_start = t_cursor;
-        const double t_start = t_cursor + takeoff_climb_s;
-        // A keyframe transition ends at its keyframe's time (shifted by any
-        // earlier stretch); a leg lasts its target, or just T_min when Auto.
-        // Legs always get the T_min floor: "Auto" means the minimum, and a
-        // target is flown as max(target, T_min) (1-phase_1.md section 3.8).
-        // A leg's target covers its climb or descent too (sections 1.26, 1.27).
-        const double nominal_t_end =
-            spec.is_leg
-                ? t_start + std::max(spec.target_duration_sec.value_or(0.0) - landing_descent_s - takeoff_climb_s, 0.0)
-                : spec.keyframe_time_sec + time_stretch_offset;
-        const double nominal_duration = std::max(nominal_t_end - t_start, 1e-6);
-
-        double duration = nominal_duration;
-        if (config.solver.auto_scale_transition_time || spec.is_leg) {
-            const double t_min = trajectory::compute_min_transition_time(
-                d_max, v_limit_axis, a_limit_axis, j_limit_axis, config.solver.kinematic_slack_fraction);
-            duration = std::max(nominal_duration, t_min);
-        }
         // Staggering only delays departure from the holding area (kf_index
         // 0); every drone's own solved maneuver still takes exactly
         // `duration` — the wave adds a per-row wait before/after it, folded
@@ -564,44 +919,138 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             }
         }
 
+        // Section 1.28: look one transition ahead (which parked drones leave
+        // next), then this transition's pad moves.
+        std::vector<int> next_leaves(n, 0);
+        if (pad_rule && !last_transition) {
+            const TransitionSpec& next_spec = specs[kf_index + 1];
+            Eigen::MatrixXd next_v_xy = Eigen::MatrixXd::Zero(n, 2);
+            std::vector<std::optional<Eigen::Vector3d>> next_parked(n);
+            for (int slot = 0; slot < n; ++slot) {
+                const int j = assign_result.assignment[slot];
+                if (target_is_pad[j]) {
+                    next_parked[j] = Q.row(j).transpose();
+                } else if (!is_final_keyframe) {
+                    next_v_xy.row(j) = formation_velocity.head<2>().transpose();
+                }
+            }
+            next_assignment = assign_slots(Q, next_spec.targets, next_v_xy, next_parked);
+            for (int j = 0; j < n; ++j) {
+                if (!target_is_pad[j]) continue;
+                const int jn = next_assignment->assignment[j];
+                next_leaves[j] = in_holding_region(next_spec.targets.row(jn).transpose()) ? 0 : 1;
+            }
+        }
+        std::vector<PadPlan> plans;
+        if (pad_rule) {
+            plans = plan_pad_moves(pad_state, P, Q, assign_result.assignment, target_is_pad, next_leaves, kf_index == 0,
+                                   last_transition, pad_height, enforced_min_distance);
+        }
+        const auto start_of = [&](int slot) -> Eigen::Vector3d {
+            return pad_rule ? plans[slot].start : Eigen::Vector3d(P.row(slot).transpose());
+        };
+        const auto end_of = [&](int slot) -> Eigen::Vector3d {
+            return pad_rule ? plans[slot].end : Eigen::Vector3d(Q.row(assign_result.assignment[slot]).transpose());
+        };
+
+        double d_max = 0.0;
+        for (int slot = 0; slot < n; ++slot) d_max = std::max(d_max, (end_of(slot) - start_of(slot)).norm());
+
+        const auto any_plan = [&](auto pred) {
+            return pad_rule && std::any_of(plans.begin(), plans.end(), pred);
+        };
+        const double vertical_s = pad_rule ? vertical_move_duration(pad_height, config) : 0.0;
+        const double prelude_s =
+            any_plan([](const PadPlan& p) { return p.leave == Leave::kPrelude; }) ? vertical_s : 0.0;
+        double final_s = any_plan([](const PadPlan& p) { return p.final_descent; }) ? vertical_s : 0.0;
+        const double t_start = t_cursor + prelude_s;
+        // A keyframe transition ends at its keyframe's time (shifted by any
+        // earlier stretch); a leg lasts its target, or just T_min when Auto.
+        // Legs always get the T_min floor: "Auto" means the minimum, and a
+        // target is flown as max(target, T_min) (1-phase_1.md section 3.8).
+        // A leg's target covers its climb before and descent after the solved
+        // part too (section 1.28).
+        const double nominal_t_end =
+            spec.is_leg ? t_start + std::max(spec.target_duration_sec.value_or(0.0) - prelude_s - final_s, 0.0)
+                        : spec.keyframe_time_sec + time_stretch_offset;
+        const double nominal_duration = std::max(nominal_t_end - t_start, 1e-6);
+
+        double duration = nominal_duration;
+        if (config.solver.auto_scale_transition_time || spec.is_leg) {
+            const double t_min = trajectory::compute_min_transition_time(
+                d_max, v_limit_axis, a_limit_axis, j_limit_axis, config.solver.kinematic_slack_fraction);
+            duration = std::max(nominal_duration, t_min);
+        }
+
         std::vector<optimizer::DroneTransitionProblem> problems(n);
-        for (int slot = 0; slot < n; ++slot) {
-            const int target_slot = assign_result.assignment[slot];
+        const auto build_problem = [&](int slot) {
             optimizer::DroneTransitionProblem problem;
             problem.drone_id = drone_id_by_slot[slot];
-            problem.start.position = P.row(slot).transpose();
+            problem.start.position = start_of(slot);
             problem.start.velocity = actual_velocity.row(slot).transpose();
             problem.start.acceleration = Eigen::Vector3d::Zero();
-            problem.end.position = Q.row(target_slot).transpose();
+            problem.end.position = end_of(slot);
             // A holding-area target mid-show is a drone parking (or staying
             // parked): it lands and stops like at the show's end. With the
             // fly-through speed it reached its pad at ~3 m/s sideways and,
             // starting the next transition at that speed, skidded ~2 m into
             // the neighbouring pad (2026-09-29, 150_cone: 0.159 m on every
             // attempt). At rest, a drone that stays parked is also held
-            // fixed by the solver (docs/2-phase_2.md section 1.15).
-            problem.end.velocity = is_final_keyframe || in_holding_region(problem.end.position)
-                                       ? Eigen::Vector3d::Zero()
-                                       : formation_velocity;
+            // fixed by the solver (docs/2-phase_2.md section 1.15). Section
+            // 1.28: a drone reaching or staying at a pad or its hover point.
+            const bool at_rest_end =
+                pad_rule ? (plans[slot].arrive != Arrive::kNone || plans[slot].move != PadMove::kNone)
+                         : in_holding_region(problem.end.position);
+            problem.end.velocity = is_final_keyframe || at_rest_end ? Eigen::Vector3d::Zero() : formation_velocity;
             problem.end.acceleration = Eigen::Vector3d::Zero();
             // Section 1.14: only drones flying the show keep out of the zone;
             // taking off, landing or parked (start or end in the holding
-            // region) are exempt. A landing drone's hover point may be above
-            // the region (section 1.26); it lands, so it is exempt too.
+            // region) are exempt, and so is every pad-related drone (its hover
+            // point may be above the region, section 1.28).
             problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
-                               !in_holding_region(problem.end.position) && landing_height == 0.0 &&
-                               takeoff_height == 0.0;
+                               !in_holding_region(problem.end.position) &&
+                               !(pad_rule && plans[slot].pad_related());
+            if (pad_rule) {
+                const PadPlan& plan = plans[slot];
+                if (plan.leave == Leave::kFromHover || plan.leave == Leave::kPrelude ||
+                    plan.arrive == Arrive::kToHover) {
+                    // Its own floor (section 1.28): half the hover height above
+                    // its pad, never above its own start or end.
+                    problem.floor_m = std::min({plan.pad.z() + 0.5 * pad_height, problem.start.position.z(),
+                                                problem.end.position.z()});
+                }
+                if (plan.prescribed()) {
+                    const Eigen::Vector3d pad = plan.pad;
+                    const bool down = plan.move == PadMove::kDescend || plan.move == PadMove::kDescendClimb;
+                    const bool up = plan.move == PadMove::kClimb || plan.move == PadMove::kDescendClimb;
+                    const double height = pad_height;
+                    const CoreConfig& cfg = config;
+                    problem.prescribed = [pad, down, up, height, &cfg](double t0, double t1, double total, int count) {
+                        Eigen::MatrixXd cp = pad_window_control_points(pad, height, down, up, t0, t1, total, count, cfg);
+                        if (cp.rows() == 0) throw std::logic_error("section 1.28: a prescribed pad move doesn't fit its window");
+                        return cp;
+                    };
+                }
+            }
             problems[slot] = problem;
+        };
+        for (int slot = 0; slot < n; ++slot) build_problem(slot);
+
+        // Section 1.28: a prescribed move must fit every window the solver may
+        // use, for the planned duration and every retry's longer one; a move
+        // that doesn't is given up (the drone stays at its hover point or on
+        // its pad), then the column check runs again.
+        if (pad_rule) {
+            settle_pad_plans(
+                plans, problems, [&] { for (int slot = 0; slot < n; ++slot) build_problem(slot); }, pad_height, duration,
+                enforced_min_distance, last_transition, config);
+            if (final_s == 0.0 && any_plan([](const PadPlan& p) { return p.final_descent; })) final_s = vertical_s;
         }
 
         std::vector<optimizer::DroneTrajectorySolution> solutions;
         optimizer::SolveStats solve_stats;
         try {
-            const CoreConfig solve_config =
-                landing_height > 0.0   ? hover_leg_config(config, spec.targets, landing_height, P)
-                : takeoff_height > 0.0 ? hover_leg_config(config, pads, takeoff_height, Q)
-                                       : config;
-            solutions = optimizer::solve(problems, duration, solve_config, transition_progress, &solve_stats);
+            solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
         } catch (const optimizer::SafetyViolationError& e) {
             // docs/5-studio_gui.md B1: put the rejection in show context
             // (which transition, show time, the rejected splines next to the
@@ -614,7 +1063,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             failure.to_keyframe = spec.to_name;
             failure.transition_start_time_sec = t_leg_start;
             failure.transition_duration_sec =
-                (report.attempts.empty() ? duration : report.attempts.back().duration_sec) + takeoff_climb_s;
+                (report.attempts.empty() ? duration : report.attempts.back().duration_sec) + prelude_s;
             failure.metadata = result.metadata;
             failure.metadata.total_duration_sec = t_leg_start + failure.transition_duration_sec;
 
@@ -628,12 +1077,15 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 DroneTrajectory& traj = rejected_by_drone[drone_id];
                 traj.drone_id = drone_id;
                 int segment_index = static_cast<int>(trajectories_by_drone[drone_id].segments.size());
-                if (takeoff_height > 0.0) {  // section 1.27: the climb comes first
-                    TrajectorySegment climb =
-                        vertical_segment(pads.row(slot).transpose(), takeoff_height, t_leg_start, takeoff_climb_s,
-                                         config.solver.num_control_points_min, actual_color.row(slot));
-                    climb.segment_index = segment_index++;
-                    traj.segments.push_back(std::move(climb));
+                if (prelude_s > 0.0) {  // section 1.28: the first takeoff's climb comes first
+                    TrajectorySegment first =
+                        plans[slot].leave == Leave::kPrelude
+                            ? vertical_segment(plans[slot].pad, pad_height, t_leg_start, prelude_s,
+                                               config.solver.num_control_points_min, actual_color.row(slot))
+                            : still_segment(P.row(slot).transpose(), t_leg_start, prelude_s,
+                                            config.solver.num_control_points_min, actual_color.row(slot));
+                    first.segment_index = segment_index++;
+                    traj.segments.push_back(std::move(first));
                 }
                 double stage_t_start = t_start;
                 for (const auto& stage : report.rejected_solutions[slot].stages) {
@@ -788,7 +1240,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                     const double post_gap_s = this_t_end - stage_t_start;
                     if (post_gap_s > 1e-9) {
                         trajectory::BoundaryConditions rest;
-                        rest.position = Q.row(target_slot).transpose();
+                        rest.position = problems[slot].end.position;  // its pad's hover point when parking
                         rest.velocity = Eigen::Vector3d::Zero();
                         rest.acceleration = Eigen::Vector3d::Zero();
                         TrajectorySegment hold;
@@ -835,27 +1287,37 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 outcomes = build_slot_outcomes(false, &t_end);
             }
         }
-        // Section 1.26: every drone has reached its hover point at rest at
-        // t_end (a landing leg is never staggered); now all descend together.
-        if (landing_height > 0.0) {
+        // Section 1.28: after the last transition, every drone that ended it
+        // at a hover point descends onto its pad, all together (the others
+        // stay where they are). Every drone is at rest at t_end (the last
+        // transition is held and never staggered).
+        if (final_s > 0.0) {
             for (int slot = 0; slot < n; ++slot) {
-                outcomes[slot].segments.push_back(landing_descent_segment(
-                    spec.targets.row(assign_result.assignment[slot]).transpose(), landing_height, t_end,
-                    landing_descent_s, config.solver.num_control_points_min));
+                const Eigen::Vector3i color = outcomes[slot].next_color;
+                outcomes[slot].segments.push_back(
+                    plans[slot].final_descent
+                        ? landing_descent_segment(plans[slot].pad, pad_height, t_end, final_s,
+                                                  config.solver.num_control_points_min)
+                        : still_segment(problems[slot].end.position, t_end, final_s,
+                                        config.solver.num_control_points_min, color));
                 outcomes[slot].next_velocity = Eigen::Vector3d::Zero();
             }
-            t_end += landing_descent_s;
+            t_end += final_s;
         }
-        // Section 1.27: before the solved part (and any staggered wait, which
-        // now happens at the hover points), every drone climbs off its pad,
-        // all together. Rigid like the descent, so it's safe exactly when the
-        // pads are (checked above); outside the stagger re-check on purpose.
-        if (takeoff_height > 0.0) {
+        // Section 1.28: before the first transition's solved part (and any
+        // staggered wait, now at the hover points), the drones leaving their
+        // pads climb off them, all together; the others wait. Rigid, so safe
+        // where the column check passed; outside the stagger re-check on
+        // purpose.
+        if (prelude_s > 0.0) {
             for (int slot = 0; slot < n; ++slot) {
                 auto& segments = outcomes[slot].segments;
                 segments.insert(segments.begin(),
-                                vertical_segment(pads.row(slot).transpose(), takeoff_height, t_leg_start, takeoff_climb_s,
-                                                 config.solver.num_control_points_min, actual_color.row(slot)));
+                                plans[slot].leave == Leave::kPrelude
+                                    ? vertical_segment(plans[slot].pad, pad_height, t_leg_start, prelude_s,
+                                                       config.solver.num_control_points_min, actual_color.row(slot))
+                                    : still_segment(P.row(slot).transpose(), t_leg_start, prelude_s,
+                                                    config.solver.num_control_points_min, actual_color.row(slot)));
             }
         }
         if (spec.is_leg && spec.is_takeoff) {
@@ -871,9 +1333,10 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         transition_timing.to_keyframe = spec.to_name;
         transition_timing.start_time_sec = t_leg_start;
         transition_timing.end_time_sec = t_end;
-        transition_timing.planned_duration_sec = duration + landing_descent_s + takeoff_climb_s;
-        transition_timing.flown_duration_sec = flown_duration + landing_descent_s + takeoff_climb_s;
+        transition_timing.planned_duration_sec = duration + prelude_s + final_s;
+        transition_timing.flown_duration_sec = flown_duration + prelude_s + final_s;
         transition_timing.attempts = solve_stats.attempts;
+        if (pad_rule) transition_timing.pad_moves = count_pad_moves(plans);
         result.metadata.transitions.push_back(std::move(transition_timing));
 
         if (spec.is_leg) {
@@ -902,7 +1365,21 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             next_drone_id_by_slot[target_slot] = drone_id;
         }
 
-        P = spec.targets;  // the slots themselves after a landing's descent
+        // Where every drone really is now (section 1.28: at a hover point, or
+        // on its pad after a descent), and its pad state.
+        if (pad_rule) {
+            std::vector<PadState> next_state(n);
+            Eigen::MatrixXd next_P(n, 3);
+            for (int slot = 0; slot < n; ++slot) {
+                const int j = assign_result.assignment[slot];
+                next_state[j] = plans[slot].next;
+                next_P.row(j) = (plans[slot].final_descent ? plans[slot].pad : problems[slot].end.position).transpose();
+            }
+            pad_state = std::move(next_state);
+            P = next_P;
+        } else {
+            P = spec.targets;
+        }
         v_in_xy = next_actual_velocity.leftCols(2);
         actual_velocity = next_actual_velocity;
         actual_color = next_actual_color;
@@ -1006,58 +1483,112 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     }
 
     // As the show's return leg: any free holding-area slot (the auction
-    // picks), landing at rest, LEDs fading to off; to hover points above the
-    // slots and then straight down (section 1.26), under the same conditions.
+    // picks), landing at rest, LEDs fading to off; through hover points above
+    // the slots (section 1.28). A drone already parked (on its pad, or at its
+    // hover point) at the abort time keeps its pad.
     const Eigen::MatrixXd slots = compute_holding_positions(n, project.metadata.holding_area,
                                                             project.metadata.holding_area.grid_spacing_m);
-    double landing_height = std::max(config.solver.landing_approach_height_m, 0.0);
-    for (int slot = 0; slot < n && landing_height > 0.0; ++slot) {
-        if (in_holding_region(P.row(slot).transpose())) landing_height = 0.0;
+    const double pad_height = std::max(config.solver.landing_approach_height_m, 0.0);
+    const bool pad_rule =
+        pad_height > 0.0 && slots_keep_distance(slots, config.solver.continuous_gatekeeper.min_allowable_distance_m);
+    const double enforced_min_distance = meta_min_distance(config);
+    std::vector<PadState> state(n);
+    std::vector<std::optional<Eigen::Vector3d>> parked(n);
+    if (pad_rule) {
+        const Eigen::Vector3d up(0.0, 0.0, pad_height);
+        for (int slot = 0; slot < n; ++slot) {
+            const Eigen::Vector3d at = P.row(slot).transpose();
+            for (int k = 0; k < slots.rows(); ++k) {
+                const Eigen::Vector3d pad = slots.row(k).transpose();
+                if ((at - pad).norm() < 1e-6) state[slot] = {PadKind::kOnPad, pad};
+                if ((at - pad - up).norm() < 1e-6) state[slot] = {PadKind::kHover, pad};
+            }
+            if (state[slot].kind != PadKind::kAir) parked[slot] = state[slot].pad;
+        }
     }
-    if (landing_height > 0.0 &&
-        !slots_keep_distance(slots, config.solver.continuous_gatekeeper.min_allowable_distance_m)) {
-        landing_height = 0.0;
-    }
-    Eigen::MatrixXd Q = slots;
-    Q.col(2).array() += landing_height;
     assignment::AssignmentInput ain;
     ain.P = P;
-    ain.Q = Q;
+    ain.Q = slots;
     ain.v_in_xy = start_velocity.leftCols(2);
     ain.w_distance = config.weights.w_distance;
     ain.w_vertical_climb = config.weights.w_vertical_climb;
     ain.w_heading_change = config.weights.w_heading_change;
-    const assignment::AssignmentResult assign_result = assignment::solve_auction(assignment::build_cost_matrix(ain));
-
-    double d_max = 0.0;
-    for (int slot = 0; slot < n; ++slot) {
-        d_max = std::max(d_max, (Q.row(assign_result.assignment[slot]) - P.row(slot)).norm());
+    Eigen::MatrixXd cost = assignment::build_cost_matrix(ain);
+    for (int i = 0; i < n; ++i) {
+        if (!parked[i]) continue;
+        for (int j = 0; j < n; ++j) {
+            if ((slots.row(j).transpose() - *parked[i]).norm() > 1e-6) cost(i, j) += 1e4;  // no pad change
+        }
     }
-    // Timed like a leg: Auto = T_min, a target is flown as max(target, T_min).
+    const assignment::AssignmentResult assign_result = assignment::solve_auction(cost);
+
+    std::vector<PadPlan> plans;
+    if (pad_rule) {
+        plans = plan_pad_moves(state, P, slots, assign_result.assignment, std::vector<char>(n, 1), std::vector<int>(n, 0),
+                               false, true, pad_height, enforced_min_distance);
+    }
+    const auto start_of = [&](int slot) -> Eigen::Vector3d {
+        return pad_rule ? plans[slot].start : Eigen::Vector3d(P.row(slot).transpose());
+    };
+    const auto end_of = [&](int slot) -> Eigen::Vector3d {
+        return pad_rule ? plans[slot].end : Eigen::Vector3d(slots.row(assign_result.assignment[slot]).transpose());
+    };
+    double d_max = 0.0;
+    for (int slot = 0; slot < n; ++slot) d_max = std::max(d_max, (end_of(slot) - start_of(slot)).norm());
+    const auto any_final = [&] {
+        return pad_rule && std::any_of(plans.begin(), plans.end(), [](const PadPlan& p) { return p.final_descent; });
+    };
+    const double vertical_s = pad_rule ? vertical_move_duration(pad_height, config) : 0.0;
+    double final_s = any_final() ? vertical_s : 0.0;
+    // Timed like a leg: Auto = T_min, a target is flown as max(target, T_min);
+    // a target covers the descent after the solved part too (section 1.28).
     const double t_min = trajectory::compute_min_transition_time(
         d_max, trajectory::inscribed_axis_limit(config.kinematics.v_max_mps),
         trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2),
         trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3), config.solver.kinematic_slack_fraction);
-    // A target covers the descent too (section 1.26).
-    const double landing_descent_s = landing_height > 0.0 ? vertical_move_duration(landing_height, config) : 0.0;
-    const double duration = std::max({target_duration_sec.value_or(0.0) - landing_descent_s, t_min, 1e-6});
+    const double duration = std::max({target_duration_sec.value_or(0.0) - final_s, t_min, 1e-6});
 
     std::vector<optimizer::DroneTransitionProblem> problems(n);
-    for (int slot = 0; slot < n; ++slot) {
+    const auto build_problem = [&](int slot) {
         optimizer::DroneTransitionProblem problem;
         problem.drone_id = drone_id_by_slot[slot];
-        problem.start.position = P.row(slot).transpose();
+        problem.start.position = start_of(slot);
         problem.start.velocity = start_velocity.row(slot).transpose();
         problem.start.acceleration = Eigen::Vector3d::Zero();
-        problem.end.position = Q.row(assign_result.assignment[slot]).transpose();
+        problem.end.position = end_of(slot);
         problem.end.velocity = Eigen::Vector3d::Zero();
         problem.end.acceleration = Eigen::Vector3d::Zero();
         // Every drone ends in the holding region, so all are exempt from the
         // keep-out zone, exactly as on the show's return leg (section 1.14);
-        // a hover point above the region lands too (section 1.26).
+        // a hover point above the region lands too (section 1.28).
         problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
-                           !in_holding_region(problem.end.position) && landing_height == 0.0;
+                           !in_holding_region(problem.end.position) && !pad_rule;
+        if (pad_rule) {
+            const PadPlan& plan = plans[slot];
+            if (plan.arrive == Arrive::kToHover) {
+                problem.floor_m = std::min({plan.pad.z() + 0.5 * pad_height, problem.start.position.z(),
+                                            problem.end.position.z()});
+            }
+            if (plan.prescribed()) {
+                const Eigen::Vector3d pad = plan.pad;
+                const bool down = plan.move == PadMove::kDescend || plan.move == PadMove::kDescendClimb;
+                const bool up = plan.move == PadMove::kClimb || plan.move == PadMove::kDescendClimb;
+                const CoreConfig& cfg = config;
+                problem.prescribed = [pad, down, up, pad_height, &cfg](double t0, double t1, double total, int count) {
+                    Eigen::MatrixXd cp = pad_window_control_points(pad, pad_height, down, up, t0, t1, total, count, cfg);
+                    if (cp.rows() == 0) throw std::logic_error("section 1.28: a prescribed pad move doesn't fit its window");
+                    return cp;
+                };
+            }
+        }
         problems[slot] = problem;
+    };
+    for (int slot = 0; slot < n; ++slot) build_problem(slot);
+    if (pad_rule) {
+        settle_pad_plans(
+            plans, problems, [&] { for (int slot = 0; slot < n; ++slot) build_problem(slot); }, pad_height, duration,
+            enforced_min_distance, true, config);
+        if (final_s == 0.0 && any_final()) final_s = vertical_s;
     }
 
     const std::string to_name = "holding_area";
@@ -1091,9 +1622,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     std::vector<optimizer::DroneTrajectorySolution> solutions;
     optimizer::SolveStats solve_stats;
     try {
-        const CoreConfig solve_config =
-            landing_height > 0.0 ? hover_leg_config(config, slots, landing_height, P) : config;
-        solutions = optimizer::solve(problems, duration, solve_config, transition_progress, &solve_stats);
+        solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
     } catch (const optimizer::SafetyViolationError& e) {
         const optimizer::SafetyViolationReport& report = e.report();
         TransitionSafetyFailure failure;
@@ -1156,15 +1685,18 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
             traj.segments.push_back(std::move(segment));
             stage_t_start = stage_t_end;
         }
-        if (landing_height > 0.0) {
-            TrajectorySegment descent =
-                landing_descent_segment(slots.row(assign_result.assignment[slot]).transpose(), landing_height,
-                                        flown_duration, landing_descent_s, config.solver.num_control_points_min);
-            descent.segment_index = static_cast<int>(traj.segments.size());
-            traj.segments.push_back(std::move(descent));
+        if (final_s > 0.0) {  // section 1.28: the drones at their hover points land, together
+            TrajectorySegment last =
+                plans[slot].final_descent
+                    ? landing_descent_segment(plans[slot].pad, pad_height, flown_duration, final_s,
+                                              config.solver.num_control_points_min)
+                    : still_segment(problems[slot].end.position, flown_duration, final_s,
+                                    config.solver.num_control_points_min, off);
+            last.segment_index = static_cast<int>(traj.segments.size());
+            traj.segments.push_back(std::move(last));
         }
     }
-    const double total_duration = flown_duration + landing_descent_s;
+    const double total_duration = flown_duration + final_s;
     for (auto& [drone_id, traj] : by_drone) result.trajectories.push_back(std::move(traj));
 
     TransitionTiming timing;
@@ -1173,7 +1705,8 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     timing.to_keyframe = to_name;
     timing.start_time_sec = 0.0;
     timing.end_time_sec = total_duration;
-    timing.planned_duration_sec = duration + landing_descent_s;
+    timing.planned_duration_sec = duration + final_s;
+    if (pad_rule) timing.pad_moves = count_pad_moves(plans);
     timing.flown_duration_sec = total_duration;
     timing.attempts = solve_stats.attempts;
     meta.transitions.push_back(timing);

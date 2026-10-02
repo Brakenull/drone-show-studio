@@ -69,6 +69,13 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
         d["planned_duration_sec"] = t.planned_duration_sec;
         d["flown_duration_sec"] = t.flown_duration_sec;
         d["attempts"] = t.attempts;
+        py::dict pad;  // section 1.28
+        pad["parked"] = t.pad_moves.parked;
+        pad["landed"] = t.pad_moves.landed;
+        pad["climbed"] = t.pad_moves.climbed;
+        pad["hovered"] = t.pad_moves.hovered;
+        pad["old_way"] = t.pad_moves.old_way;
+        d["pad_moves"] = pad;
         transitions.append(d);
     }
     metadata["transitions"] = transitions;
