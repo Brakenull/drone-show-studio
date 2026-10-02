@@ -173,6 +173,10 @@ struct SolverOptions {
     double max_substage_duration_s = 12.0;
     bool enable_staggered_takeoff = true;
     double staggered_wave_delay_s = 1.2;
+    // Section 1.26 (2026-10-02, bug-report P3-03): landing drones first fly
+    // to a hover point this far straight above their slot, then all descend
+    // vertically together. 0 = fly straight onto the slot (before).
+    double landing_approach_height_m = 2.0;
     // Rev 2.7 section 1.8: soft-slack collision formulation (a quadratic
     // penalty w_slack_collision on a nonnegative slack variable per collision
     // row, instead of a hard separation bound) so OSQP always has a
@@ -274,6 +278,7 @@ inline void apply_json_overrides(CoreConfig& config, const nlohmann::json& root)
         config_detail::read_key(s, "max_substage_duration_s", config.solver.max_substage_duration_s);
         config_detail::read_key(s, "enable_staggered_takeoff", config.solver.enable_staggered_takeoff);
         config_detail::read_key(s, "staggered_wave_delay_s", config.solver.staggered_wave_delay_s);
+        config_detail::read_key(s, "landing_approach_height_m", config.solver.landing_approach_height_m);
         config_detail::read_key(s, "w_slack_collision", config.solver.w_slack_collision);
         config_detail::read_key(s, "enable_graph_coloring", config.solver.enable_graph_coloring);
         config_detail::read_key(s, "cluster_distance_threshold_m", config.solver.cluster_distance_threshold_m);

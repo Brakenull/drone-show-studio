@@ -16,7 +16,7 @@ interface Props {
 }
 
 /** Groups most people need; the solver-tuning ones sit folded under them. */
-const MAIN_GROUPS = new Set(["Safety check", "Motion limits", "Takeoff"]);
+const MAIN_GROUPS = new Set(["Safety check", "Motion limits", "Takeoff and landing"]);
 
 const show = (v: Value) => (typeof v === "boolean" ? (v ? "On" : "Off") : v === "disabled" ? "Off" : String(v));
 

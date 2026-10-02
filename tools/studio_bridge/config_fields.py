@@ -65,10 +65,14 @@ FIELDS: list[dict[str, Any]] = [
     _f("solver.kinematic_slack_fraction", "Speed headroom",
        "Fraction of the limits kept free for swerving around other drones.", group="Motion limits",
        minimum=0.0),
-    # Takeoff.
+    # Takeoff and landing.
     _f("solver.enable_staggered_takeoff", "Staggered takeoff", "Launch rows one after another instead of all "
-       "at once.", "boolean", group="Takeoff"),
-    _f("solver.staggered_wave_delay_s", "Delay between rows", "Seconds.", group="Takeoff", minimum=0.0),
+       "at once.", "boolean", group="Takeoff and landing"),
+    _f("solver.staggered_wave_delay_s", "Delay between rows", "Seconds.", group="Takeoff and landing", minimum=0.0),
+    _f("solver.landing_approach_height_m", "Landing hover height",
+       "Metres. Landing drones first stop this far straight above their slot, then all descend "
+       "vertically together. 0 = fly straight onto the slot.", group="Takeoff and landing", risky="lower",
+       minimum=0.0),
     # Planner.
     _f("solver.max_scp_iterations", "Refining passes", "Maximum refining passes per transition part.",
        "integer", group="Planner", minimum=1),

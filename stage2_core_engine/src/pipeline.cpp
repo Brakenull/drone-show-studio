@@ -64,6 +64,96 @@ Eigen::MatrixXd build_hold_segment_control_points(const trajectory::BoundaryCond
     return trajectory::seed_control_points(state, hold_end, hold_duration, num_control_points);
 }
 
+// Section 1.26 (bug-report P3-03): landing drones first fly to a hover point
+// `height` straight above their slot and then all descend vertically
+// together. Flown straight onto a ground slot, a drone glided in low and
+// sideways (down to 2-6 cm above the ground for metres) and any downward
+// push (downwash from the stacked slots above, a gust) put it on the ground
+// short of its slot.
+//
+// The descent (and, since section 1.27, the takeoff's climb), rest to rest
+// and straight up or down by `rise` (negative = down): seed_control_points()
+// pins the first and last three control points to the two rest states and
+// puts the others on the straight line between them. Its duration is the
+// shortest (in 5 % steps from the quintic T_min estimate, no slack) whose
+// velocity, acceleration and jerk stay within the per-axis limits the solver
+// uses; it's the same up and down.
+TrajectorySegment vertical_segment(const Eigen::Vector3d& from, double rise, double t_start, double duration,
+                                   int num_control_points, const Eigen::Vector3i& color) {
+    trajectory::BoundaryConditions start;
+    start.position = from;
+    start.velocity = Eigen::Vector3d::Zero();
+    start.acceleration = Eigen::Vector3d::Zero();
+    trajectory::BoundaryConditions end = start;
+    end.position = from + Eigen::Vector3d(0.0, 0.0, rise);
+    TrajectorySegment segment;
+    segment.start_time_sec = t_start;
+    segment.end_time_sec = t_start + duration;
+    segment.control_points = trajectory::seed_control_points(start, end, duration, num_control_points);
+    segment.knot_vector =
+        trajectory::clamped_knot_vector(static_cast<int>(segment.control_points.rows()), trajectory::kDegree, duration);
+    segment.color_keyframes = {ColorKeyframe{segment.start_time_sec, color}, ColorKeyframe{segment.end_time_sec, color}};
+    return segment;
+}
+
+TrajectorySegment landing_descent_segment(const Eigen::Vector3d& slot, double height, double t_start, double duration,
+                                          int num_control_points) {
+    return vertical_segment(slot + Eigen::Vector3d(0.0, 0.0, height), -height, t_start, duration, num_control_points,
+                            Eigen::Vector3i::Zero());
+}
+
+double vertical_move_duration(double height, const CoreConfig& config) {
+    const double v = trajectory::inscribed_axis_limit(config.kinematics.v_max_mps);
+    const double a = trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2);
+    const double j = trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3);
+    const int num_control_points = config.solver.num_control_points_min;
+    double duration = std::max(trajectory::compute_min_transition_time(height, v, a, j, 0.0), 0.1);
+    constexpr int kSamples = 200;
+    for (int attempt = 0; attempt < 200; ++attempt, duration *= 1.05) {
+        const TrajectorySegment s = vertical_segment(Eigen::Vector3d::Zero(), -height, 0.0, duration, num_control_points,
+                                                     Eigen::Vector3i::Zero());
+        const trajectory::QuinticBSpline spline(s.control_points, duration);
+        bool within = true;
+        for (int i = 0; i <= kSamples && within; ++i) {
+            const double t = duration * i / kSamples;
+            within = std::abs(spline.velocity(t).z()) <= v && std::abs(spline.acceleration(t).z()) <= a &&
+                     std::abs(spline.jerk(t).z()) <= j;
+        }
+        if (within) return duration;
+    }
+    return duration;
+}
+
+// The config a landing's approach (or, section 1.27, a takeoff after its
+// climb) is solved with: the floor raised to half the hover height above the
+// lowest slot, so the solver can't route a drone under the others down to the
+// ground on its way between the hover points and the formation (first try on
+// 200_cube: 22 drones still flew sideways down to 6 cm, up to 3 m/s). Never
+// above the lowest point at the other end (`far_end`), which must stay
+// reachable. A design without a ground has no floor (section 1.13), and gets
+// none here either.
+CoreConfig hover_leg_config(const CoreConfig& config, const Eigen::MatrixXd& slots, double height,
+                            const Eigen::MatrixXd& far_end) {
+    CoreConfig approach = config;
+    const double raised = std::min(slots.col(2).minCoeff() + 0.5 * height, far_end.col(2).minCoeff());
+    if (approach.safety.altitude_floor_m && *approach.safety.altitude_floor_m < raised) {
+        approach.safety.altitude_floor_m = raised;
+    }
+    return approach;
+}
+
+// All landing drones descend by the same vector over the same time, so the
+// distance between any two of them during the descent is the distance
+// between their slots: the descent is safe exactly when the slots are.
+bool slots_keep_distance(const Eigen::MatrixXd& slots, double min_distance) {
+    for (int a = 0; a < slots.rows(); ++a) {
+        for (int b = a + 1; b < slots.rows(); ++b) {
+            if ((slots.row(a) - slots.row(b)).norm() < min_distance) return false;
+        }
+    }
+    return true;
+}
+
 // The design's own safety settings on top of the resolved config, shared by
 // the show and its return paths.
 CoreConfig show_config(const ProjectData& project, const CoreConfig& base_config, const HoldingRegion& holding_region) {
@@ -196,6 +286,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         bool is_leg = false;             // timed by a leg target instead of the keyframe timeline
         std::optional<double> target_duration_sec;  // leg target; nullopt = Auto (T_min)
         bool ends_at_rest = false;       // Formation Hold / landing (v = 0) vs fly-through
+        bool lands = false;              // return leg: `targets` are the slots (section 1.26)
     };
     // Every fixed point of the show must already be on or above the floor:
     // the solver can bend paths, not move formation points or launch slots.
@@ -266,6 +357,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         ret.is_leg = true;
         ret.target_duration_sec = legs.return_duration_sec;
         ret.ends_at_rest = true;
+        ret.lands = true;
         specs.push_back(std::move(ret));
     }
 
@@ -292,8 +384,49 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             transition_progress(e);
         }
 
-        const Eigen::MatrixXd& Q = spec.targets;
+        // Section 1.26: a landing leg is solved to hover points straight above
+        // the slots, then every drone descends onto its slot together. Not
+        // when a drone starts parked in the holding region (it would have to
+        // take off to its hover point) or when the slots themselves are closer
+        // than the gatekeeper's distance (the descent keeps their spacing).
+        double landing_height = 0.0;
+        if (spec.lands && config.solver.landing_approach_height_m > 0.0) {
+            landing_height = config.solver.landing_approach_height_m;
+            for (int slot = 0; slot < n && landing_height > 0.0; ++slot) {
+                if (in_holding_region(P.row(slot).transpose())) landing_height = 0.0;
+            }
+            if (landing_height > 0.0 &&
+                !slots_keep_distance(spec.targets, config.solver.continuous_gatekeeper.min_allowable_distance_m)) {
+                landing_height = 0.0;
+            }
+        }
+        Eigen::MatrixXd Q = spec.targets;
+        if (landing_height > 0.0) Q.col(2).array() += landing_height;
+        const double landing_descent_s = landing_height > 0.0 ? vertical_move_duration(landing_height, config) : 0.0;
         const Eigen::MatrixXi& Q_colors = spec.target_colors;
+
+        // Section 1.27 (bug-report P3-04), the mirror for the takeoff: every
+        // drone first climbs straight up from its pad by the same height, all
+        // together, and the transition is solved from those hover points. Not
+        // when a drone stays parked through the first formation (it would be
+        // under or beside a climbing one) or when the pads are closer than the
+        // gatekeeper's distance (the climb keeps their spacing).
+        double takeoff_height = 0.0;
+        if (spec.is_takeoff && config.solver.landing_approach_height_m > 0.0) {
+            takeoff_height = config.solver.landing_approach_height_m;
+            for (int slot = 0; slot < n && takeoff_height > 0.0; ++slot) {
+                if (!in_holding_region(P.row(slot).transpose()) || in_holding_region(Q.row(slot).transpose())) {
+                    takeoff_height = 0.0;
+                }
+            }
+            if (takeoff_height > 0.0 &&
+                !slots_keep_distance(P, config.solver.continuous_gatekeeper.min_allowable_distance_m)) {
+                takeoff_height = 0.0;
+            }
+        }
+        const Eigen::MatrixXd pads = P;
+        if (takeoff_height > 0.0) P.col(2).array() += takeoff_height;
+        const double takeoff_climb_s = takeoff_height > 0.0 ? vertical_move_duration(takeoff_height, config) : 0.0;
 
         assignment::AssignmentInput ain;
         ain.P = P;
@@ -310,13 +443,19 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             d_max = std::max(d_max, (Q.row(target_slot) - P.row(slot)).norm());
         }
 
-        const double t_start = t_cursor;
+        // The solved part starts after the takeoff's climb (section 1.27);
+        // the transition itself, and its leg, start at t_cursor.
+        const double t_leg_start = t_cursor;
+        const double t_start = t_cursor + takeoff_climb_s;
         // A keyframe transition ends at its keyframe's time (shifted by any
         // earlier stretch); a leg lasts its target, or just T_min when Auto.
         // Legs always get the T_min floor: "Auto" means the minimum, and a
         // target is flown as max(target, T_min) (1-phase_1.md section 3.8).
-        const double nominal_t_end = spec.is_leg ? t_start + spec.target_duration_sec.value_or(0.0)
-                                                 : spec.keyframe_time_sec + time_stretch_offset;
+        // A leg's target covers its climb or descent too (sections 1.26, 1.27).
+        const double nominal_t_end =
+            spec.is_leg
+                ? t_start + std::max(spec.target_duration_sec.value_or(0.0) - landing_descent_s - takeoff_climb_s, 0.0)
+                : spec.keyframe_time_sec + time_stretch_offset;
         const double nominal_duration = std::max(nominal_t_end - t_start, 1e-6);
 
         double duration = nominal_duration;
@@ -447,16 +586,22 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             problem.end.acceleration = Eigen::Vector3d::Zero();
             // Section 1.14: only drones flying the show keep out of the zone;
             // taking off, landing or parked (start or end in the holding
-            // region) are exempt.
+            // region) are exempt. A landing drone's hover point may be above
+            // the region (section 1.26); it lands, so it is exempt too.
             problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
-                               !in_holding_region(problem.end.position);
+                               !in_holding_region(problem.end.position) && landing_height == 0.0 &&
+                               takeoff_height == 0.0;
             problems[slot] = problem;
         }
 
         std::vector<optimizer::DroneTrajectorySolution> solutions;
         optimizer::SolveStats solve_stats;
         try {
-            solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
+            const CoreConfig solve_config =
+                landing_height > 0.0   ? hover_leg_config(config, spec.targets, landing_height, P)
+                : takeoff_height > 0.0 ? hover_leg_config(config, pads, takeoff_height, Q)
+                                       : config;
+            solutions = optimizer::solve(problems, duration, solve_config, transition_progress, &solve_stats);
         } catch (const optimizer::SafetyViolationError& e) {
             // docs/5-studio_gui.md B1: put the rejection in show context
             // (which transition, show time, the rejected splines next to the
@@ -467,10 +612,11 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             failure.transition_index = static_cast<int>(kf_index);
             failure.from_keyframe = from_keyframe;
             failure.to_keyframe = spec.to_name;
-            failure.transition_start_time_sec = t_start;
-            failure.transition_duration_sec = report.attempts.empty() ? duration : report.attempts.back().duration_sec;
+            failure.transition_start_time_sec = t_leg_start;
+            failure.transition_duration_sec =
+                (report.attempts.empty() ? duration : report.attempts.back().duration_sec) + takeoff_climb_s;
             failure.metadata = result.metadata;
-            failure.metadata.total_duration_sec = t_start + failure.transition_duration_sec;
+            failure.metadata.total_duration_sec = t_leg_start + failure.transition_duration_sec;
 
             failure.completed_trajectories.reserve(trajectories_by_drone.size());
             for (const auto& [drone_id, traj] : trajectories_by_drone) failure.completed_trajectories.push_back(traj);
@@ -482,6 +628,13 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 DroneTrajectory& traj = rejected_by_drone[drone_id];
                 traj.drone_id = drone_id;
                 int segment_index = static_cast<int>(trajectories_by_drone[drone_id].segments.size());
+                if (takeoff_height > 0.0) {  // section 1.27: the climb comes first
+                    TrajectorySegment climb =
+                        vertical_segment(pads.row(slot).transpose(), takeoff_height, t_leg_start, takeoff_climb_s,
+                                         config.solver.num_control_points_min, actual_color.row(slot));
+                    climb.segment_index = segment_index++;
+                    traj.segments.push_back(std::move(climb));
+                }
                 double stage_t_start = t_start;
                 for (const auto& stage : report.rejected_solutions[slot].stages) {
                     const double stage_t_end = stage_t_start + stage.duration;
@@ -682,6 +835,29 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 outcomes = build_slot_outcomes(false, &t_end);
             }
         }
+        // Section 1.26: every drone has reached its hover point at rest at
+        // t_end (a landing leg is never staggered); now all descend together.
+        if (landing_height > 0.0) {
+            for (int slot = 0; slot < n; ++slot) {
+                outcomes[slot].segments.push_back(landing_descent_segment(
+                    spec.targets.row(assign_result.assignment[slot]).transpose(), landing_height, t_end,
+                    landing_descent_s, config.solver.num_control_points_min));
+                outcomes[slot].next_velocity = Eigen::Vector3d::Zero();
+            }
+            t_end += landing_descent_s;
+        }
+        // Section 1.27: before the solved part (and any staggered wait, which
+        // now happens at the hover points), every drone climbs off its pad,
+        // all together. Rigid like the descent, so it's safe exactly when the
+        // pads are (checked above); outside the stagger re-check on purpose.
+        if (takeoff_height > 0.0) {
+            for (int slot = 0; slot < n; ++slot) {
+                auto& segments = outcomes[slot].segments;
+                segments.insert(segments.begin(),
+                                vertical_segment(pads.row(slot).transpose(), takeoff_height, t_leg_start, takeoff_climb_s,
+                                                 config.solver.num_control_points_min, actual_color.row(slot)));
+            }
+        }
         if (spec.is_leg && spec.is_takeoff) {
             // The show's own timeline starts when the takeoff reaches
             // keyframes[0]; later keyframes keep their spacing from it.
@@ -693,16 +869,16 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         transition_timing.index = static_cast<int>(kf_index);
         transition_timing.from_keyframe = spec.from_name;
         transition_timing.to_keyframe = spec.to_name;
-        transition_timing.start_time_sec = t_start;
+        transition_timing.start_time_sec = t_leg_start;
         transition_timing.end_time_sec = t_end;
-        transition_timing.planned_duration_sec = duration;
-        transition_timing.flown_duration_sec = flown_duration;
+        transition_timing.planned_duration_sec = duration + landing_descent_s + takeoff_climb_s;
+        transition_timing.flown_duration_sec = flown_duration + landing_descent_s + takeoff_climb_s;
         transition_timing.attempts = solve_stats.attempts;
         result.metadata.transitions.push_back(std::move(transition_timing));
 
         if (spec.is_leg) {
             LegTiming timing;
-            timing.start_time_sec = t_start;
+            timing.start_time_sec = t_leg_start;
             timing.end_time_sec = t_end;
             timing.target_duration_sec = spec.target_duration_sec;
             (spec.is_takeoff ? result.metadata.takeoff_leg : result.metadata.return_leg) = timing;
@@ -726,7 +902,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             next_drone_id_by_slot[target_slot] = drone_id;
         }
 
-        P = Q;
+        P = spec.targets;  // the slots themselves after a landing's descent
         v_in_xy = next_actual_velocity.leftCols(2);
         actual_velocity = next_actual_velocity;
         actual_color = next_actual_color;
@@ -830,9 +1006,20 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     }
 
     // As the show's return leg: any free holding-area slot (the auction
-    // picks), landing at rest, LEDs fading to off.
-    const Eigen::MatrixXd Q = compute_holding_positions(n, project.metadata.holding_area,
-                                                        project.metadata.holding_area.grid_spacing_m);
+    // picks), landing at rest, LEDs fading to off; to hover points above the
+    // slots and then straight down (section 1.26), under the same conditions.
+    const Eigen::MatrixXd slots = compute_holding_positions(n, project.metadata.holding_area,
+                                                            project.metadata.holding_area.grid_spacing_m);
+    double landing_height = std::max(config.solver.landing_approach_height_m, 0.0);
+    for (int slot = 0; slot < n && landing_height > 0.0; ++slot) {
+        if (in_holding_region(P.row(slot).transpose())) landing_height = 0.0;
+    }
+    if (landing_height > 0.0 &&
+        !slots_keep_distance(slots, config.solver.continuous_gatekeeper.min_allowable_distance_m)) {
+        landing_height = 0.0;
+    }
+    Eigen::MatrixXd Q = slots;
+    Q.col(2).array() += landing_height;
     assignment::AssignmentInput ain;
     ain.P = P;
     ain.Q = Q;
@@ -851,7 +1038,9 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         d_max, trajectory::inscribed_axis_limit(config.kinematics.v_max_mps),
         trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2),
         trajectory::inscribed_axis_limit(config.kinematics.j_max_mps3), config.solver.kinematic_slack_fraction);
-    const double duration = std::max({target_duration_sec.value_or(0.0), t_min, 1e-6});
+    // A target covers the descent too (section 1.26).
+    const double landing_descent_s = landing_height > 0.0 ? vertical_move_duration(landing_height, config) : 0.0;
+    const double duration = std::max({target_duration_sec.value_or(0.0) - landing_descent_s, t_min, 1e-6});
 
     std::vector<optimizer::DroneTransitionProblem> problems(n);
     for (int slot = 0; slot < n; ++slot) {
@@ -864,9 +1053,10 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         problem.end.velocity = Eigen::Vector3d::Zero();
         problem.end.acceleration = Eigen::Vector3d::Zero();
         // Every drone ends in the holding region, so all are exempt from the
-        // keep-out zone, exactly as on the show's return leg (section 1.14).
+        // keep-out zone, exactly as on the show's return leg (section 1.14);
+        // a hover point above the region lands too (section 1.26).
         problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
-                           !in_holding_region(problem.end.position);
+                           !in_holding_region(problem.end.position) && landing_height == 0.0;
         problems[slot] = problem;
     }
 
@@ -901,7 +1091,9 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     std::vector<optimizer::DroneTrajectorySolution> solutions;
     optimizer::SolveStats solve_stats;
     try {
-        solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
+        const CoreConfig solve_config =
+            landing_height > 0.0 ? hover_leg_config(config, slots, landing_height, P) : config;
+        solutions = optimizer::solve(problems, duration, solve_config, transition_progress, &solve_stats);
     } catch (const optimizer::SafetyViolationError& e) {
         const optimizer::SafetyViolationReport& report = e.report();
         TransitionSafetyFailure failure;
@@ -964,7 +1156,15 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
             traj.segments.push_back(std::move(segment));
             stage_t_start = stage_t_end;
         }
+        if (landing_height > 0.0) {
+            TrajectorySegment descent =
+                landing_descent_segment(slots.row(assign_result.assignment[slot]).transpose(), landing_height,
+                                        flown_duration, landing_descent_s, config.solver.num_control_points_min);
+            descent.segment_index = static_cast<int>(traj.segments.size());
+            traj.segments.push_back(std::move(descent));
+        }
     }
+    const double total_duration = flown_duration + landing_descent_s;
     for (auto& [drone_id, traj] : by_drone) result.trajectories.push_back(std::move(traj));
 
     TransitionTiming timing;
@@ -972,19 +1172,19 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     timing.from_keyframe = from_name;
     timing.to_keyframe = to_name;
     timing.start_time_sec = 0.0;
-    timing.end_time_sec = flown_duration;
-    timing.planned_duration_sec = duration;
-    timing.flown_duration_sec = flown_duration;
+    timing.end_time_sec = total_duration;
+    timing.planned_duration_sec = duration + landing_descent_s;
+    timing.flown_duration_sec = total_duration;
     timing.attempts = solve_stats.attempts;
     meta.transitions.push_back(timing);
-    meta.return_leg = LegTiming{0.0, flown_duration, target_duration_sec};
-    meta.total_duration_sec = flown_duration;
+    meta.return_leg = LegTiming{0.0, total_duration, target_duration_sec};
+    meta.total_duration_sec = total_duration;
     result.worst_separation_m = solve_stats.worst_separation_m;
 
     if (transition_progress) {
         ProgressEvent e;
         e.kind = ProgressEvent::Kind::TransitionEnd;
-        e.show_time_sec = flown_duration;
+        e.show_time_sec = total_duration;
         transition_progress(e);
     }
     return result;

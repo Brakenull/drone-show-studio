@@ -24,6 +24,7 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 ### Changed
 
 - **Path planning is 3.5–5× faster:** each refining pass now only considers drone pairs that its largest move could bring within the planning distance, instead of every pair within roughly 5–8 m ("Check only pairs that can meet", on by default; turning it off gives exactly the old plans). Measured on the same files: `500_cube` 3 h 22 min → 44 min, `200_cube` 897 s → 254 s, `150_cone` 1 715 s → 354 s, with the same closest approaches to within 8 mm except one transition of `150_cone` (1.481 m instead of 1.506 m) and `500_cube`'s return leg (1.500 m instead of 1.452 m), all above the 1.45 m check.
+- **Landing through a hover point:** the return leg (and every rain-return path) now brings each drone to rest 2 m straight above its slot, flying no lower than 1 m above the lowest slot on the way, and then lowers the whole fleet straight down together ("Landing hover height" under Takeoff and landing; 0 = the old landing). Drones used to glide in sideways a few centimetres above the ground, and in the stress test a gust or the downwash of the drones parked above pushed some onto the ground short of their slot, where a neighbour hit them. `500_cube`, `200_cube` and `150_cone` now pass the stress test (0 crash flights, was 97, 3 and 4 of 100); shows are about 5.5 s longer.
 
 ## [1.1.0] — 2026-09-30
 
