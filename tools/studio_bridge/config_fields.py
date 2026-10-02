@@ -87,7 +87,11 @@ FIELDS: list[dict[str, Any]] = [
     _f("solver.repair_seed", "Start from flyable paths", "Move each drone's starting path to the closest one "
        "within the speed, acceleration and jerk limits before planning.", "boolean", group="Planner"),
     _f("solver.trust_region_delta_m", "Largest move per pass", "Metres.", group="Planner", minimum=0.0),
-    _f("solver.num_control_points_min", "Path detail (minimum)", "Control points per path segment.",
+    _f("solver.tight_broad_phase", "Check only pairs that can meet",
+       "Each pass only considers drone pairs that its largest move could bring within the planning "
+       "distance. Off = the older, much wider search (slower).", "boolean", group="Planner"),
+    _f("solver.broad_phase_curve_margin_m", "Pair search margin", "Metres added on each side for path "
+       "curvature between samples.", group="Planner", risky="lower", minimum=0.0),    _f("solver.num_control_points_min", "Path detail (minimum)", "Control points per path segment.",
        "integer", group="Planner", minimum=6),
     _f("solver.adaptive_control_points", "More detail for longer paths", "", "boolean", group="Planner"),
     _f("solver.max_substage_duration_s", "Longest transition part", "Seconds. Longer transitions are split.",

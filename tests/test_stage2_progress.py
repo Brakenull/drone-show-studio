@@ -25,7 +25,9 @@ KEYS = {
     "scp_iteration": ATTEMPT_KEYS | {"substage", "substage_count", "iteration", "max_iterations", "conflict_pairs",
                                      "max_delta_m", "min_separation_m", "converged", "step_accepted",
                                      "trust_region_m", "best_min_separation_m", "qp_tier_counts",
-                                     "seed_repair_counts"},
+                                     "seed_repair_counts", "step_sec", "sweep_sec", "broad_phase_sec",
+                                     "scan_sec", "rows_cpu_sec", "qp_cpu_sec", "setup_sec", "candidate_pairs",
+                                     "collision_rows", "color_count"},
 }
 
 

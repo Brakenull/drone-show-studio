@@ -6,7 +6,9 @@ takeoff pass only on a retry, flown for 30 s x 1.25 per retry; with `legs` the
 return leg too (2026-09-30: takeoff 1.577 m then 1.611 m, return 1.593 m then
 1.745 m). The seed repair (2-phase_2.md section 1.21) is off: with it every
 attempt of this show lands near 2.0 m, so no floor makes a retry pass where the
-first attempt failed; this test is about retry timing, not the solver. The tests
+first attempt failed; this test is about retry timing, not the solver. The tight
+broad phase (section 1.25) is off for the same reason: with it the first takeoff
+attempt reaches 1.602 m and the return 2.0 m (2026-10-02), so neither retries. The tests
 accept any retry and check the timing against the attempt actually flown. The show
 timeline, LED fades, leg times and `metadata.transitions` must all follow the
 flown durations. Skips if drone_core is not built for this Python.
@@ -28,7 +30,7 @@ from smoke_test_stage2 import build_phase1_json, evaluate  # noqa: E402
 FLOOR_M = 1.60
 N = 8
 RED = [255, 0, 0]
-OVERRIDES = {"solver": {"auto_scale_transition_time": False, "repair_seed": False,
+OVERRIDES = {"solver": {"auto_scale_transition_time": False, "repair_seed": False, "tight_broad_phase": False,
                         "continuous_gatekeeper": {"min_allowable_distance_m": FLOOR_M, "max_retry_count": 2}}}
 
 

@@ -64,6 +64,24 @@ struct ProgressEvent {
     // Section 1.21, per sub-stage (same on each of its steps): drones whose
     // starting path was already flyable, was repaired, or couldn't be.
     int seed_repair_counts[3] = {0, 0, 0};
+    // Where the step's time went (2026-10-02, measurement only). Wall times:
+    // the whole step, its sweep of drone QPs, and the candidate's evaluation
+    // split into broad phase (hash + conflict edges) and dense pair scans.
+    // The *_cpu_sec fields are summed over the sweep's drone solves (all
+    // threads): building collision rows vs. the QP tiers themselves (incl.
+    // any row re-collection a fallback tier does).
+    // setup_sec is the sub-stage's seeding, repair and first evaluation
+    // (same on each of its steps).
+    double step_sec = 0.0;
+    double sweep_sec = 0.0;
+    double broad_phase_sec = 0.0;
+    double scan_sec = 0.0;
+    double rows_cpu_sec = 0.0;
+    double qp_cpu_sec = 0.0;
+    double setup_sec = 0.0;
+    int candidate_pairs = 0;  // broad-phase (drone pair, time window) entries the step's QPs read
+    int collision_rows = 0;   // collision + keep-out rows over the sweep's drone QPs (first build)
+    int color_count = 0;      // sequential batches of the sweep (clusters when coloring is off)
 
     // AttemptEnd.
     double worst_separation_m = std::numeric_limits<double>::infinity();

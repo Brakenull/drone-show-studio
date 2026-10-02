@@ -19,6 +19,11 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 - **The rain rule in the simulator:** when a scenario's rain reaches the alert level, the simulated fleet is called home after the reaction time: it finishes its move and flies the planned return path of that formation. The result says when the return was called, the last drone home, and whether every drone was home before the rain limit (now a pass criterion), and the playback marks the alert, the call and the limit.
 - **Fly this:** pick a moment on the readiness chart and simulate rain reaching the alert level then, with the chosen window.
 - **Drone profile:** new `environment` keys for the rain alert level, the rain limit level and the reaction time (placeholders until the drone model's water rating is known).
+- **Path planning — timing in the log:** every refining pass in `stage2/log.ndjson` now says where its time went (the drone solves, the pair search, the close-pass checks) and how big it was (pairs, constraints, solve batches).
+
+### Changed
+
+- **Path planning is 3.5–5× faster:** each refining pass now only considers drone pairs that its largest move could bring within the planning distance, instead of every pair within roughly 5–8 m ("Check only pairs that can meet", on by default; turning it off gives exactly the old plans). Measured on the same files: `500_cube` 3 h 22 min → 44 min, `200_cube` 897 s → 254 s, `150_cone` 1 715 s → 354 s, with the same closest approaches to within 8 mm except one transition of `150_cone` (1.481 m instead of 1.506 m) and `500_cube`'s return leg (1.500 m instead of 1.452 m), all above the 1.45 m check.
 
 ## [1.1.0] — 2026-09-30
 

@@ -230,6 +230,16 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
                                              e.qp_tier_counts[3]);
         d["seed_repair_counts"] = py::make_tuple(e.seed_repair_counts[0], e.seed_repair_counts[1],
                                                  e.seed_repair_counts[2]);
+        d["step_sec"] = e.step_sec;
+        d["sweep_sec"] = e.sweep_sec;
+        d["broad_phase_sec"] = e.broad_phase_sec;
+        d["scan_sec"] = e.scan_sec;
+        d["rows_cpu_sec"] = e.rows_cpu_sec;
+        d["qp_cpu_sec"] = e.qp_cpu_sec;
+        d["setup_sec"] = e.setup_sec;
+        d["candidate_pairs"] = e.candidate_pairs;
+        d["collision_rows"] = e.collision_rows;
+        d["color_count"] = e.color_count;
     } else if (e.kind == Kind::AttemptEnd) {
         d["worst_separation_m"] = finite_or_none(e.worst_separation_m);
         d["required_separation_m"] = e.required_separation_m;
