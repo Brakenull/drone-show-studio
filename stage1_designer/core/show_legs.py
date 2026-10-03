@@ -17,7 +17,7 @@ from typing import NamedTuple, Optional
 import numpy as np
 
 from ..config import LEG_MODE_AUTO
-from .holding_area import compute_holding_layout
+from .holding_area import compute_holding_row_indices
 from .kinematic_validator import compute_min_safe_duration
 
 
@@ -55,6 +55,9 @@ def launch_wave_span(
     size,
     max_height: float,
     grid_spacing_m: float,
+    layer_spacing_m: Optional[float] = None,
+    staggered_layers: bool = False,
+    *,
     wave_delay_s: float,
 ) -> float:
     """Extra takeoff time from Stage 2's staggered takeoff: the last launch
@@ -62,11 +65,10 @@ def launch_wave_span(
     as `compute_holding_row_indices` does in Stage 2)."""
     if fleet_size <= 0 or wave_delay_s <= 0.0:
         return 0.0
-    layout = compute_holding_layout(fleet_size, center, size, max_height, grid_spacing_m)
-    capacity = layout.cols * layout.rows
-    fullest_layer = min(capacity, fleet_size)
-    max_row = (fullest_layer - 1) // layout.cols
-    return max_row * wave_delay_s
+    rows = compute_holding_row_indices(
+        fleet_size, center, size, max_height, grid_spacing_m, layer_spacing_m, staggered_layers
+    )
+    return int(rows.max()) * wave_delay_s
 
 
 def estimate_leg(

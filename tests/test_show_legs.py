@@ -37,12 +37,19 @@ def test_estimate_uses_the_auto_fix_duration_rule():
 
 def test_wave_span_counts_rows_within_a_layer():
     # 40 x 10 m at 2 m -> 21 columns x 6 rows = 126 slots per layer.
-    assert launch_wave_span(21, CENTER, SIZE, 15.0, 2.0, 1.2) == 0.0  # one row
-    assert launch_wave_span(22, CENTER, SIZE, 15.0, 2.0, 1.2) == pytest.approx(1.2)
-    assert launch_wave_span(300, CENTER, SIZE, 15.0, 2.0, 1.2) == pytest.approx(5 * 1.2)  # full layers: rows 0..5
-    assert launch_wave_span(300, CENTER, SIZE, 15.0, 2.0, 0.0) == 0.0
+    assert launch_wave_span(21, CENTER, SIZE, 15.0, 2.0, wave_delay_s=1.2) == 0.0  # one row
+    assert launch_wave_span(22, CENTER, SIZE, 15.0, 2.0, wave_delay_s=1.2) == pytest.approx(1.2)
+    assert launch_wave_span(300, CENTER, SIZE, 15.0, 2.0, wave_delay_s=1.2) == pytest.approx(5 * 1.2)  # full layers: rows 0..5
+    assert launch_wave_span(300, CENTER, SIZE, 15.0, 2.0, wave_delay_s=0.0) == 0.0
 
 
 def test_target_duration_export_values():
     assert target_duration(LEG_MODE_AUTO, 30.0) is None
     assert target_duration(LEG_MODE_TARGET, 42) == 42.0
+
+
+def test_launch_wave_span_staggered_layers():
+    # Odd layers have 5 rows instead of 6: the deepest row is still row 5.
+    on_ground = (0.0, -30.0, 0.0)
+    assert launch_wave_span(126, on_ground, SIZE, 15.0, 2.0, 4.0, True, wave_delay_s=1.0) == pytest.approx(5.0)
+    assert launch_wave_span(30, on_ground, SIZE, 15.0, 2.0, 4.0, True, wave_delay_s=1.0) == pytest.approx(1.0)

@@ -53,11 +53,11 @@ def semantic_errors(data: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def holding_positions(meta: dict[str, Any]) -> np.ndarray:
-    from stage1_designer.core.holding_area import compute_holding_positions
+    from stage1_designer.core.holding_area import compute_holding_positions, layout_options
 
     ha = meta["holding_area"]
     return compute_holding_positions(meta["fleet_size"], tuple(ha["center"]), tuple(ha["size"]),
-                                     ha["max_height"], ha["grid_spacing_m"])
+                                     ha["max_height"], ha["grid_spacing_m"], **layout_options(ha))
 
 
 PARKED_TOLERANCE_M = 1e-3
@@ -70,11 +70,11 @@ def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray, slots
     §1.15); only the others overlap the area."""
     from scipy.spatial import cKDTree
 
-    from stage1_designer.core.holding_area import holding_region_bounds
+    from stage1_designer.core.holding_area import holding_region_bounds, layout_options
 
     ha = meta["holding_area"]
     lo, hi = holding_region_bounds(meta["fleet_size"], tuple(ha["center"]), tuple(ha["size"]),
-                                   ha["max_height"], ha["grid_spacing_m"])
+                                   ha["max_height"], ha["grid_spacing_m"], **layout_options(ha))
     inside = targets[np.all((targets >= lo) & (targets <= hi), axis=1)]
     if not len(inside):
         return 0, 0
@@ -84,20 +84,26 @@ def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray, slots
 
 def holding_capacity(meta: dict[str, Any], slots: np.ndarray) -> dict[str, Any]:
     """How many drones the declared holding area takes (Phase 1's own layout rules), and what the layout
-    actually used. Phase 1 widens the area along X when the fleet doesn't fit (holding_area.py)."""
-    from stage1_designer.core.holding_area import layer_grid_dims, max_layer_count
+    actually used. Phase 1 widens the area along X when the fleet doesn't fit (holding_area.py). With
+    staggered layers (schema 1.7.0) the per-layer capacity alternates: `layer_capacities` lists each layer's."""
+    from stage1_designer.core.holding_area import compute_holding_layout, layout_options, max_layer_count
 
     ha = meta["holding_area"]
     spacing = ha["grid_spacing_m"]
-    cols, rows = layer_grid_dims(ha["size"][0], ha["size"][1], spacing)
-    max_layers = max_layer_count(ha["center"][2], ha["max_height"], spacing)
+    options = layout_options(ha)
+    declared = compute_holding_layout(0, tuple(ha["center"]), tuple(ha["size"]), ha["max_height"], spacing, **options)
+    max_layers = max_layer_count(ha["center"][2], ha["max_height"], declared.layer_spacing_m)
+    layer_capacities = [declared.layer(m).capacity for m in range(max_layers)]
     width_used = float(np.ptp(slots[:, 0])) if len(slots) else 0.0
     return {
-        "per_layer": cols * rows,
+        "per_layer": layer_capacities[0],
+        "layer_capacities": layer_capacities,
+        "layer_spacing_m": declared.layer_spacing_m,
+        "staggered_layers": options["staggered_layers"],
         "max_layers": max_layers,
-        "capacity": cols * rows * max_layers,
+        "capacity": sum(layer_capacities),
         "layers_used": int(len(np.unique(np.round(slots[:, 2], 6)))),
-        "widened": width_used > (cols - 1) * spacing + 1e-6,
+        "widened": width_used > (declared.cols - 1) * spacing + 1e-6,
         "width_used_m": width_used,
     }
 
@@ -150,7 +156,7 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
     if capacity["widened"]:
         warnings.append({"path": "/project_metadata/holding_area",
                          "message": f"The holding area ({ha['size'][0]:g} × {ha['size'][1]:g} m, up to "
-                                    f"{capacity['max_layers']} layers at {ha['grid_spacing_m']:g} m spacing) has room "
+                                    f"{capacity['max_layers']} layers {capacity['layer_spacing_m']:g} m apart) has room "
                                     f"for {capacity['capacity']} drones, and the fleet has {meta['fleet_size']}. "
                                     f"Phase 1 widened it to {capacity['width_used_m']:.1f} m along X to fit "
                                     "everyone, so it covers more ground than its size says."})

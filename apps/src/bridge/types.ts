@@ -373,10 +373,17 @@ export interface ValidationSummary {
     size: [number, number];
     max_height: number;
     grid_spacing_m: number;
+    layer_spacing_m: number;
+    /** Schema 1.7.0: alternate layers shifted half a slot (absent in older files). */
+    staggered_layers?: boolean;
     layers: number;
     /** Phase 1's layout rules applied to the declared area (tools/studio_bridge/validate.py). */
     capacity: {
       per_layer: number;
+      /** Each layer's capacity, bottom first (alternates with staggered layers). */
+      layer_capacities: number[];
+      layer_spacing_m: number;
+      staggered_layers: boolean;
       max_layers: number;
       capacity: number;
       layers_used: number;

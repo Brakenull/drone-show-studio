@@ -56,7 +56,7 @@ def get_clearance_results(settings):
     if formations is None:
         return None
     ha = settings.holding_area
-    args = (settings.fleet_size, tuple(ha.center), tuple(ha.size), ha.max_height, ha.grid_spacing_m)
+    args = holding_area_scene.layout_args(settings)
     key = (args, ha.show_clearance_m)
     if _formation_cache["key"] != key:
         lo, hi = holding_area_core.holding_region_bounds(*args)
@@ -89,6 +89,27 @@ def get_ground_results(settings):
     if formations is None:
         return None
     return ground_core.check_formations_ground(formations, settings.ground_z_m)
+
+
+def min_layer_gap(settings) -> float:
+    """Smallest allowed holding-area layer gap (spec section 3.2): a pad's
+    vertical path to its hover point (Stage 2's landing approach height)
+    keeps Stage 2's planning distance below the slot above, and stacked slots
+    stay a grid step apart."""
+    planning = settings.min_distance_m * config.STAGE2_PLANNING_DISTANCE_FACTOR
+    hover_clear = holding_area_core.min_layer_spacing(config.STAGE2_HOVER_HEIGHT_M, planning)
+    return max(hover_clear, settings.holding_area.grid_spacing_m)
+
+
+def layer_gap_message(settings):
+    """Caution (locks Export) when the fleet stacks layers closer than
+    `min_layer_gap`, else None. A one-layer holding area has no gap to check."""
+    if holding_area_scene.layout_for(settings).layers < 2:
+        return None
+    gap, minimum = settings.holding_area.layer_spacing_m, min_layer_gap(settings)
+    if gap >= minimum - 1e-9:
+        return None
+    return f"Layer gap {gap:g} m is below {minimum:.2f} m: pads' hover points reach the layer above"
 
 
 def clearance_cautions(settings) -> list:
@@ -133,13 +154,12 @@ def get_leg_estimates(settings):
     first, last = _leg_cache["first"], _leg_cache["last"]
     if first is None or len(first) != settings.fleet_size:
         return None
-    ha = settings.holding_area
-    args = (settings.fleet_size, tuple(ha.center), tuple(ha.size), ha.max_height, ha.grid_spacing_m)
+    args = holding_area_scene.layout_args(settings)
     v_max = configured_v_max(settings)
     key = (args, v_max)
     if _leg_cache["key"] != key:
         slots = holding_area_core.compute_holding_positions(*args)
-        waves = show_legs.launch_wave_span(*args, config.STAGE2_STAGGER_WAVE_DELAY_S)
+        waves = show_legs.launch_wave_span(*args, wave_delay_s=config.STAGE2_STAGGER_WAVE_DELAY_S)
         _leg_cache["estimates"] = (
             show_legs.estimate_leg(slots, first, v_max, wave_span_sec=waves),
             show_legs.estimate_leg(last, slots, v_max),
@@ -204,6 +224,28 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         default=config.DEFAULT_GRID_SPACING_M,
         min=config.MIN_GRID_SPACING_M,
         unit="LENGTH",
+        update=_on_layout_changed,
+    )
+    layer_spacing_m: bpy.props.FloatProperty(
+        name="Layer Gap",
+        description=(
+            "Height between stacked layers of parked drones. At least the hover height "
+            "(2 m) plus Stage 2's planning distance, so a pad's vertical path stays clear "
+            "of the layer above; more gap means less downwash on the drones below "
+            "(spec section 3.2)"
+        ),
+        default=config.DEFAULT_LAYER_SPACING_M,
+        min=config.MIN_GRID_SPACING_M,
+        unit="LENGTH",
+        update=_on_layout_changed,
+    )
+    staggered_layers: bpy.props.BoolProperty(
+        name="Shift Alternate Layers",
+        description=(
+            "Shift every other layer half a slot in X and Y (one column and one row fewer), "
+            "so no parked drone sits straight above another (spec section 3.2)"
+        ),
+        default=config.DEFAULT_STAGGERED_LAYERS,
         update=_on_layout_changed,
     )
     show_clearance_m: bpy.props.FloatProperty(
@@ -439,9 +481,12 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.label(text="Holding Area")
         box.prop(settings, "show_holding_area_object", toggle=True, icon="MESH_CUBE")
         layout_info = holding_area_scene.layout_for(settings)
+        per_layer = f"{layout_info.cols} x {layout_info.rows} grid"
+        if layout_info.staggered and layout_info.layers > 1:
+            per_layer = f"{layout_info.layer(0).capacity} / {layout_info.layer(1).capacity} per layer (shifted)"
         box.label(
-            text=f"{settings.fleet_size} slots: {layout_info.cols} x {layout_info.rows} grid, "
-            f"{layout_info.layers} layer(s)",
+            text=f"{settings.fleet_size} slots: {per_layer}, {layout_info.layers} layer(s) "
+            f"{settings.holding_area.layer_spacing_m:g} m apart",
         )
         if layout_info.widened:
             box.label(text=f"Widened to {layout_info.width:.1f} m to fit the fleet", icon="ERROR")
@@ -449,6 +494,14 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.prop(settings.holding_area, "size")
         box.prop(settings.holding_area, "max_height")
         box.prop(settings.holding_area, "grid_spacing_m")
+        box.prop(settings.holding_area, "layer_spacing_m")
+        box.prop(settings.holding_area, "staggered_layers")
+        gap_message = layer_gap_message(settings)
+        if gap_message:
+            col = box.column(align=True)
+            col.alert = True
+            col.label(text=f"CAUTION: {gap_message}", icon="ERROR")
+            col.label(text="Export is locked")
         box.prop(settings.holding_area, "show_clearance_m")
         results = get_clearance_results(settings)
         if results is None:
@@ -517,8 +570,9 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.prop(settings, "export_format")
         clearance_locked = bool(clearance_cautions(settings))
         ground_locked = bool(ground_warnings(settings))
+        gap_locked = layer_gap_message(settings) is not None
         row = box.row()
-        row.enabled = not has_kinematic_error() and not clearance_locked and not ground_locked
+        row.enabled = not has_kinematic_error() and not clearance_locked and not ground_locked and not gap_locked
         row.operator("dss.export_intermediate", icon="EXPORT")
         if has_kinematic_error():
             box.label(text="Fix the kinematic error(s) above (or Auto-Fix) to unlock Export", icon="ERROR")
@@ -529,6 +583,11 @@ class DSS_PT_MainPanel(bpy.types.Panel):
             )
         if ground_locked:
             box.label(text="Raise the drones above the ground (or lower Ground Level) to unlock Export", icon="ERROR")
+        if gap_locked:
+            box.label(
+                text=f"Raise the holding area's Layer Gap to {min_layer_gap(settings):.2f} m to unlock Export",
+                icon="ERROR",
+            )
 
 
 def _draw_legs(layout, settings):

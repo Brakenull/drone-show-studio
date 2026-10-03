@@ -11,7 +11,7 @@ remain importable - and unit-testable with pytest - outside Blender.
 bl_info = {
     "name": "Drone Show Studio - Designer",
     "author": "Drone Show Studio",
-    "version": (1, 6, 0),
+    "version": (1, 7, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Drone Show",
     "description": (
@@ -92,13 +92,7 @@ if _HAS_BPY:
 
         n_park = fleet_size - n_sampled
         if n_park > 0:
-            holding_positions = holding_area.compute_holding_positions(
-                n_park,
-                tuple(settings.holding_area.center),
-                tuple(settings.holding_area.size),
-                max_height=settings.holding_area.max_height,
-                grid_spacing_m=settings.holding_area.grid_spacing_m,
-            )
+            holding_positions = holding_area.compute_padding_positions(n_park, *holding_area_scene.layout_args(settings))
             all_positions = np.vstack([enu_points, holding_positions]) if n_sampled else holding_positions
             all_colors = list(colors) + [color_extractor.BLACK_RGB8] * n_park
         else:
@@ -164,13 +158,7 @@ if _HAS_BPY:
 
         n_park = settings.fleet_size - len(points)
         if settings.show_holding_area_preview and n_park > 0:
-            holding_points = holding_area.compute_holding_positions(
-                n_park,
-                tuple(settings.holding_area.center),
-                tuple(settings.holding_area.size),
-                max_height=settings.holding_area.max_height,
-                grid_spacing_m=settings.holding_area.grid_spacing_m,
-            )
+            holding_points = holding_area.compute_padding_positions(n_park, *holding_area_scene.layout_args(settings))
             viewport_drawer.set_holding_preview_points(holding_points)
         else:
             viewport_drawer.set_holding_preview_points(np.zeros((0, 3)))
@@ -372,6 +360,12 @@ if _HAS_BPY:
                 )
                 return {"CANCELLED"}
 
+            # Holding-area layer gap gate (spec section 3.2).
+            gap_message = panel.layer_gap_message(settings)
+            if gap_message:
+                self.report({"ERROR"}, f"Export blocked: {gap_message}")
+                return {"CANCELLED"}
+
             # Ground gate (spec section 3.9): formation points (freshly
             # sampled above) and parked drones below the ground.
             below_ground = panel.ground_warnings(settings)
@@ -407,7 +401,8 @@ if _HAS_BPY:
                     "size": tuple(settings.holding_area.size),
                     "max_height": settings.holding_area.max_height,
                     "grid_spacing_m": settings.holding_area.grid_spacing_m,
-                    "layer_spacing_m": settings.holding_area.grid_spacing_m,
+                    "layer_spacing_m": settings.holding_area.layer_spacing_m,
+                    "staggered_layers": settings.holding_area.staggered_layers,
                     "show_clearance_m": settings.holding_area.show_clearance_m,
                 },
                 fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,

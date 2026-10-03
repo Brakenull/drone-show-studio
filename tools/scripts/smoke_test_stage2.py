@@ -111,7 +111,7 @@ def build_phase1_json() -> dict:
                 "center": [0.0, 0.0, 0.0],
                 "size": [5.0, 5.0],
                 "max_height": 10.0,
-                "layer_spacing_m": 1.5,
+                "layer_spacing_m": 2.0,
                 # Rev 1.5 (Phase 1): launch-grid pitch, deliberately wider
                 # than min_distance_m so liftoff has real separation headroom
                 # instead of departing from exactly the in-flight minimum.

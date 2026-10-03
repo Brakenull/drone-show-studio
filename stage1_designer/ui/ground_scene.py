@@ -36,10 +36,9 @@ def set_show_extent(point_sets) -> None:
 
 
 def _grid_extent(settings):
-    ha = settings.holding_area
-    lo, hi = holding_area.holding_region_bounds(
-        settings.fleet_size, tuple(ha.center), tuple(ha.size), ha.max_height, ha.grid_spacing_m
-    )
+    from .holding_area_scene import layout_args
+
+    lo, hi = holding_area.holding_region_bounds(*layout_args(settings))
     lo, hi = lo[:2], hi[:2]
     if _show_extent["lo"] is not None:
         lo = np.minimum(lo, _show_extent["lo"])

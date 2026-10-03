@@ -147,3 +147,146 @@ def test_bottom_layer_sits_at_center_z():
     # ui/panel.py's ground check relies on this.
     for n_park in (1, 200, 3000):
         assert compute_holding_positions(n_park, CENTER, SIZE, MAX_HEIGHT, 2.0)[:, 2].min() == CENTER[2]
+
+
+# --- Stacked layout, option C (8-waiting_area.md Part A, schema 1.7.0) ---
+
+from stage1_designer.core.holding_area import (  # noqa: E402
+    compute_holding_row_indices,
+    layout_options,
+    min_layer_spacing,
+)
+
+GROUND = (0.0, -30.0, 0.0)
+OPTION_C = {"layer_spacing_m": 4.0, "staggered_layers": True}
+
+
+def test_old_files_keep_straight_stacking():
+    # Schema <= 1.6.0: layer_spacing_m == grid_spacing_m and no shift. Same
+    # slots as the default arguments (the pre-1.7.0 behaviour).
+    old = layout_options({"layer_spacing_m": 2.0})
+    assert old == {"layer_spacing_m": 2.0, "staggered_layers": False}
+    a = compute_holding_positions(500, GROUND, SIZE, MAX_HEIGHT, 2.0)
+    b = compute_holding_positions(500, GROUND, SIZE, MAX_HEIGHT, 2.0, **old)
+    np.testing.assert_array_equal(a, b)
+    assert sorted(set(a[:, 2])) == [0.0, 2.0, 4.0, 6.0]
+
+
+def test_capacity_alternates_126_and_100():
+    layout = compute_holding_layout(400, GROUND, SIZE, 40.0, 2.0, **OPTION_C)
+    assert [layout.layer(m).capacity for m in range(4)] == [126, 100, 126, 100]
+    slots = compute_holding_positions(400, GROUND, SIZE, 40.0, 2.0, **OPTION_C)
+    zs, counts = np.unique(slots[:, 2], return_counts=True)
+    assert zs.tolist() == [0.0, 4.0, 8.0, 12.0]
+    assert counts.tolist() == [126, 100, 126, 48]
+
+
+def test_odd_layers_are_shifted_half_a_slot_inside_the_footprint():
+    slots = compute_holding_positions(226, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    even, odd = slots[slots[:, 2] == 0.0], slots[slots[:, 2] == 4.0]
+    assert len(even) == 126 and len(odd) == 100
+    # Every odd slot sits at the centre of a square of four even slots.
+    for x, y, _z in odd:
+        horizontal = np.hypot(even[:, 0] - x, even[:, 1] - y)
+        assert horizontal.min() == pytest.approx(np.sqrt(2.0))
+        assert (np.abs(horizontal - np.sqrt(2.0)) < 1e-9).sum() == 4
+    # Inside the declared footprint, centred like the even layer.
+    assert odd[:, 0].min() == -19.0 and odd[:, 0].max() == 19.0
+    assert odd[:, 1].min() == -34.0 and odd[:, 1].max() == -26.0
+
+
+@pytest.mark.parametrize("n_park", [1, 126, 127, 226, 300, 452])
+def test_option_c_spacing(n_park):
+    slots = compute_holding_positions(n_park, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    assert len(slots) == n_park
+    if n_park > 1:
+        assert _min_pairwise_distance(slots) >= 2.0 - 1e-9
+    assert slots[:, 2].max() <= MAX_HEIGHT + 1e-9
+
+
+def test_no_slot_straight_above_the_layer_below():
+    slots = compute_holding_positions(452, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    for z_low, z_high in [(0.0, 4.0), (4.0, 8.0), (8.0, 12.0)]:
+        low, high = slots[slots[:, 2] == z_low], slots[slots[:, 2] == z_high]
+        horizontal = np.hypot(low[:, None, 0] - high[None, :, 0], low[:, None, 1] - high[None, :, 1])
+        assert horizontal.min() == pytest.approx(np.sqrt(2.0))
+
+
+def test_hover_point_clear_of_the_slot_above():
+    # A pad's vertical path to its hover point (2 m up) keeps the planning
+    # distance (1.575 m) from every other slot: 2-phase_2.md section 1.28's
+    # column check always passes with option C.
+    slots = compute_holding_positions(452, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    for h in np.linspace(0.0, 2.0, 9):
+        path = slots + np.array([0.0, 0.0, h])
+        d = np.linalg.norm(path[:, None, :] - slots[None, :, :], axis=2)
+        np.fill_diagonal(d, np.inf)
+        assert d.min() >= 1.575
+    assert min_layer_spacing(2.0, 1.575) == pytest.approx(3.575)
+
+
+def test_500_cube_widens_under_15_m():
+    # 126 + 100 + 126 + 100 = 452 < 500 under 15 m (layers at 0, 4, 8, 12):
+    # the footprint widens until four layers hold everyone.
+    layout = compute_holding_layout(500, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    assert layout.widened and layout.layers == 4
+    assert layout.width == 46.0
+    assert layout.total_capacity() >= 500
+    slots = compute_holding_positions(500, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    assert slots[:, 2].max() == 12.0
+    assert _min_pairwise_distance(slots) >= 2.0 - 1e-9
+    # With room for a fifth layer: no widening, 126 + 100 + 126 + 100 + 48.
+    tall = compute_holding_layout(500, GROUND, SIZE, 16.0, 2.0, **OPTION_C)
+    assert not tall.widened and tall.layers == 5
+
+
+def test_full_sweep_option_c_never_violates_invariants():
+    for n_park in range(1, 260):
+        slots = compute_holding_positions(n_park, CENTER, SIZE, 10.0, 2.0, **OPTION_C)
+        assert len(slots) == n_park
+        assert len({tuple(np.round(p, 6)) for p in slots}) == n_park
+        assert slots[:, 2].max() <= 10.0 + 1e-9
+
+
+def test_row_indices_follow_each_layer_grid():
+    rows = compute_holding_row_indices(300, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    assert len(rows) == 300
+    assert rows[:126].tolist() == [i // 21 for i in range(126)]  # even layer: 21 x 6
+    assert rows[126:226].tolist() == [i // 20 for i in range(100)]  # odd layer: 20 x 5
+    assert rows[226:].tolist() == [i // 21 for i in range(74)]
+    old = compute_holding_row_indices(300, GROUND, SIZE, MAX_HEIGHT, 2.0)
+    assert old.max() == 5
+
+
+def test_narrow_footprint_shifts_only_the_axis_with_room():
+    # One row: odd layers shift along X only (no row to drop).
+    slots = compute_holding_positions(12, GROUND, (10.0, 0.0), 30.0, 2.0, **OPTION_C)
+    odd = slots[slots[:, 2] == 4.0]
+    assert len(odd) == 5 and np.all(odd[:, 1] == -30.0)
+    assert _min_pairwise_distance(slots) >= 2.0 - 1e-9
+
+
+def test_region_contains_the_taller_staggered_stack():
+    lo, hi = holding_region_bounds(500, GROUND, SIZE, 16.0, 2.0, **OPTION_C)
+    slots = compute_holding_positions(500, GROUND, SIZE, 16.0, 2.0, **OPTION_C)
+    assert np.all(distance_to_region(slots, lo, hi) == 0.0)
+    assert hi[2] == pytest.approx(17.0)  # top layer at 16 m + half a grid step
+
+
+def test_padding_uses_the_fleet_layout_pads():
+    from stage1_designer.core.holding_area import compute_padding_positions
+
+    # Fleet widened (500 > 452 under 15 m) but 291 drones alone fit: the
+    # padding must still be real pads of the fleet layout.
+    fleet = compute_holding_positions(500, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    padding = compute_padding_positions(291, 500, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    np.testing.assert_array_equal(padding, fleet[:291])
+    alone = compute_holding_positions(291, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
+    assert not np.allclose(alone, padding)
+    # Without widening it's the same slots as a layout for n_park drones
+    # (the pre-1.7.0 rule), so old files keep their padding.
+    for n_park in (1, 55, 126, 200):
+        np.testing.assert_array_equal(
+            compute_padding_positions(n_park, 300, GROUND, SIZE, MAX_HEIGHT, 2.0),
+            compute_holding_positions(n_park, GROUND, SIZE, MAX_HEIGHT, 2.0),
+        )

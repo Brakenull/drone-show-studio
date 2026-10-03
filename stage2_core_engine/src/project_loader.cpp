@@ -45,6 +45,9 @@ ProjectData parse_project(const nlohmann::json& root) {
     data.metadata.holding_area.grid_spacing_m = holding_json.contains("grid_spacing_m")
                                                      ? holding_json.at("grid_spacing_m").get<double>()
                                                      : data.metadata.holding_area.layer_spacing_m;
+    if (holding_json.contains("staggered_layers") && !holding_json.at("staggered_layers").is_null()) {
+        data.metadata.holding_area.staggered_layers = holding_json.at("staggered_layers").get<bool>();
+    }
     if (holding_json.contains("show_clearance_m") && !holding_json.at("show_clearance_m").is_null()) {
         const double clearance = holding_json.at("show_clearance_m").get<double>();
         require(clearance >= 0.0, "holding_area.show_clearance_m must be >= 0");
@@ -98,47 +101,112 @@ ProjectData parse_project(const nlohmann::json& root) {
 
 namespace {
 
-// Shared by compute_holding_positions() and compute_holding_row_indices() so
-// the two can never disagree on layer capacity / how many layers / whether
-// the footprint had to widen — both need the *identical* grid to report
-// consistent positions vs. row indices for the same slot.
-struct HoldingLayout {
+// One layer's slot grid: cols x rows slots, the first one at (x0, y0).
+struct LayerGrid {
     int cols = 0;
     int rows = 0;
-    int capacity = 0;
+    double x0 = 0.0;
+    double y0 = 0.0;
+    double z = 0.0;
+    int capacity() const { return cols * rows; }
+};
+
+// Shared by compute_holding_positions(), compute_holding_row_indices() and
+// compute_holding_region() so they can never disagree on the layer grids /
+// how many layers / whether the footprint had to widen. A port of Phase 1's
+// HoldingLayout (stage1_designer/core/holding_area.py, spec section 3.2).
+struct HoldingLayout {
+    int cols = 0;  // columns / rows of the even (unshifted) layers
+    int rows = 0;
     int layers_needed = 0;
     double width = 0.0;
+    Eigen::Vector3d center = Eigen::Vector3d::Zero();
+    double grid_spacing_m = 0.0;
+    double layer_spacing_m = 0.0;
+    bool staggered = false;
+
+    // Odd layers of a staggered layout are shifted half a slot along each
+    // axis that has more than one slot (and lose that axis's last slot).
+    LayerGrid layer(int m) const {
+        const double d = grid_spacing_m;
+        LayerGrid grid{cols, rows, center.x() - ((cols - 1) * d) / 2.0, center.y() - ((rows - 1) * d) / 2.0,
+                       center.z() + m * layer_spacing_m};
+        if (staggered && m % 2 == 1) {
+            if (grid.cols > 1) {
+                grid.cols -= 1;
+                grid.x0 += d / 2.0;
+            }
+            if (grid.rows > 1) {
+                grid.rows -= 1;
+                grid.y0 += d / 2.0;
+            }
+        }
+        return grid;
+    }
+
+    int total_capacity(int layers) const {
+        int total = 0;
+        for (int m = 0; m < layers; ++m) total += layer(m).capacity();
+        return total;
+    }
+
+    // Fewest bottom layers that hold `count` drones.
+    int layers_for(int count) const {
+        int layers = 0;
+        for (int placed = 0; placed < count; ++layers) placed += layer(layers).capacity();
+        return layers;
+    }
 };
 
 HoldingLayout compute_holding_layout(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m) {
     const double zc = holding_area.center.z();
+    const double gap = holding_area.layer_spacing_m > 0.0 ? holding_area.layer_spacing_m : grid_spacing_m;
     double width = holding_area.size.x();
     const double length = holding_area.size.y();
 
-    auto layer_grid_dims = [&](double w, double l) {
-        const int cols = static_cast<int>(std::floor(w / grid_spacing_m)) + 1;
-        const int rows = static_cast<int>(std::floor(l / grid_spacing_m)) + 1;
-        return std::make_pair(cols, rows);
+    auto make = [&](double w) {
+        HoldingLayout layout;
+        layout.cols = static_cast<int>(std::floor(w / grid_spacing_m)) + 1;
+        layout.rows = static_cast<int>(std::floor(length / grid_spacing_m)) + 1;
+        layout.width = w;
+        layout.center = holding_area.center;
+        layout.grid_spacing_m = grid_spacing_m;
+        layout.layer_spacing_m = gap;
+        layout.staggered = holding_area.staggered_layers;
+        return layout;
     };
 
-    int max_layers = static_cast<int>(std::floor((holding_area.max_height - zc) / grid_spacing_m)) + 1;
-    max_layers = std::max(max_layers, 1);
-
-    auto [cols, rows] = layer_grid_dims(width, length);
-    int capacity = cols * rows;
-    int layers_needed = static_cast<int>(std::ceil(static_cast<double>(fleet_size) / capacity));
-
-    if (layers_needed > max_layers) {
-        const int required_capacity = static_cast<int>(std::ceil(static_cast<double>(fleet_size) / max_layers));
-        while (capacity < required_capacity) {
+    const int max_layers = std::max(static_cast<int>(std::floor((holding_area.max_height - zc) / gap)) + 1, 1);
+    HoldingLayout layout = make(width);
+    if (layout.layers_for(fleet_size) > max_layers) {
+        // Expand width along X (adding grid columns) until the layers that
+        // fit under max_height hold everyone.
+        while (layout.total_capacity(max_layers) < fleet_size) {
             width += grid_spacing_m;
-            std::tie(cols, rows) = layer_grid_dims(width, length);
-            capacity = cols * rows;
+            layout = make(width);
         }
-        layers_needed = static_cast<int>(std::ceil(static_cast<double>(fleet_size) / capacity));
     }
+    layout.layers_needed = layout.layers_for(fleet_size);
+    return layout;
+}
 
-    return HoldingLayout{cols, rows, capacity, layers_needed, width};
+// Calls visit(slot, position, row within its layer) for the first
+// `fleet_size` slots, layer by layer from the bottom, row by row.
+template <typename Visit>
+void for_each_holding_slot(int fleet_size, const HoldingLayout& layout, Visit&& visit) {
+    int placed = 0;
+    for (int m = 0; m < layout.layers_needed && placed < fleet_size; ++m) {
+        const LayerGrid grid = layout.layer(m);
+        const int n_this_layer = std::min(grid.capacity(), fleet_size - placed);
+        for (int i = 0; i < n_this_layer; ++i) {
+            const int row = i / grid.cols;
+            const int col = i % grid.cols;
+            visit(placed, Eigen::Vector3d(grid.x0 + col * layout.grid_spacing_m, grid.y0 + row * layout.grid_spacing_m,
+                                          grid.z),
+                  row);
+            ++placed;
+        }
+    }
 }
 
 }  // namespace
@@ -147,30 +215,9 @@ Eigen::MatrixXd compute_holding_positions(int fleet_size, const HoldingArea& hol
     if (fleet_size <= 0) {
         return Eigen::MatrixXd(0, 3);
     }
-
-    const double xc = holding_area.center.x();
-    const double yc = holding_area.center.y();
-    const double zc = holding_area.center.z();
-    const HoldingLayout layout = compute_holding_layout(fleet_size, holding_area, grid_spacing_m);
-
     Eigen::MatrixXd positions(fleet_size, 3);
-    const double x0 = xc - ((layout.cols - 1) * grid_spacing_m) / 2.0;
-    const double y0 = yc - ((layout.rows - 1) * grid_spacing_m) / 2.0;
-
-    int placed = 0;
-    for (int m = 0; m < layout.layers_needed && placed < fleet_size; ++m) {
-        const double z = zc + m * grid_spacing_m;
-        const int n_this_layer = std::min(layout.capacity, fleet_size - placed);
-        for (int i = 0; i < n_this_layer; ++i) {
-            const int row = i / layout.cols;
-            const int col = i % layout.cols;
-            const double x = x0 + col * grid_spacing_m;
-            const double y = y0 + row * grid_spacing_m;
-            positions.row(placed) = Eigen::Vector3d(x, y, z);
-            ++placed;
-        }
-    }
-
+    for_each_holding_slot(fleet_size, compute_holding_layout(fleet_size, holding_area, grid_spacing_m),
+                          [&](int slot, const Eigen::Vector3d& p, int) { positions.row(slot) = p; });
     return positions;
 }
 
@@ -178,18 +225,9 @@ std::vector<int> compute_holding_row_indices(int fleet_size, const HoldingArea& 
     if (fleet_size <= 0) {
         return {};
     }
-
-    const HoldingLayout layout = compute_holding_layout(fleet_size, holding_area, grid_spacing_m);
-
     std::vector<int> row_indices(fleet_size, 0);
-    int placed = 0;
-    for (int m = 0; m < layout.layers_needed && placed < fleet_size; ++m) {
-        const int n_this_layer = std::min(layout.capacity, fleet_size - placed);
-        for (int i = 0; i < n_this_layer; ++i) {
-            row_indices[placed] = i / layout.cols;
-            ++placed;
-        }
-    }
+    for_each_holding_slot(fleet_size, compute_holding_layout(fleet_size, holding_area, grid_spacing_m),
+                          [&](int slot, const Eigen::Vector3d&, int row) { row_indices[slot] = row; });
     return row_indices;
 }
 

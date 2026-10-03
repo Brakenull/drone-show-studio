@@ -63,7 +63,9 @@ _ICO_FACES = np.array(
 )
 
 
-def _layout_args(settings):
+def layout_args(settings):
+    """Positional arguments of the core layout functions (holding_area.py)
+    for the whole fleet, from the add-on settings."""
     ha = settings.holding_area
     return (
         settings.fleet_size,
@@ -71,11 +73,13 @@ def _layout_args(settings):
         tuple(ha.size),
         ha.max_height,
         ha.grid_spacing_m,
+        ha.layer_spacing_m,
+        ha.staggered_layers,
     )
 
 
 def layout_for(settings) -> holding_area.HoldingLayout:
-    return holding_area.compute_holding_layout(*_layout_args(settings))
+    return holding_area.compute_holding_layout(*layout_args(settings))
 
 
 def _geometry_key(settings) -> str:
@@ -89,6 +93,8 @@ def _geometry_key(settings) -> str:
             tuple(round(v, 6) for v in ha.size),
             round(ha.max_height, 6),
             round(ha.grid_spacing_m, 6),
+            round(ha.layer_spacing_m, 6),
+            bool(ha.staggered_layers),
             round(settings.safety_radius_m, 6),
             round(ha.show_clearance_m, 6),
         )
@@ -114,7 +120,7 @@ def _box_mesh(mesh, lo, hi) -> None:
 def _build_region_meshes(volume_mesh, clearance_mesh, settings) -> None:
     """Holding region (and its safe-distance zone) in the box's local frame,
     i.e. ENU offsets from the center."""
-    lo, hi = holding_area.holding_region_bounds(*_layout_args(settings))
+    lo, hi = holding_area.holding_region_bounds(*layout_args(settings))
     center = np.asarray(settings.holding_area.center, dtype=float)
     lo, hi = lo - center, hi - center
     _box_mesh(volume_mesh, lo, hi)
@@ -129,9 +135,9 @@ def _build_region_meshes(volume_mesh, clearance_mesh, settings) -> None:
 
 
 def _build_slots_mesh(mesh, settings) -> None:
-    fleet_size, center, size, max_height, spacing = _layout_args(settings)
-    slots = holding_area.compute_holding_positions(fleet_size, center, size, max_height, spacing)
-    local = slots - np.asarray(center, dtype=float)  # ENU offsets; the box carries the heading
+    args = layout_args(settings)
+    slots = holding_area.compute_holding_positions(*args)
+    local = slots - np.asarray(args[1], dtype=float)  # ENU offsets; the box carries the heading
     verts = (local[:, None, :] + _ICO_VERTS[None, :, :] * settings.safety_radius_m).reshape(-1, 3)
     faces = (_ICO_FACES[None, :, :] + (np.arange(len(local)) * len(_ICO_VERTS))[:, None, None]).reshape(-1, 3)
     _set_mesh(mesh, verts, faces)

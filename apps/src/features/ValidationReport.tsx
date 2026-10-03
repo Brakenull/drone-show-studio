@@ -16,8 +16,9 @@ function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) 
     <section className="capacity" aria-labelledby="capacity-title">
       <h3 id="capacity-title">Holding area</h3>
       <div className="capacity-gauge" role="img" aria-label={`${Math.min(n, c.capacity)} of ${c.capacity} places used`}>
-        {Array.from({ length: c.max_layers }, (_, layer) => {
-          const fill = Math.max(0, Math.min(1, (n - layer * c.per_layer) / c.per_layer));
+        {c.layer_capacities.map((size, layer) => {
+          const below = c.layer_capacities.slice(0, layer).reduce((a, b) => a + b, 0);
+          const fill = Math.max(0, Math.min(1, (n - below) / size));
           return (
             <span key={layer} className="capacity-layer" title={`Layer ${layer + 1}`}>
               <span
@@ -36,7 +37,10 @@ function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) 
             }.`}
       </p>
       <p className="muted small">
-        {c.per_layer} places per layer at {ha.grid_spacing_m} m apart, layers stacked up to {ha.max_height} m.{" "}
+        {c.staggered_layers
+          ? `${c.layer_capacities[0]} / ${c.layer_capacities[1] ?? c.layer_capacities[0]} places per layer (alternate layers shifted half a place)`
+          : `${c.per_layer} places per layer`}{" "}
+        at {ha.grid_spacing_m} m apart, layers {c.layer_spacing_m} m apart up to {ha.max_height} m.{" "}
         {floor !== null && (
           <span className={tooClose ? "tone-bad" : undefined}>
             {tooClose

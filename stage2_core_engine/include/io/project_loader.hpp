@@ -38,7 +38,13 @@ struct HoldingArea {
     // layer_spacing_m for exports from before Phase 1 Rev 1.5 added this
     // field (see parse_project()).
     double grid_spacing_m = 0.0;
+    // The vertical gap between stacked layers. Honoured since Phase 1 schema
+    // 1.7.0 (8-waiting_area.md Part A); older files carry grid_spacing_m
+    // here, which is the straight stacking they were laid out with.
     double layer_spacing_m = 0.0;
+    // Phase 1 schema 1.7.0 (optional, false when absent): odd layers shifted
+    // half a slot in x and y, one column and one row fewer.
+    bool staggered_layers = false;
     // Phase 1 schema 1.6.0 (optional): the designer's "Safe Distance to Show"
     // (1-phase_1.md section 3.2.2). When set, show drones keep at least this
     // far from the holding region (docs/2-phase_2.md section 1.14).

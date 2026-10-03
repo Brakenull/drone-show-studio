@@ -418,6 +418,25 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
     return out;
 }
 
+// The holding-area layout Stage 2 derives from a Phase 1 file (its port of
+// Phase 1's holding_area.py): slots, launch row indices and the region, so
+// tests can check that the two never disagree.
+py::dict holding_layout(const py::object& phase1_intermediate_json) {
+    const drone_core::io::ProjectData project =
+        drone_core::io::parse_project(drone_core::bindings::py_to_json(phase1_intermediate_json));
+    const drone_core::io::HoldingArea& ha = project.metadata.holding_area;
+    const int n = project.metadata.fleet_size;
+    const Eigen::MatrixXd slots = drone_core::io::compute_holding_positions(n, ha, ha.grid_spacing_m);
+    const drone_core::io::HoldingRegion region = drone_core::io::compute_holding_region(n, ha, ha.grid_spacing_m);
+    auto vec3 = [](const Eigen::Vector3d& v) { return py::make_tuple(v.x(), v.y(), v.z()); };
+    py::dict out;
+    out["slots"] = control_points_to_py(slots);
+    out["row_indices"] = drone_core::io::compute_holding_row_indices(n, ha, ha.grid_spacing_m);
+    out["region_lo"] = vec3(region.lo);
+    out["region_hi"] = vec3(region.hi);
+    return out;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(drone_core, m) {
@@ -463,4 +482,8 @@ PYBIND11_MODULE(drone_core, m) {
           "the optimize_trajectories() output for the same Phase 1 file) to the holding-area slots. Returns "
           "the same format timed from 0, with metadata['return_path']. `target_duration_sec` None = Auto "
           "(T_min). Raises drone_core.SafetyViolationError when the gatekeeper rejects it.");
+
+    m.def("holding_layout", &holding_layout, py::arg("phase1_intermediate_json"),
+          "The holding-area slots (fleet_size of them, in slot order), their launch row indices and the "
+          "holding region (lo, hi) Stage 2 derives from a Phase 1 file.");
 }

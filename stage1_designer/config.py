@@ -4,7 +4,7 @@ Values mirror the defaults defined in `.claude/docs/1-phase_1.md` section 3.1-3.
 and the intermediate schema at `schemas/project_intermediate.schema.json`.
 """
 
-SCHEMA_VERSION = "1.6.0"  # 1.6.0: optional project_metadata.legs (section 3.8)
+SCHEMA_VERSION = "1.7.0"  # 1.7.0: holding_area.layer_spacing_m honoured, staggered_layers (section 3.2)
 
 # --- Safety distance (section 3.1) ---
 SAFETY_RADIUS_M = 0.75          # R_safe
@@ -28,12 +28,25 @@ DEFAULT_DENSE_FPS = 10
 # during the first seconds of liftoff.
 DEFAULT_GRID_SPACING_M = 2.0     # d_launch
 MIN_GRID_SPACING_M = 1.8         # hard floor enforced by the UI property
+# Stacked layers (section 3.2, Rev 1.7 / 8-waiting_area.md Part A, option C):
+# 4 m between layers and odd layers shifted half a slot, so no slot sits
+# straight above another (downwash) and a pad's vertical path to its hover
+# point stays clear of the slot above.
+DEFAULT_LAYER_SPACING_M = 4.0
+DEFAULT_STAGGERED_LAYERS = True
+# Mirrors stage2_core_engine/config/core_config.json
+# (solver.landing_approach_height_m): the hover point above a pad that Stage 2's
+# vertical pad moves climb to / descend from (2-phase_2.md sections 1.26-1.28).
+STAGE2_HOVER_HEIGHT_M = 2.0
+# Stage 2 plans to min_distance_m x this factor (enforced_min_distance_m).
+STAGE2_PLANNING_DISTANCE_FACTOR = 1.05
 DEFAULT_HOLDING_AREA = {
     "center": (0.0, -30.0, 5.0),
     "size": (40.0, 10.0),
     "max_height": 15.0,
     "grid_spacing_m": DEFAULT_GRID_SPACING_M,
-    "layer_spacing_m": DEFAULT_GRID_SPACING_M,
+    "layer_spacing_m": DEFAULT_LAYER_SPACING_M,
+    "staggered_layers": DEFAULT_STAGGERED_LAYERS,
 }
 Z_HOLD_MAX_DEFAULT = 15.0
 # Minimum distance from any formation point to the holding region (the

@@ -56,6 +56,7 @@ def build_project_metadata(
             "max_height": float(holding_area["max_height"]),
             "grid_spacing_m": float(holding_area["grid_spacing_m"]),
             "layer_spacing_m": float(holding_area["layer_spacing_m"]),
+            "staggered_layers": bool(holding_area.get("staggered_layers", False)),
             **(
                 {"show_clearance_m": float(holding_area["show_clearance_m"])}
                 if holding_area.get("show_clearance_m") is not None
@@ -125,11 +126,20 @@ def validate_intermediate_data(data: dict) -> List[str]:
       - point indices are 0..fleet_size-1 with no duplicates
       - no pair of points in a keyframe violates min_distance_m
       - a leg's target duration, when set, is positive (section 3.8)
+      - holding-area layers are at least a grid step apart (section 3.2)
     """
     errors: List[str] = []
     metadata = data.get("project_metadata", {})
     fleet_size = metadata.get("fleet_size")
     min_distance_m = metadata.get("min_distance_m")
+
+    holding = metadata.get("holding_area") or {}
+    grid, gap = holding.get("grid_spacing_m"), holding.get("layer_spacing_m")
+    if grid is not None and gap is not None and gap < grid - 1e-9:
+        errors.append(
+            f"[holding_area] layer_spacing_m {gap} m < grid_spacing_m {grid} m: stacked slots would be "
+            "closer than the grid spacing"
+        )
 
     for leg_name, leg in (metadata.get("legs") or {}).items():
         duration = (leg or {}).get("duration_sec")
