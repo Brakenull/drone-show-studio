@@ -4,12 +4,21 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-04
+
+Shows can now be checked against the weather, and every drone touches a pad only vertically. The desktop app gains a condition simulator: write a weather timeline (wind, gusts, RTK quality, rain), fly the show through the digital twin under it, and see whether the fleet could get home before the rain gets too heavy, using return paths planned from every formation. The stress-test crashes of 1.1.0 were all in the landing; landings, takeoffs and mid-show stops on the pads now go through a hover point straight above the pad, and the 150-, 200- and 500-drone test shows pass the stress test with no crash. Path planning is 3.5–5× faster. In the Blender add-on (1.7.0), the holding area stacks its layers farther apart, and new waiting areas let spare drones wait in the air near the show instead of flying home.
+
 ### Added
+
+#### Return paths from every formation (path planning, desktop app)
+
+- **Plan return paths:** after a show passes, Stage 2 can plan one return from each formation to the holding area: the flight home if the show had to stop there. Each starts at the drones' exact positions, speeds and colours in the planned show, lands every drone at rest on a free holding-area slot with LEDs off, and is checked by the same 100-per-second safety check. The first formation's return is the takeoff flown backwards (with the staggered takeoff on, the default). In the desktop app, a "Return paths" section on the Stage 2 tab lists each formation (reached at, flight home, closest approach, status) with "Plan return paths", "Plan" / "Plan again" per row, progress and Cancel. Command line: `studio_bridge stage2-returns <run>`; Python: `drone_core.plan_return_path()`. Results are kept until Stage 2 is run again.
+- **Replay a return:** each planned return can be played in the Replay tab as the show up to that formation followed by the flight home, with the abort moment marked.
 
 #### Condition simulator — weather scenarios (desktop app, `twin_sim`)
 
-- **Conditions tab:** write the weather for a show as a timeline (wind speed, direction and turbulence; gust fronts; RTK quality: fixed, float or GPS only; rain), all free to change during the show. Lanes are aligned with the show's formations; click to add a key, drag to move it, and set exact values beside the timeline. Scenarios are saved with the run; New, Duplicate and Delete.
-- **Simulate a scenario:** the whole show is flown once through the digital twin under the timeline, with progress and Cancel, and judged like the stress test (no pair under 0.5 m, every drone lands with at least 15 % battery). The result gives the closest approach, the largest deviation from plan and the lowest battery, each linked to its moment in the playback, and says when the rain reaches its alert and limit levels. Rain does not yet trigger the return to the holding area.
+- **Conditions:** write the weather for a show as a timeline (wind speed, direction and turbulence; gust fronts; RTK quality: fixed, float or GPS only; rain), all free to change during the show. Lanes are aligned with the show's formations; click to add a key, drag to move it, and set exact values beside the timeline. Scenarios are saved with the run; New, Duplicate and Delete.
+- **Simulate a scenario:** the whole show is flown once through the digital twin under the timeline, with progress and Cancel, and judged like the stress test (no pair under 0.5 m, every drone lands with at least 15 % battery). The result gives the closest approach, the largest deviation from plan and the lowest battery, each linked to its moment in the playback, and says when the rain reaches its alert and limit levels.
 - **Playback with weather:** each drone's planned position next to its simulated one (a red line when they are more than 0.5 m apart), wind streaks, rain, gust fronts sweeping across the field, a heads-up display of wind, rain and RTK, and the largest deviation from plan as a second line on the timeline strip.
 - **Digital twin:** time-varying wind, turbulence and RTK quality and any number of gust fronts (`twin_sim/weather.py`), and a scenario runner with recording for playback (`twin_sim/scenario_runner.py`, also a command-line tool). Stress-test results are unchanged.
 
@@ -19,18 +28,63 @@ All notable changes to Drone Show Studio are recorded here. The format follows [
 - **The rain rule in the simulator:** when a scenario's rain reaches the alert level, the simulated fleet is called home after the reaction time: it finishes its move and flies the planned return path of that formation. The result says when the return was called, the last drone home, and whether every drone was home before the rain limit (now a pass criterion), and the playback marks the alert, the call and the limit.
 - **Fly this:** pick a moment on the readiness chart and simulate rain reaching the alert level then, with the chosen window.
 - **Drone profile:** new `environment` keys for the rain alert level, the rain limit level and the reaction time (placeholders until the drone model's water rating is known).
-- **Path planning — timing in the log:** every refining pass in `stage2/log.ndjson` now says where its time went (the drone solves, the pair search, the close-pass checks) and how big it was (pairs, constraints, solve batches).
 
 #### Waiting areas (Blender add-on, path planning, desktop app)
 
 - **Waiting areas** (Blender add-on 1.7.0, file format 1.7.0): places in the air, next to the show, where drones a formation doesn't use wait with their LEDs off instead of flying home to the holding area and back. Add any number in the new "Waiting Areas" box (position, size, spacing, safe distance); each is one flat layer, and the last one grows if needed. An area too small for its spare drones grows compactly (both ways, centred), and the panel says to what size; a note appears when a waiting area is a longer trip than going home. Only drones that have already flown use them: every drone takes off from the holding area, and a drone a formation doesn't need yet stays on its pad until its first formation. Path planning sends each spare drone to a nearby area and keeps a waiting drone in its place. Export is locked while an area is too close to a formation or the holding area, overlaps another, or is less than 2 m above the ground. The Studio shows them in the validation panel and in the 3D views; `tools/scripts/convert_waiting_areas.py` adds them to an existing file. Designs without a waiting area work as before.
 
+#### Path planning — reports
+
+- **Timing in the log:** every refining pass in `stage2/log.ndjson` now says where its time went (the drone solves, the pair search, the close-pass checks) and how big it was (pairs, constraints, solve batches).
+- **Pad moves per transition:** `metadata.transitions[*].pad_moves` counts the drones that flew to a hover point above their pad, landed, climbed, stayed hovering, or had to reach or leave a pad the old way.
+
+### Fixed
+
+- **Stress-test crashes in the landing (P3-03):** the return leg (and every return path) now brings each drone to rest 2 m straight above its slot, flying no lower than 1 m above the lowest slot on the way, and then lowers the whole fleet straight down together ("Landing hover height" under Takeoff and landing; 0 = the old landing). Drones used to glide in sideways a few centimetres above the ground, and in the stress test a gust or the downwash of the drones parked above pushed some onto the ground short of their slot, where a neighbour hit them. `500_cube`, `200_cube` and `150_cone` now pass the stress test (0 crash flights, was 97, 3 and 4 of 100); shows are about 5.5 s longer.
+- **Takeoffs and mid-show stops on the pads (P3-04):** the same hover point now applies to every pad visit. At the first takeoff the departing drones climb straight up together before flying off. A drone parking mid-show flies to the hover point above its pad, descends, and climbs straight up again before it leaves; a stop too short for that keeps it hovering above its pad with LEDs off. A parked drone never moves to another pad. Where a straight climb or descent would pass too close to another parked or hovering drone, that drone goes the old way and the transition's report counts it. On `150_cone` and `200_cube` no drone needed the old way and none flew sideways below 1.05 m.
+- **Padding on real pads:** drones a formation doesn't use now park on the first places of the whole fleet's holding layout. They used to get a layout computed for that smaller number, which differed from the fleet's when the fleet's holding area had to be widened.
+
 ### Changed
 
 - **Holding area: layers 4 m apart, alternate layers shifted** (Blender add-on 1.7.0, file format 1.7.0): parked drones used to stack 2 m straight above each other, so the drones below sat in the downwash of those above and a pad's hover point was the slot of the next layer. New designs stack layers 4 m apart ("Layer Gap") and shift every other layer half a place ("Shift Alternate Layers"), 126 / 100 places per layer at 40 × 10 m. A gap below 3.6 m with more than one layer locks Export. Older files keep their layout. The Studio's capacity gauge and Stage 2 follow the same layout, and `tools/scripts/convert_holding_layout.py` re-lays an existing file.
-- **Padding on real pads:** drones a formation doesn't use now park on the first places of the whole fleet's holding layout. They used to get a layout computed for that smaller number, which differed from the fleet's when the fleet's holding area had to be widened.
 - **Path planning is 3.5–5× faster:** each refining pass now only considers drone pairs that its largest move could bring within the planning distance, instead of every pair within roughly 5–8 m ("Check only pairs that can meet", on by default; turning it off gives exactly the old plans). Measured on the same files: `500_cube` 3 h 22 min → 44 min, `200_cube` 897 s → 254 s, `150_cone` 1 715 s → 354 s, with the same closest approaches to within 8 mm except one transition of `150_cone` (1.481 m instead of 1.506 m) and `500_cube`'s return leg (1.500 m instead of 1.452 m), all above the 1.45 m check.
-- **Landing through a hover point:** the return leg (and every rain-return path) now brings each drone to rest 2 m straight above its slot, flying no lower than 1 m above the lowest slot on the way, and then lowers the whole fleet straight down together ("Landing hover height" under Takeoff and landing; 0 = the old landing). Drones used to glide in sideways a few centimetres above the ground, and in the stress test a gust or the downwash of the drones parked above pushed some onto the ground short of their slot, where a neighbour hit them. `500_cube`, `200_cube` and `150_cone` now pass the stress test (0 crash flights, was 97, 3 and 4 of 100); shows are about 5.5 s longer.
+- **Desktop app — new look:** every page except Replay and Conditions follows the v3 design (sidebar with the pipeline stages, verdict cards, reworked validation report and Stage 2 page); Replay and Conditions were reworked separately to match. Stage 3 and Conditions are now one Stage 3 tab with sub-tabs.
+
+### Verified
+
+- 348 automated Python tests pass (242 in 1.1.0).
+- **Stress test, 100 flights, same seed as before:** `200_cube` 3 → 0 crash flights (worst approach 0.114 → 0.970 m), `150_cone` 4 → 0 (0.239 → 0.813 m), `500_cube` 97 → 0 (0.025 → 0.593 m). Every transition of every show passed its safety check on the first attempt. The largest deviation from plan fell from 5.5 m to 0.91 m (`200_cube`) and from 7.4 m to 1.16 m (`500_cube`).
+- **Waiting areas, `150_cone`** (two areas): no drone lands mid-show (was 24), show 332.0 → 297.8 s, 0 crash flights, warning pairs 69 → 40, worst approach 0.653 → 0.850 m, lowest final battery 70.5 → 73.0 %.
+- **`300_cube`, the first Blender design with a waiting area** (re-exported with compact growth): show 304.1 → 273.6 s and 94.2 → 82.7 km flown against the first export, worst approach 0.817 m.
+- **Return paths, `200_cube`:** all 4 returns passed on their first attempt, 30.7–60.6 s home (up to 146 s with the return leg alone), closest approach 1.502–1.517 m; each starts at the show's position and speed to within 1e-9 m.
+- Planning stays deterministic: two runs of the same show and settings give byte-identical plans.
+
+### Known issues
+
+- **Spare drones can still stretch a transition:** with or without waiting areas, a transition is lengthened when spare drones have far to fly, e.g. when drones that waited on their pads since the takeoff leave the holding area for a formation on the other side of the field (`150_cone`: two transitions about twice their design length; `300_cube`: still about twice where its waiting area is ~57 m from the formation).
+- **Check Kinematics can flag a false over-speed (P1-02):** when two keyframes sample a different number of points and the fleet is larger than the shape, the add-on compares a formation point with a holding slot and may lock Export or stretch the timeline after Auto-Fix. Stage 2 is not affected.
+- **RTK float near the ground (P3-02):** in the condition simulator, drones with degraded RTK touched the ground on the old low landing approach and stayed there. This scenario has not been re-run with the hover-point landing; the twin's ground model may be partly to blame.
+- **`500_cube` has not been re-planned with the mid-show pad rule** (its first plan with the landing fix passes the stress test).
+- **Rain thresholds are placeholders:** the rain alert and limit levels and the reaction time are not those of a specific drone. The readiness panel reports what is not covered but does not yet suggest changes.
+- **Jerk is over its limit at the joints between path parts** (12–44 % on the real shows), as in 1.1.0; return paths use the same solver, so this presumably applies to them too.
+- **No separate climb and descent speed limits**, and **speed, acceleration and jerk limits are typical values**, not those of a specific drone.
+- **Retries are hit and miss**, as in 1.1.0; no retry was needed on the real shows.
+- **A safety distance set above about 3 m is not fully checked.** The app warns about such a setting; the default of 1.45 m is not affected.
+- **The original 300-drone test file can't be planned:** its first formation overlaps the holding area (the new `300_cube` design plans).
+- The 100-drone test shows (`export_100_cone`, `export_100_sphere`) have not been re-checked with this version's planner.
+- Windows 10/11 x64 only. The installer made by `npm run tauri build` contains only the app window; computation still needs this repository set up on the same machine.
+
+### Upgrade notes
+
+- Re-run `setup.ps1`: the path planner and the C++ packer must be rebuilt.
+- Install the Blender add-on 1.7.0. Files from add-on 1.5.0 and 1.6.0 stay valid and keep their holding layout. To use the new layout or waiting areas on an existing file, re-export it, or use `tools/scripts/convert_holding_layout.py` and `tools/scripts/convert_waiting_areas.py`.
+- Files exported before 2026-10-04 whose waiting area had to grow carry the old strip layout: re-export them.
+- Plans differ from 1.1.0 (hover-point landings, takeoffs and pad stops; the faster pair search). Set "Landing hover height" to 0 and turn off "Check only pairs that can meet" to come closest to the 1.1.0 plans.
+- Return paths belong to a run's Stage 2 result: running Stage 2 again deletes them.
+
+### Requirements
+
+Unchanged from 1.1.0: Visual Studio 2022 or later with "Desktop development with C++", Python 3.14 (64-bit), Node.js 20 or later, Rust, Git. Blender 4.0 or later for show design. An OpenCL driver for the digital twin.
 
 ## [1.1.0] — 2026-09-30
 

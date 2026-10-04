@@ -1,6 +1,6 @@
 [package]
 name = "studio-desktop"
-version = "1.1.0"
+version = "1.2.0"
 description = "A software pipeline that takes a drone light show from an animation to verified"
 authors = ["you"]
 edition = "2021"
