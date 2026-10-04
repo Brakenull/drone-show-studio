@@ -434,6 +434,16 @@ py::dict holding_layout(const py::object& phase1_intermediate_json) {
     out["row_indices"] = drone_core::io::compute_holding_row_indices(n, ha, ha.grid_spacing_m);
     out["region_lo"] = vec3(region.lo);
     out["region_hi"] = vec3(region.hi);
+    py::list waiting;
+    for (const drone_core::io::WaitingArea& area : project.metadata.waiting_areas) {
+        const drone_core::io::HoldingRegion r = drone_core::io::compute_waiting_region(area);
+        py::dict w;
+        w["slots"] = control_points_to_py(drone_core::io::compute_waiting_positions(area));
+        w["region_lo"] = vec3(r.lo);
+        w["region_hi"] = vec3(r.hi);
+        waiting.append(w);
+    }
+    out["waiting_areas"] = waiting;
     return out;
 }
 
@@ -485,5 +495,6 @@ PYBIND11_MODULE(drone_core, m) {
 
     m.def("holding_layout", &holding_layout, py::arg("phase1_intermediate_json"),
           "The holding-area slots (fleet_size of them, in slot order), their launch row indices and the "
-          "holding region (lo, hi) Stage 2 derives from a Phase 1 file.");
+          "holding region (lo, hi) Stage 2 derives from a Phase 1 file, and each waiting area's slots and "
+          "region (`waiting_areas`).");
 }

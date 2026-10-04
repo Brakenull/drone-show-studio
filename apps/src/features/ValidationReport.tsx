@@ -53,6 +53,31 @@ function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) 
   );
 }
 
+/** Waiting areas (docs/5-studio_gui.md §6.1): where spare drones wait in the air instead of going home. */
+function WaitingAreas({ summary }: { summary: NonNullable<Validation["summary"]> }) {
+  const areas = summary.waiting_areas ?? [];
+  if (!areas.length) return null;
+  const slots = areas.reduce((sum, a) => sum + a.slot_count, 0);
+  const spare = areas[0].spare_max;
+  return (
+    <section className="capacity" aria-labelledby="waiting-title">
+      <h3 id="waiting-title">Waiting areas</h3>
+      <p>
+        {areas.length} {areas.length === 1 ? "area" : "areas"} with {slots} places; at most {spare} spare{" "}
+        {spare === 1 ? "drone waits" : "drones wait"} there at once, instead of flying home.
+      </p>
+      <ul className="muted small">
+        {areas.map((a, i) => (
+          <li key={i}>
+            Area {i + 1}: {a.slot_count} places at ({a.center.map((v) => fmt(v, 0)).join(", ")}), {a.size[0]} × {a.size[1]} m,{" "}
+            {fmt(a.center[2], 0)} m up
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function ValidationReport({ validation }: { validation: Validation }) {
   const { ok, errors, warnings, summary } = validation;
   return (
@@ -109,6 +134,7 @@ export function ValidationReport({ validation }: { validation: Validation }) {
             </div>
           </dl>
           <Capacity summary={summary} />
+          <WaitingAreas summary={summary} />
           <h3>Formations, in show order</h3>
           <ol className="formation-cards">
             {summary.keyframes.map((k, i) => {

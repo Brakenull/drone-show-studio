@@ -29,12 +29,15 @@ def build_project_metadata(
     takeoff_duration_sec: Optional[float] = None,
     return_duration_sec: Optional[float] = None,
     ground_z_m: float = 0.0,
+    waiting_areas: Optional[Sequence[dict]] = None,
 ) -> dict:
     """`takeoff_duration_sec` / `return_duration_sec`: the legs' target
     durations (spec section 3.8), None meaning Auto (Stage 2's minimum).
-    `ground_z_m`: ENU height of the ground (spec section 3.9)."""
+    `ground_z_m`: ENU height of the ground (spec section 3.9).
+    `waiting_areas`: dicts with center, size, grid_spacing_m,
+    show_clearance_m and slot_count (spec section 3.10); omitted when empty."""
     lat, lon, alt = origin_gps
-    return {
+    metadata = {
         "version": SCHEMA_VERSION,
         "fleet_size": int(fleet_size),
         "sampling_mode": sampling_mode,
@@ -77,6 +80,18 @@ def build_project_metadata(
             "return": {"duration_sec": _optional_float(return_duration_sec)},
         },
     }
+    if waiting_areas:
+        metadata["waiting_areas"] = [
+            {
+                "center": [float(v) for v in area["center"]],
+                "size": [float(v) for v in area["size"]],
+                "grid_spacing_m": float(area["grid_spacing_m"]),
+                "show_clearance_m": float(area["show_clearance_m"]),
+                "slot_count": int(area["slot_count"]),
+            }
+            for area in waiting_areas
+        ]
+    return metadata
 
 
 def _optional_float(value: Optional[float]) -> Optional[float]:
@@ -127,6 +142,8 @@ def validate_intermediate_data(data: dict) -> List[str]:
       - no pair of points in a keyframe violates min_distance_m
       - a leg's target duration, when set, is positive (section 3.8)
       - holding-area layers are at least a grid step apart (section 3.2)
+      - the waiting areas have room for every keyframe's spare drones
+        (section 3.10)
     """
     errors: List[str] = []
     metadata = data.get("project_metadata", {})
@@ -140,6 +157,13 @@ def validate_intermediate_data(data: dict) -> List[str]:
             f"[holding_area] layer_spacing_m {gap} m < grid_spacing_m {grid} m: stacked slots would be "
             "closer than the grid spacing"
         )
+
+    waiting = metadata.get("waiting_areas") or []
+    if waiting and fleet_size is not None:
+        slots = sum(int(a.get("slot_count", 0)) for a in waiting)
+        spare = max((fleet_size - _sampled_count(kf, waiting) for kf in data.get("keyframes", [])), default=0)
+        if spare > slots:
+            errors.append(f"[waiting_areas] {spare} spare drones at one keyframe but only {slots} waiting slots")
 
     for leg_name, leg in (metadata.get("legs") or {}).items():
         duration = (leg or {}).get("duration_sec")
@@ -174,6 +198,16 @@ def validate_intermediate_data(data: dict) -> List[str]:
                 )
 
     return errors
+
+
+def _sampled_count(keyframe: dict, waiting_areas: Sequence[dict]) -> int:
+    """Points of a keyframe outside every waiting region (its formation)."""
+    from ..core.waiting_area import WaitingArea, in_waiting_region
+
+    points = np.array([p["pos"] for p in keyframe.get("points", [])], dtype=float).reshape(-1, 3)
+    areas = [WaitingArea.from_mapping(a) for a in waiting_areas]
+    counts = [int(a["slot_count"]) for a in waiting_areas]
+    return int((~in_waiting_region(points, areas, counts)).sum()) if len(points) else 0
 
 
 def export_json(data: dict, filepath: str | Path, indent: int = 2) -> None:

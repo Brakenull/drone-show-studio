@@ -6,8 +6,9 @@ from .. import config
 from ..core import ground as ground_core
 from ..core import holding_area as holding_area_core
 from ..core import show_legs
+from ..core import waiting_area as waiting_area_core
 from ..core.kinematic_validator import STATUS_ERROR, STATUS_OK, STATUS_WARNING
-from . import ground_scene, holding_area_scene, viewport_drawer
+from . import ground_scene, holding_area_scene, viewport_drawer, waiting_area_scene
 
 
 def _on_layout_changed(self, context):
@@ -16,6 +17,12 @@ def _on_layout_changed(self, context):
     holding area)."""
     holding_area_scene.on_settings_changed(self, context)
     ground_scene.on_settings_changed(self, context)
+    waiting_area_scene.on_settings_changed(self, context)
+
+
+def _on_waiting_changed(self, context):
+    """`update=` callback for the waiting areas' settings (section 3.10)."""
+    waiting_area_scene.on_settings_changed(self, context)
 
 # Cache of the last kinematic pre-validation pass (spec section 3.5), so the
 # panel can render it on every redraw without re-sampling every keyframe each
@@ -112,6 +119,39 @@ def layer_gap_message(settings):
     return f"Layer gap {gap:g} m is below {minimum:.2f} m: pads' hover points reach the layer above"
 
 
+def waiting_messages(settings) -> list:
+    """Caution lines for the waiting areas (section 3.10); any line locks
+    Export. Formations too close are known after a sampling pass; the
+    holding-area gap, overlaps and height always."""
+    if not len(settings.waiting_areas):
+        return []
+    areas = waiting_area_scene.areas_of(settings)
+    counts = waiting_area_scene.slot_counts(settings)
+    lo, hi = holding_area_core.holding_region_bounds(*holding_area_scene.layout_args(settings))
+    formations = _formation_cache["formations"] or []
+    check = waiting_area_core.check_waiting_areas(areas, counts, formations, lo, hi, settings.ground_z_m)
+    return check.messages(settings.holding_area.show_clearance_m)
+
+
+def waiting_detour_notes(settings) -> list:
+    """Notes (they do not lock Export) for short keyframes whose spare drones
+    would fly farther to every waiting area and back than to the holding area
+    and back (section 3.10). Known after a sampling pass."""
+    formations = _formation_cache["formations"]
+    if not len(settings.waiting_areas) or not formations:
+        return []
+    lo, hi = holding_area_core.holding_region_bounds(*holding_area_scene.layout_args(settings))
+    detours = waiting_area_core.check_detours(
+        waiting_area_scene.areas_of(settings), waiting_area_scene.slot_counts(settings), formations,
+        settings.fleet_size, lo, hi,
+    )
+    return [
+        f"'{d.shape_name}': its {d.spare} spare drones fly ~{d.waiting_m:.0f} m to the nearest waiting area "
+        f"and back, ~{d.home_m:.0f} m via the holding area: move an area closer"
+        for d in detours
+    ]
+
+
 def clearance_cautions(settings) -> list:
     """Formations too close to the holding area (they lock Export)."""
     return [r for r in get_clearance_results(settings) or [] if r.is_caution]
@@ -196,6 +236,76 @@ _STATUS_ICON = {
     STATUS_WARNING: "ERROR",
     STATUS_ERROR: "CANCEL",
 }
+
+
+class DSS_PG_WaitingArea(bpy.types.PropertyGroup):
+    """One waiting area (section 3.10): one flat layer of slots at center Z
+    where spare drones wait, LEDs off, instead of flying home mid-show."""
+
+    name: bpy.props.StringProperty(name="Name", default="Waiting Area")
+    center: bpy.props.FloatVectorProperty(
+        name="Center", size=3, default=config.DEFAULT_WAITING_AREA["center"], subtype="XYZ",
+        description="ENU center of the area; its slots are at this height", update=_on_waiting_changed,
+    )
+    size: bpy.props.FloatVectorProperty(
+        name="Size (W, L)", size=2, default=config.DEFAULT_WAITING_AREA["size"], min=0.0,
+        description="Footprint; the last area widens along X if the spare drones don't fit",
+        update=_on_waiting_changed,
+    )
+    grid_spacing_m: bpy.props.FloatProperty(
+        name="Slot Spacing", default=config.DEFAULT_WAITING_AREA["grid_spacing_m"],
+        min=config.MIN_GRID_SPACING_M, unit="LENGTH", update=_on_waiting_changed,
+    )
+    show_clearance_m: bpy.props.FloatProperty(
+        name="Safe Distance to Show", default=config.DEFAULT_WAITING_AREA["show_clearance_m"], min=0.0,
+        unit="LENGTH", description="Minimum distance from any formation point to this area",
+        update=_on_waiting_changed,
+    )
+
+
+class DSS_UL_WaitingAreas(bpy.types.UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        row.label(text=f"{index + 1}.", icon="EMPTY_AXIS")
+        row.prop(item, "name", text="", emboss=False)
+        c = item.center
+        row.label(text=f"({c[0]:.0f}, {c[1]:.0f}, {c[2]:.0f})")
+
+
+class DSS_OT_WaitingAreaAdd(bpy.types.Operator):
+    """Add a waiting area (spare drones wait there in the air instead of going home)"""
+
+    bl_idname = "dss.waiting_area_add"
+    bl_label = "Add Waiting Area"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = context.scene.drone_show_settings
+        area = settings.waiting_areas.add()
+        area.name = f"Waiting Area {len(settings.waiting_areas)}"
+        settings.waiting_area_index = len(settings.waiting_areas) - 1
+        waiting_area_scene.sync_objects(context.scene)
+        return {"FINISHED"}
+
+
+class DSS_OT_WaitingAreaRemove(bpy.types.Operator):
+    """Remove the selected waiting area"""
+
+    bl_idname = "dss.waiting_area_remove"
+    bl_label = "Remove Waiting Area"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return len(context.scene.drone_show_settings.waiting_areas) > 0
+
+    def execute(self, context):
+        settings = context.scene.drone_show_settings
+        settings.waiting_areas.remove(settings.waiting_area_index)
+        settings.waiting_area_index = max(0, min(settings.waiting_area_index, len(settings.waiting_areas) - 1))
+        waiting_area_scene.remove_objects()  # names follow the list order: rebuild them all
+        waiting_area_scene.sync_objects(context.scene)
+        return {"FINISHED"}
 
 
 class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
@@ -414,6 +524,17 @@ class DSS_PG_ProjectSettings(bpy.types.PropertyGroup):
     )
     origin_gps: bpy.props.PointerProperty(type=DSS_PG_OriginGPS)
     holding_area: bpy.props.PointerProperty(type=DSS_PG_HoldingArea)
+    waiting_areas: bpy.props.CollectionProperty(type=DSS_PG_WaitingArea)
+    waiting_area_index: bpy.props.IntProperty(name="Active Waiting Area", default=0, min=0)
+    show_waiting_area_objects: bpy.props.BoolProperty(
+        name="Create in Scene",
+        description=(
+            "Build each waiting area as scene objects: a wire box (grab it to move the area), "
+            "one sphere per slot and the safe-distance box"
+        ),
+        default=False,
+        update=_on_waiting_changed,
+    )
     legs: bpy.props.PointerProperty(type=DSS_PG_ShowLegs)
     kinematic_constraints: bpy.props.PointerProperty(type=DSS_PG_KinematicConstraints)
 
@@ -523,6 +644,8 @@ class DSS_PT_MainPanel(bpy.types.Panel):
                     col.label(text=clearance_message(r, settings.holding_area.show_clearance_m))
                 col.label(text="Export is locked")
 
+        _draw_waiting_areas(layout, settings)
+
         _draw_legs(layout, settings)
 
         box = layout.box()
@@ -571,8 +694,12 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         clearance_locked = bool(clearance_cautions(settings))
         ground_locked = bool(ground_warnings(settings))
         gap_locked = layer_gap_message(settings) is not None
+        waiting_locked = bool(waiting_messages(settings))
         row = box.row()
-        row.enabled = not has_kinematic_error() and not clearance_locked and not ground_locked and not gap_locked
+        row.enabled = (
+            not has_kinematic_error() and not clearance_locked and not ground_locked and not gap_locked
+            and not waiting_locked
+        )
         row.operator("dss.export_intermediate", icon="EXPORT")
         if has_kinematic_error():
             box.label(text="Fix the kinematic error(s) above (or Auto-Fix) to unlock Export", icon="ERROR")
@@ -588,6 +715,54 @@ class DSS_PT_MainPanel(bpy.types.Panel):
                 text=f"Raise the holding area's Layer Gap to {min_layer_gap(settings):.2f} m to unlock Export",
                 icon="ERROR",
             )
+        if waiting_locked:
+            box.label(text="Fix the waiting area caution(s) above to unlock Export", icon="ERROR")
+
+
+def _draw_waiting_areas(layout, settings):
+    box = layout.box()
+    box.label(text="Waiting Areas")
+    row = box.row()
+    row.template_list("DSS_UL_WaitingAreas", "", settings, "waiting_areas", settings, "waiting_area_index", rows=2)
+    col = row.column(align=True)
+    col.operator("dss.waiting_area_add", icon="ADD", text="")
+    col.operator("dss.waiting_area_remove", icon="REMOVE", text="")
+    if not len(settings.waiting_areas):
+        box.label(text="None: spare drones fly home to the holding area mid-show")
+        return
+    box.prop(settings, "show_waiting_area_objects", toggle=True, icon="MESH_GRID")
+    index = min(settings.waiting_area_index, len(settings.waiting_areas) - 1)
+    area = settings.waiting_areas[index]
+    col = box.column(align=True)
+    col.prop(area, "center")
+    col.prop(area, "size")
+    col.prop(area, "grid_spacing_m")
+    col.prop(area, "show_clearance_m")
+    counts = waiting_area_scene.slot_counts(settings)
+    spare = waiting_area_scene.spare_needed()
+    box.label(
+        text=f"{sum(counts)} slots ({' + '.join(str(c) for c in counts)}); "
+        + (f"{spare} spare drones at most" if _formation_cache["formations"] is not None
+           else "run Check Kinematics for the spare count"),
+    )
+    areas = waiting_area_scene.areas_of(settings)
+    for i, (a, n) in enumerate(zip(areas, counts)):
+        if n > a.capacity:
+            w, length = waiting_area_core.size_needed(n, a)
+            box.label(
+                text=f"Area {i + 1} needs {n} places ({a.capacity} declared): grows to {w:g} x {length:g} m",
+                icon="ERROR",
+            )
+    for note in waiting_detour_notes(settings):
+        box.label(text=note, icon="INFO")
+    messages = waiting_messages(settings)
+    if messages:
+        col = box.column(align=True)
+        col.alert = True
+        col.label(text=f"CAUTION: {len(messages)} waiting area problem(s)", icon="ERROR")
+        for m in messages:
+            col.label(text=m)
+        col.label(text="Export is locked")
 
 
 def _draw_legs(layout, settings):
@@ -632,6 +807,10 @@ def _draw_legs(layout, settings):
 
 
 CLASSES = (
+    DSS_PG_WaitingArea,
+    DSS_UL_WaitingAreas,
+    DSS_OT_WaitingAreaAdd,
+    DSS_OT_WaitingAreaRemove,
     DSS_PG_HoldingArea,
     DSS_PG_ShowLegs,
     DSS_PG_KinematicConstraints,

@@ -149,7 +149,7 @@ def test_bottom_layer_sits_at_center_z():
         assert compute_holding_positions(n_park, CENTER, SIZE, MAX_HEIGHT, 2.0)[:, 2].min() == CENTER[2]
 
 
-# --- Stacked layout, option C (8-waiting_area.md Part A, schema 1.7.0) ---
+# --- Stacked layout, option C (1-phase_1.md section 3.2.3, schema 1.7.0) ---
 
 from stage1_designer.core.holding_area import (  # noqa: E402
     compute_holding_row_indices,

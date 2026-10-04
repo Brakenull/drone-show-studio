@@ -28,6 +28,8 @@ export interface ReplayHeader {
   timeline?: ShowTimeline;
   overlays: {
     holding_area?: { center: V3; size: [number, number]; grid_spacing_m: number; slots: V3[] };
+    /** Places in the air where spare drones wait (schema 1.7.0); absent or empty without any. */
+    waiting_areas?: { center: V3; size: [number, number]; grid_spacing_m: number; slots: V3[] }[];
     keyframes?: { shape_name: string; time_sec?: number }[];
     nominal_min_distance_m?: number;
     gatekeeper_floor_m?: number | null;

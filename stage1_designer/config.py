@@ -28,7 +28,7 @@ DEFAULT_DENSE_FPS = 10
 # during the first seconds of liftoff.
 DEFAULT_GRID_SPACING_M = 2.0     # d_launch
 MIN_GRID_SPACING_M = 1.8         # hard floor enforced by the UI property
-# Stacked layers (section 3.2, Rev 1.7 / 8-waiting_area.md Part A, option C):
+# Stacked layers (section 3.2.3, Rev 1.7, option C):
 # 4 m between layers and odd layers shifted half a slot, so no slot sits
 # straight above another (downwash) and a pad's vertical path to its hover
 # point stays clear of the slot above.
@@ -101,3 +101,14 @@ COLOR_VIOLATION_RGBA = (1.0, 0.0, 0.0, 1.0)
 COLOR_HOLDING_RGBA = (0.2, 0.6, 1.0, 1.0)  # parked/holding-area drones (guaranteed collision-free)
 COLOR_KINEMATIC_WARNING_RGBA = (1.0, 0.8, 0.0, 1.0)  # yellow: transition needs attention
 COLOR_GROUND_RGBA = (0.45, 0.35, 0.25, 1.0)  # brown: ground grid
+COLOR_WAITING_RGBA = (0.3, 0.9, 0.8, 1.0)  # teal: waiting areas (section 3.10)
+
+# --- Waiting areas (section 3.10) ---
+# New areas start here (ENU); there is no sensible universal place, the
+# designer moves them next to the show.
+DEFAULT_WAITING_AREA = {
+    "center": (40.0, 0.0, 10.0),
+    "size": (10.0, 10.0),
+    "grid_spacing_m": DEFAULT_GRID_SPACING_M,
+    "show_clearance_m": DEFAULT_SHOW_CLEARANCE_M,
+}

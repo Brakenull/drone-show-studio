@@ -1,5 +1,5 @@
 """Re-lay an exported Phase 1 file's holding area with another stacking rule
-(8-waiting_area.md section 9: real-show validation of Part A without
+(1-phase_1.md section 3.2.3: real-show validation of the layout without
 re-exporting from Blender).
 
 Phase 1 pads a keyframe with fewer sampled points than the fleet with the

@@ -118,6 +118,22 @@
             "takeoff": { "$ref": "#/definitions/leg" },
             "return": { "$ref": "#/definitions/leg" }
           }
+        },
+        "waiting_areas": {
+          "description": "Added in 1.7.0, optional (absent or empty = none). Places in the air where spare drones wait (LEDs off) instead of flying home mid-show. Each is one flat layer of slots at center z; slot_count slots are laid out (the declared grid, the last area widened along X if needed). See 1-phase_1.md section 3.10.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["center", "size", "grid_spacing_m", "show_clearance_m", "slot_count"],
+            "additionalProperties": false,
+            "properties": {
+              "center": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+              "size": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+              "grid_spacing_m": { "type": "number", "minimum": 1.8 },
+              "show_clearance_m": { "type": "number", "minimum": 0 },
+              "slot_count": { "type": "integer", "minimum": 1 }
+            }
+          }
         }
       }
     },

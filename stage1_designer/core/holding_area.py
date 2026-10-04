@@ -7,7 +7,7 @@ Rule recap:
   - When N_park exceeds a layer: stack new layers upward,
     Z_layer(m) = Zc + m*layer_spacing_m (schema <= 1.6.0 files carry
     layer_spacing_m = d_launch: the old straight stacking)
-  - Staggered layers (schema 1.7.0, 8-waiting_area.md Part A): odd layers are
+  - Staggered layers (schema 1.7.0, spec section 3.2.3): odd layers are
     shifted half a slot in X and in Y and have one column and one row fewer,
     so they stay inside the footprint and no slot sits straight above a slot
     of the layer below (126 / 100 slots per layer at 40 x 10 m, 2 m)

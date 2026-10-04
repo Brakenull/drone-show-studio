@@ -110,6 +110,24 @@ def test_validate_does_not_warn_about_parked_drones(tmp_path):
     assert not any("inside the holding area" in w["message"] for w in validation["warnings"])
 
 
+def test_validate_summarizes_waiting_areas(tmp_path):
+    sys.path.insert(0, str(REPO / "tests"))
+    from test_stage2_waiting import show
+
+    data = show()
+    code, events = bridge("validate", str(write(tmp_path, "waiting.json", data)))
+    validation = first(events, "validation")
+    assert code == 0 and validation["ok"], validation
+    areas = validation["summary"]["waiting_areas"]
+    assert [a["slot_count"] for a in areas] == [2, 2] and len(areas[1]["slots"]) == 2
+    assert areas[0]["spare_max"] == 2
+    assert not [w for w in validation["warnings"] if "waiting area" in w["message"]]
+    # A formation point next to a waiting area is warned about.
+    data["keyframes"][0]["points"][5]["pos"] = [17.0, 20.0, 10.0]
+    _code, events = bridge("validate", str(write(tmp_path, "close.json", data)))
+    assert any("waiting area 2" in w["message"] for w in first(events, "validation")["warnings"])
+
+
 def test_new_run_copies_input_and_records_it(tmp_path):
     source = write(tmp_path, "demo.json", build_phase1_json())
     code, events = bridge("new-run", str(source), "--runs-dir", str(tmp_path / "runs"))

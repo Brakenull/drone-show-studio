@@ -39,11 +39,21 @@ def gatekeeper_floor(run_dir: Path) -> float | None:
         return None
 
 
+def _waiting_overlay(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each waiting area (schema 1.7.0) with its slots, for the 3D views (docs/5-studio_gui.md)."""
+    from stage1_designer.core.waiting_area import areas_from_metadata, compute_waiting_positions
+
+    areas, counts = areas_from_metadata(meta)
+    return [{"center": list(a.center), "size": list(a.size), "grid_spacing_m": a.grid_spacing_m,
+             "slots": compute_waiting_positions(n, a).round(4).tolist()} for a, n in zip(areas, counts)]
+
+
 def _overlays(run_dir: Path, failure: dict[str, Any] | None) -> dict[str, Any]:
     phase1 = _load_json(run_dir / "input" / "phase1.json")
     meta = phase1["project_metadata"]
     overlays: dict[str, Any] = {
         "holding_area": {**meta["holding_area"], "slots": holding_positions(meta).round(4).tolist()},
+        "waiting_areas": _waiting_overlay(meta),
         "keyframes": [{"shape_name": kf["shape_name"], "time_sec": kf["time_sec"]} for kf in phase1["keyframes"]],
         "nominal_min_distance_m": meta["min_distance_m"],
         "ground_z_m": meta.get("ground_z_m", GROUND_Z_M),

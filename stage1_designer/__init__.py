@@ -34,9 +34,17 @@ if _HAS_BPY:
     import numpy as np
 
     from . import config
-    from .core import color_extractor, holding_area, kinematic_validator, sampler, show_legs, timeline_sampler
+    from .core import (
+        color_extractor,
+        holding_area,
+        kinematic_validator,
+        sampler,
+        show_legs,
+        timeline_sampler,
+        waiting_area,
+    )
     from .exporters import intermediate_exporter
-    from .ui import compass_gizmo, ground_scene, holding_area_scene, panel, viewport_drawer
+    from .ui import compass_gizmo, ground_scene, holding_area_scene, panel, viewport_drawer, waiting_area_scene
 
     _redraw_timer_running = False
 
@@ -72,7 +80,21 @@ if _HAS_BPY:
         colors = [shape_color] * len(points)
         return points, colors
 
-    def _build_keyframe_for_time(settings, obj, scene, time_sec, shape_name):
+    def _padding_positions(settings, n_park, spare_needed, first_keyframe=False):
+        """Slots for the drones a formation leaves spare (spec sections 3.2,
+        3.10): the first waiting slots when the design has waiting areas
+        (`spare_needed`, the most spare drones at any later keyframe, sizes
+        the last area), else the first holding-area slots. The first
+        formation's spare drones always stay on their pads: every drone takes
+        off from the holding area when a formation first needs it."""
+        if len(settings.waiting_areas) and not first_keyframe:
+            areas = waiting_area_scene.areas_of(settings)
+            counts = waiting_area_scene.slot_counts(settings, max(spare_needed, n_park))
+            return waiting_area.compute_padding_positions(n_park, areas, counts)
+        return holding_area.compute_padding_positions(n_park, *holding_area_scene.layout_args(settings))
+
+    def _sample_keyframe(settings, obj, scene, time_sec):
+        """One keyframe's formation: ENU points (at most fleet_size) and colors."""
         timeline_sampler.evaluate_object_at_time(obj, scene, time_sec)
         raw_points, colors = _sample_shape_points(settings, obj)
 
@@ -89,20 +111,22 @@ if _HAS_BPY:
             if n_sampled > 0
             else np.zeros((0, 3))
         )
+        return enu_points, list(colors)
 
-        n_park = fleet_size - n_sampled
+    def _pad_keyframe(settings, time_sec, shape_name, enu_points, colors, spare_needed, first_keyframe=False):
+        """The exported keyframe: the formation, then the spare drones on
+        their padding slots, LEDs off."""
+        n_sampled = len(enu_points)
+        n_park = settings.fleet_size - n_sampled
         if n_park > 0:
-            holding_positions = holding_area.compute_padding_positions(n_park, *holding_area_scene.layout_args(settings))
+            holding_positions = _padding_positions(settings, n_park, spare_needed, first_keyframe)
             all_positions = np.vstack([enu_points, holding_positions]) if n_sampled else holding_positions
             all_colors = list(colors) + [color_extractor.BLACK_RGB8] * n_park
         else:
             all_positions = enu_points
             all_colors = list(colors)
 
-        entry = intermediate_exporter.build_keyframe_entry(
-            time_sec, shape_name, all_positions, all_colors
-        )
-        return entry, enu_points
+        return intermediate_exporter.build_keyframe_entry(time_sec, shape_name, all_positions, all_colors)
 
     def _shape_name_for_frame(scene, frame: int) -> str:
         for marker in scene.timeline_markers:
@@ -125,24 +149,46 @@ if _HAS_BPY:
         positions for the takeoff / return estimates (spec section 3.8)."""
         original_frame = scene.frame_current
         try:
-            entries = []
-            formations = []
+            sampled = []
             for time_sec in times:
                 frame = int(round(time_sec * (scene.render.fps / scene.render.fps_base)))
                 shape_name = shape_name_fn(scene, frame)
-                entry, formation_points = _build_keyframe_for_time(settings, obj, scene, time_sec, shape_name)
-                entries.append(entry)
-                formations.append((shape_name, formation_points))
+                sampled.append((time_sec, shape_name, *_sample_keyframe(settings, obj, scene, time_sec)))
         finally:
             scene.frame_set(original_frame)
 
+        # Padding needs the whole show: the most spare drones at any keyframe
+        # after the first sizes the waiting areas (spec section 3.10); the
+        # first formation's spare drones stay on their pads.
+        spare = waiting_area.padding_needed(settings.fleet_size, [len(s[2]) for s in sampled[1:]])
+        waiting_area_scene.set_spare_needed(spare)
+        entries = [
+            _pad_keyframe(settings, t, name, pts, colors, spare, first_keyframe=(k == 0))
+            for k, (t, name, pts, colors) in enumerate(sampled)
+        ]
+        formations = [(name, pts) for _t, name, pts, _colors in sampled]
+
         panel.set_formation_cache(formations)
+        waiting_area_scene.sync_objects(scene)
         positions = [np.array([p["pos"] for p in kf["points"]]) for kf in entries]
         panel.set_leg_cache(positions[0], positions[-1], float(times[-1] - times[0]))
         ground_scene.set_show_extent([pts for _name, pts in formations])
         ground_scene.sync(scene)
         transitions = kinematic_validator.evaluate_transitions(list(times), positions, _configured_v_max(settings))
         return entries, transitions
+
+    def _at_or_before_first_keyframe(scene, settings) -> bool:
+        """Whether the scene's current frame shows the first formation (or
+        earlier), whose spare drones stay on their pads."""
+        try:
+            times = timeline_sampler.get_sample_times_seconds(
+                settings.target_object, scene, settings.sampling_mode,
+                fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,
+            )
+        except ValueError:
+            return True
+        now = scene.frame_current / (scene.render.fps / scene.render.fps_base)
+        return not times or now <= times[0] + 1e-6
 
     def _refresh_overlay_for_scene(scene) -> None:
         """Re-sample the target object at the scene's current frame and push
@@ -158,7 +204,9 @@ if _HAS_BPY:
 
         n_park = settings.fleet_size - len(points)
         if settings.show_holding_area_preview and n_park > 0:
-            holding_points = holding_area.compute_padding_positions(n_park, *holding_area_scene.layout_args(settings))
+            holding_points = _padding_positions(
+                settings, n_park, waiting_area_scene.spare_needed(), _at_or_before_first_keyframe(scene, settings)
+            )
             viewport_drawer.set_holding_preview_points(holding_points)
         else:
             viewport_drawer.set_holding_preview_points(np.zeros((0, 3)))
@@ -360,6 +408,16 @@ if _HAS_BPY:
                 )
                 return {"CANCELLED"}
 
+            # Waiting area gate (spec section 3.10): formations too close
+            # (freshly sampled above), too close to the holding area,
+            # overlapping areas, too low.
+            waiting_lines = panel.waiting_messages(settings)
+            if waiting_lines:
+                for msg in waiting_lines:
+                    self.report({"ERROR"}, msg)
+                self.report({"ERROR"}, f"Export blocked: {len(waiting_lines)} waiting area problem(s)")
+                return {"CANCELLED"}
+
             # Holding-area layer gap gate (spec section 3.2).
             gap_message = panel.layer_gap_message(settings)
             if gap_message:
@@ -416,6 +474,12 @@ if _HAS_BPY:
                     settings.legs.return_mode, settings.legs.return_duration_sec
                 ),
                 ground_z_m=settings.ground_z_m,
+                waiting_areas=[
+                    {**area._asdict(), "slot_count": count}
+                    for area, count in zip(
+                        waiting_area_scene.areas_of(settings), waiting_area_scene.slot_counts(settings)
+                    )
+                ],
             )
 
             data = intermediate_exporter.build_intermediate_data(metadata, keyframe_entries)
@@ -457,6 +521,7 @@ if _HAS_BPY:
             bpy.utils.register_class(cls)
         compass_gizmo.register()
         holding_area_scene.register()
+        waiting_area_scene.register()
         if not bpy.app.timers.is_registered(_blink_timer):
             bpy.app.timers.register(_blink_timer, first_interval=0.1)
             _redraw_timer_running = True
@@ -471,6 +536,7 @@ if _HAS_BPY:
             bpy.app.timers.unregister(_blink_timer)
             _redraw_timer_running = False
         holding_area_scene.unregister()
+        waiting_area_scene.unregister()
         ground_scene.remove()
         compass_gizmo.unregister()
         viewport_drawer.unregister()

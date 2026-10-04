@@ -54,6 +54,25 @@ ProjectData parse_project(const nlohmann::json& root) {
         data.metadata.holding_area.show_clearance_m = clearance;
     }
 
+    // Phase 1 schema 1.7.0 (optional): waiting areas.
+    if (meta_json.contains("waiting_areas") && !meta_json.at("waiting_areas").is_null()) {
+        for (const auto& area_json : meta_json.at("waiting_areas")) {
+            WaitingArea area;
+            const auto c = area_json.at("center").get<std::vector<double>>();
+            const auto s = area_json.at("size").get<std::vector<double>>();
+            require(c.size() == 3, "waiting_areas[].center must have 3 elements");
+            require(s.size() == 2, "waiting_areas[].size must have 2 elements");
+            area.center = Eigen::Vector3d(c[0], c[1], c[2]);
+            area.size = Eigen::Vector2d(s[0], s[1]);
+            area.grid_spacing_m = area_json.at("grid_spacing_m").get<double>();
+            area.show_clearance_m = area_json.value("show_clearance_m", 0.0);
+            area.slot_count = area_json.at("slot_count").get<int>();
+            require(area.grid_spacing_m > 0.0, "waiting_areas[].grid_spacing_m must be > 0");
+            require(area.slot_count >= 1, "waiting_areas[].slot_count must be >= 1");
+            data.metadata.waiting_areas.push_back(area);
+        }
+    }
+
     // Phase 1 schema 1.6.0 (optional): the ground level.
     if (meta_json.contains("ground_z_m") && !meta_json.at("ground_z_m").is_null()) {
         data.metadata.ground_z_m = meta_json.at("ground_z_m").get<double>();
@@ -245,6 +264,81 @@ HoldingRegion compute_holding_region(int fleet_size, const HoldingArea& holding_
         region.hi = region.hi.cwiseMax(Eigen::Vector3d(slots.colwise().maxCoeff().transpose()) + pad);
     }
     return region;
+}
+
+namespace {
+
+// cols x rows of one waiting area's single layer, and its effective
+// footprint. Grows one grid step at a time on its shorter side (X on a tie),
+// centred: Phase 1's compute_waiting_layout().
+struct WaitingLayout {
+    int cols = 0;
+    int rows = 0;
+    double width = 0.0;
+    double length = 0.0;
+};
+
+WaitingLayout compute_waiting_layout(const WaitingArea& area) {
+    const double d = area.grid_spacing_m;
+    WaitingLayout layout;
+    layout.width = area.size.x();
+    layout.length = area.size.y();
+    const auto dims = [&]() {
+        layout.cols = static_cast<int>(std::floor(layout.width / d)) + 1;
+        layout.rows = static_cast<int>(std::floor(layout.length / d)) + 1;
+    };
+    dims();
+    while (layout.cols * layout.rows < area.slot_count) {
+        if (layout.width <= layout.length) {
+            layout.width += d;
+        } else {
+            layout.length += d;
+        }
+        dims();
+    }
+    return layout;
+}
+
+}  // namespace
+
+Eigen::MatrixXd compute_waiting_positions(const WaitingArea& area) {
+    const int n = std::max(area.slot_count, 0);
+    Eigen::MatrixXd slots(n, 3);
+    if (n == 0) return slots;
+    const WaitingLayout layout = compute_waiting_layout(area);
+    const double d = area.grid_spacing_m;
+    const double x0 = area.center.x() - ((layout.cols - 1) * d) / 2.0;
+    const double y0 = area.center.y() - ((layout.rows - 1) * d) / 2.0;
+    for (int i = 0; i < n; ++i) {
+        slots.row(i) = Eigen::Vector3d(x0 + (i % layout.cols) * d, y0 + (i / layout.cols) * d, area.center.z());
+    }
+    return slots;
+}
+
+HoldingRegion compute_waiting_region(const WaitingArea& area) {
+    const WaitingLayout layout = compute_waiting_layout(area);
+    const Eigen::Vector3d half(layout.width / 2.0, layout.length / 2.0, 0.0);
+    HoldingRegion region{area.center - half, area.center + half};
+    const Eigen::MatrixXd slots = compute_waiting_positions(area);
+    if (slots.rows() > 0) {
+        const Eigen::Vector3d pad = Eigen::Vector3d::Constant(area.grid_spacing_m / 2.0);
+        region.lo = region.lo.cwiseMin(Eigen::Vector3d(slots.colwise().minCoeff().transpose()) - pad);
+        region.hi = region.hi.cwiseMax(Eigen::Vector3d(slots.colwise().maxCoeff().transpose()) + pad);
+    }
+    return region;
+}
+
+Eigen::MatrixXd compute_all_waiting_slots(const std::vector<WaitingArea>& areas) {
+    int total = 0;
+    for (const WaitingArea& a : areas) total += std::max(a.slot_count, 0);
+    Eigen::MatrixXd all(total, 3);
+    int row = 0;
+    for (const WaitingArea& a : areas) {
+        const Eigen::MatrixXd slots = compute_waiting_positions(a);
+        all.middleRows(row, slots.rows()) = slots;
+        row += static_cast<int>(slots.rows());
+    }
+    return all;
 }
 
 }  // namespace drone_core::io

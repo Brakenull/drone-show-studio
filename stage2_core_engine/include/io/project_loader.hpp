@@ -39,7 +39,7 @@ struct HoldingArea {
     // field (see parse_project()).
     double grid_spacing_m = 0.0;
     // The vertical gap between stacked layers. Honoured since Phase 1 schema
-    // 1.7.0 (8-waiting_area.md Part A); older files carry grid_spacing_m
+    // 1.7.0 (1-phase_1.md section 3.2.3); older files carry grid_spacing_m
     // here, which is the straight stacking they were laid out with.
     double layer_spacing_m = 0.0;
     // Phase 1 schema 1.7.0 (optional, false when absent): odd layers shifted
@@ -58,6 +58,20 @@ struct HoldingArea {
 struct HoldingRegion {
     Eigen::Vector3d lo = Eigen::Vector3d::Zero();
     Eigen::Vector3d hi = Eigen::Vector3d::Zero();
+};
+
+// Phase 1 schema 1.7.0's optional project_metadata.waiting_areas
+// (1-phase_1.md section 3.10, 2-phase_2.md section 1.29): places in the air
+// where spare drones wait instead of flying home. One flat layer of
+// `slot_count` slots at center z (the declared grid, grown compactly on its
+// shorter side when slot_count needs it); a port of
+// stage1_designer/core/waiting_area.py.
+struct WaitingArea {
+    Eigen::Vector3d center = Eigen::Vector3d::Zero();
+    Eigen::Vector2d size = Eigen::Vector2d::Zero();
+    double grid_spacing_m = 2.0;
+    double show_clearance_m = 0.0;
+    int slot_count = 0;
 };
 
 // Phase 1 schema 1.6.0's optional project_metadata.legs (1-phase_1.md
@@ -82,6 +96,8 @@ struct ProjectMetadata {
     // Phase 1 schema 1.6.0 (optional): ENU height of the ground (1-phase_1.md
     // section 3.9). nullopt for files that don't declare one.
     std::optional<double> ground_z_m;
+    // Phase 1 schema 1.7.0 (optional): empty for files without waiting areas.
+    std::vector<WaitingArea> waiting_areas;
     nlohmann::json raw;  // kept for CoreConfig Tier-1 override lookup
 };
 
@@ -107,5 +123,14 @@ Eigen::MatrixXd compute_holding_positions(int fleet_size, const HoldingArea& hol
 std::vector<int> compute_holding_row_indices(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
 
 HoldingRegion compute_holding_region(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
+
+// One waiting area's slots (its slot_count of them, row by row) and region
+// (the footprint, widened if needed, at center z, together with the slots
+// padded by half a grid step): ports of Phase 1's compute_waiting_positions()
+// and waiting_region_bounds().
+Eigen::MatrixXd compute_waiting_positions(const WaitingArea& area);
+HoldingRegion compute_waiting_region(const WaitingArea& area);
+// Every area's slots, concatenated in area order.
+Eigen::MatrixXd compute_all_waiting_slots(const std::vector<WaitingArea>& areas);
 
 }  // namespace drone_core::io

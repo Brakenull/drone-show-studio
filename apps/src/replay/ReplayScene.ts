@@ -12,6 +12,7 @@ const NIGHT = 0x0f0f0f;
 const GRID_MAJOR = 0x2d2d2d;
 const GRID_MINOR = 0x1c1c1c;
 const PAD = 0x4a4a4a;
+const WAITING = 0x3a6b66; // waiting areas: muted teal, apart from the grey pads
 const AMBER = 0xffa34d; // SkySync primary: selection and the closest pair
 const RED = 0xef4444;
 const LED_OFF = new THREE.Color(0x5c5c5c); // drone body when its LEDs are dark
@@ -72,6 +73,7 @@ export class ReplayScene {
 
     this.addGround();
     this.addHoldingArea();
+    this.addWaitingAreas();
 
     const n = header.fleet_size;
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -162,6 +164,30 @@ export class ReplayScene {
         new THREE.LineBasicMaterial({ color: PAD }),
       ),
     );
+  }
+
+  /** Waiting areas (1-phase_1.md section 3.10): each area's slots and the outline of its layer. */
+  private addWaitingAreas() {
+    for (const area of this.data.header.overlays.waiting_areas ?? []) {
+      if (area.slots.length === 0) continue;
+      this.scene.add(
+        new THREE.Points(
+          new THREE.BufferGeometry().setFromPoints(area.slots.map((s) => toThree(s))),
+          new THREE.PointsMaterial({ color: WAITING, size: 0.35, sizeAttenuation: true }),
+        ),
+      );
+      const xs = area.slots.map((s) => s[0]);
+      const ys = area.slots.map((s) => s[1]);
+      const z = area.slots[0][2];
+      const pad = area.grid_spacing_m / 2;
+      const [x0, x1, y0, y1] = [Math.min(...xs) - pad, Math.max(...xs) + pad, Math.min(...ys) - pad, Math.max(...ys) + pad];
+      const outline = [
+        [x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z], [x0, y0, z],
+      ].map((p) => toThree(p as V3));
+      this.scene.add(
+        new THREE.Line(new THREE.BufferGeometry().setFromPoints(outline), new THREE.LineBasicMaterial({ color: WAITING })),
+      );
+    }
   }
 
   private addViolationMarkers() {

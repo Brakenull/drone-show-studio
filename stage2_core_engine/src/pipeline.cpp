@@ -570,6 +570,20 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         return (p.array() >= holding_region.lo.array() - 1e-6).all() &&
                (p.array() <= holding_region.hi.array() + 1e-6).all();
     };
+    // Waiting areas (Phase 1 schema 1.7.0, docs/2-phase_2.md section 1.29):
+    // a target in a waiting region is a spare drone waiting in the air. It
+    // arrives at rest (and, staying, is a fixed hold, section 1.15), is left
+    // out of the shared formation velocity, and is not a pad (no section 1.28
+    // moves). Which waiting slots the spare drones take is chosen per
+    // transition among all of them (assign_spec below).
+    std::vector<HoldingRegion> waiting_regions;
+    for (const WaitingArea& area : project.metadata.waiting_areas) waiting_regions.push_back(compute_waiting_region(area));
+    const Eigen::MatrixXd waiting_slots = compute_all_waiting_slots(project.metadata.waiting_areas);
+    auto in_waiting_region = [&](const Eigen::Vector3d& p) {
+        return std::any_of(waiting_regions.begin(), waiting_regions.end(), [&](const HoldingRegion& r) {
+            return (p.array() >= r.lo.array() - 1e-6).all() && (p.array() <= r.hi.array() + 1e-6).all();
+        });
+    };
     PipelineResult result;
     result.metadata.altitude_floor_m = config.safety.altitude_floor_m;
     if (config.safety.keep_out) result.metadata.holding_clearance_m = config.safety.keep_out->clearance_m;
@@ -716,6 +730,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             }
         };
         check_below(P, "the holding area");
+        check_below(waiting_slots, "a waiting area");
         for (const Keyframe& kf : project.keyframes) check_below(points_by_index(kf, n), "keyframe '" + kf.shape_name + "'");
     }
     // Formation points must already keep the safe distance (the add-on
@@ -774,8 +789,98 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         specs.push_back(std::move(ret));
     }
 
+    // The assignment for one transition. A keyframe whose spare drones wait
+    // in waiting areas (section 1.29) has `spare` targets inside waiting
+    // regions (Phase 1's padding, the first waiting slots). Which drones are
+    // spare, and where each one goes, is chosen here:
+    //  * a drone that has flown takes any free waiting slot (all areas), so
+    //    it goes to a nearby one and a drone already waiting keeps its slot;
+    //  * a drone still on its pad (it hasn't taken off yet: Phase 1 pads the
+    //    first formation with holding slots) may stay on its own pad until a
+    //    formation needs it; no other drone may take that pad.
+    // The candidates are the formation targets, every waiting slot and the
+    // pad of every drone still on one; dummy rows (one per candidate left
+    // empty) can take waiting slots and pads, never a formation target. The
+    // chosen slots and pads then replace the keyframe's waiting targets in
+    // `spec`, LEDs off.
+    constexpr double kForbiddenCost = 1e6;
+    const auto assign_spec = [&](const Eigen::MatrixXd& from, TransitionSpec& spec, const Eigen::MatrixXd& v_xy,
+                                 const std::vector<std::optional<Eigen::Vector3d>>& parked_pad) {
+        std::vector<int> formation_rows, waiting_rows;
+        for (int j = 0; j < spec.targets.rows(); ++j) {
+            (in_waiting_region(spec.targets.row(j).transpose()) ? waiting_rows : formation_rows).push_back(j);
+        }
+        // Drones still on a pad, and that pad.
+        std::vector<int> pad_owner;
+        std::vector<Eigen::Vector3d> pads;
+        for (int i = 0; i < n; ++i) {
+            const Eigen::Vector3d at = from.row(i).transpose();
+            if (parked_pad[i]) {
+                pad_owner.push_back(i);
+                pads.push_back(*parked_pad[i]);
+            } else if (in_holding_region(at)) {
+                pad_owner.push_back(i);
+                pads.push_back(at);
+            }
+        }
+        const int slots = static_cast<int>(waiting_slots.rows());
+        const int n_pads = static_cast<int>(pads.size());
+        if (waiting_rows.empty() || slots + n_pads < static_cast<int>(waiting_rows.size())) {
+            return assign_slots(from, spec.targets, v_xy, parked_pad);
+        }
+        const int n_form = static_cast<int>(formation_rows.size());
+        const int pad0 = n_form + slots;  // first pad column
+        const int m = pad0 + n_pads;
+        Eigen::MatrixXd candidates(m, 3);
+        for (int c = 0; c < n_form; ++c) candidates.row(c) = spec.targets.row(formation_rows[c]);
+        candidates.middleRows(n_form, slots) = waiting_slots;
+        for (int k = 0; k < n_pads; ++k) candidates.row(pad0 + k) = pads[k].transpose();
+
+        assignment::AssignmentInput ain;
+        ain.P = Eigen::MatrixXd::Zero(m, 3);
+        ain.P.topRows(n) = from;
+        ain.Q = candidates;
+        ain.v_in_xy = Eigen::MatrixXd::Zero(m, 2);
+        ain.v_in_xy.topRows(n) = v_xy;
+        ain.w_distance = config.weights.w_distance;
+        ain.w_vertical_climb = config.weights.w_vertical_climb;
+        ain.w_heading_change = config.weights.w_heading_change;
+        Eigen::MatrixXd cost = assignment::build_cost_matrix(ain);
+        // A pad column is its own drone's only: staying costs 0.
+        for (int i = 0; i < n; ++i) cost.block(i, pad0, 1, n_pads).setConstant(kForbiddenCost);
+        for (int k = 0; k < n_pads; ++k) cost(pad_owner[k], pad0 + k) = 0.0;
+        for (int i = n; i < m; ++i) {
+            cost.row(i).setZero();
+            cost.block(i, 0, 1, n_form).setConstant(kForbiddenCost);
+        }
+        const assignment::AssignmentResult full = assignment::solve_auction(cost);
+
+        assignment::AssignmentResult result;
+        result.assignment.assign(n, -1);
+        size_t next_waiting = 0;
+        for (int i = 0; i < n; ++i) {
+            const int c = full.assignment[i];
+            if (cost(i, c) >= kForbiddenCost) {
+                throw std::logic_error("section 1.29: a drone was assigned another drone's pad");
+            }
+            if (c < n_form) {
+                result.assignment[i] = formation_rows[c];
+            } else {
+                const int row = waiting_rows.at(next_waiting++);
+                spec.targets.row(row) = candidates.row(c);  // a waiting slot, or its own pad
+                spec.target_colors.row(row).setZero();      // LEDs off while waiting or parked
+                result.assignment[i] = row;
+            }
+            result.total_cost += cost(i, c);
+        }
+        if (next_waiting != waiting_rows.size()) {
+            throw std::logic_error("section 1.29: a formation target was left without a drone");
+        }
+        return result;
+    };
+
     for (size_t kf_index = 0; kf_index < specs.size(); ++kf_index) {
-        const TransitionSpec& spec = specs[kf_index];
+        TransitionSpec& spec = specs[kf_index];
         const bool is_final_keyframe = spec.ends_at_rest;
         const std::string& from_keyframe = spec.from_name;
 
@@ -813,7 +918,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             }
         }
         const assignment::AssignmentResult assign_result =
-            next_assignment ? *next_assignment : assign_slots(P, Q, v_in_xy, parked_pad);
+            next_assignment ? *next_assignment : assign_spec(P, spec, v_in_xy, parked_pad);
         next_assignment.reset();
 
         // The transition and its leg start at t_cursor; the solved part after
@@ -863,7 +968,8 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             int flying = 0;
             for (int slot = 0; slot < n; ++slot) {
                 const Eigen::Vector3d target = Q.row(assign_result.assignment[slot]).transpose();
-                if (in_holding_region(target)) continue;  // parking: arrives at rest (below)
+                // Parking or waiting: arrives at rest (below).
+                if (in_holding_region(target) || in_waiting_region(target)) continue;
                 const Eigen::Vector3d travel = target - P.row(slot).transpose();
                 if (travel.norm() > 1e-6) {
                     direction_sum += travel.normalized();
@@ -890,7 +996,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                     int count = 0;
                     for (int r = 0; r < points.rows(); ++r) {
                         const Eigen::Vector3d p = points.row(r).transpose();
-                        if (in_holding_region(p)) continue;
+                        if (in_holding_region(p) || in_waiting_region(p)) continue;
                         sum += p;
                         ++count;
                     }
@@ -911,7 +1017,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             // for the whole formation, so it stays one shared velocity.
             for (int slot = 0; slot < n; ++slot) {
                 const Eigen::Vector3d target = Q.row(assign_result.assignment[slot]).transpose();
-                if (in_holding_region(target)) continue;
+                if (in_holding_region(target) || in_waiting_region(target)) continue;
                 if (optimizer::floor_safe_velocity(target, formation_velocity, config) != formation_velocity) {
                     formation_velocity.z() = 0.0;
                     break;
@@ -923,7 +1029,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         // next), then this transition's pad moves.
         std::vector<int> next_leaves(n, 0);
         if (pad_rule && !last_transition) {
-            const TransitionSpec& next_spec = specs[kf_index + 1];
+            TransitionSpec& next_spec = specs[kf_index + 1];
             Eigen::MatrixXd next_v_xy = Eigen::MatrixXd::Zero(n, 2);
             std::vector<std::optional<Eigen::Vector3d>> next_parked(n);
             for (int slot = 0; slot < n; ++slot) {
@@ -934,7 +1040,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                     next_v_xy.row(j) = formation_velocity.head<2>().transpose();
                 }
             }
-            next_assignment = assign_slots(Q, next_spec.targets, next_v_xy, next_parked);
+            next_assignment = assign_spec(Q, next_spec, next_v_xy, next_parked);
             for (int j = 0; j < n; ++j) {
                 if (!target_is_pad[j]) continue;
                 const int jn = next_assignment->assignment[j];
@@ -998,9 +1104,11 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             // attempt). At rest, a drone that stays parked is also held
             // fixed by the solver (docs/2-phase_2.md section 1.15). Section
             // 1.28: a drone reaching or staying at a pad or its hover point.
+            // Section 1.29: a drone reaching or staying in a waiting slot too.
             const bool at_rest_end =
-                pad_rule ? (plans[slot].arrive != Arrive::kNone || plans[slot].move != PadMove::kNone)
-                         : in_holding_region(problem.end.position);
+                (pad_rule ? (plans[slot].arrive != Arrive::kNone || plans[slot].move != PadMove::kNone)
+                          : in_holding_region(problem.end.position)) ||
+                in_waiting_region(problem.end.position);
             problem.end.velocity = is_final_keyframe || at_rest_end ? Eigen::Vector3d::Zero() : formation_velocity;
             problem.end.acceleration = Eigen::Vector3d::Zero();
             // Section 1.14: only drones flying the show keep out of the zone;

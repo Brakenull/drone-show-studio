@@ -1,5 +1,5 @@
-"""Phase 1 and Stage 2 lay out the same holding area (1-phase_1.md section 3.2,
-8-waiting_area.md Part A): slots in the same order, the same launch row
+"""Phase 1 and Stage 2 lay out the same holding area (1-phase_1.md sections 3.2
+and 3.2.3): slots in the same order, the same launch row
 indices and the same holding region, for the old straight stacking (schema
 <= 1.6.0) and the staggered layout with a 4 m gap (1.7.0), including a
 widened footprint. Skips if drone_core is not built for this Python.
@@ -68,3 +68,23 @@ def test_phase1_and_stage2_agree(drone_core, name):
     lo, hi = holding_region_bounds(*args, **options)
     np.testing.assert_allclose(stage2["region_lo"], lo, atol=1e-9)
     np.testing.assert_allclose(stage2["region_hi"], hi, atol=1e-9)
+
+
+def test_waiting_areas_agree(drone_core):
+    from stage1_designer.core.waiting_area import areas_from_metadata, compute_waiting_positions, waiting_region_bounds
+
+    data = build_phase1_json()
+    data["project_metadata"]["waiting_areas"] = [
+        {"center": [40.0, 0.0, 10.0], "size": [10.0, 4.0], "grid_spacing_m": 2.0, "show_clearance_m": 5.0,
+         "slot_count": 18},
+        {"center": [-40.0, 3.0, 12.5], "size": [6.0, 5.0], "grid_spacing_m": 2.5, "show_clearance_m": 5.0,
+         "slot_count": 37},  # widened: 37 > 4 x 3
+    ]
+    areas, counts = areas_from_metadata(data["project_metadata"])
+    stage2 = drone_core.holding_layout(data)["waiting_areas"]
+    assert len(stage2) == 2
+    for area, count, s2 in zip(areas, counts, stage2):
+        np.testing.assert_allclose(np.asarray(s2["slots"]), compute_waiting_positions(count, area), atol=1e-9)
+        lo, hi = waiting_region_bounds(count, area)
+        np.testing.assert_allclose(s2["region_lo"], lo, atol=1e-9)
+        np.testing.assert_allclose(s2["region_hi"], hi, atol=1e-9)

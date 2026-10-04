@@ -108,6 +108,77 @@ def holding_capacity(meta: dict[str, Any], slots: np.ndarray) -> dict[str, Any]:
     }
 
 
+def waiting_summary(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Each waiting area (schema 1.7.0, 1-phase_1.md section 3.10) with its slots and region, the most spare
+    drones any keyframe has, and warnings: formation points (the points outside every waiting region) closer
+    to a waiting region than its safe distance, or more spare drones than waiting slots."""
+    from stage1_designer.core.holding_area import distance_to_region
+    from stage1_designer.core.waiting_area import (
+        areas_from_metadata, compute_waiting_positions, in_waiting_region, waiting_region_bounds,
+    )
+
+    meta = data["project_metadata"]
+    areas, counts = areas_from_metadata(meta)
+    if not areas:
+        return [], []
+    warnings = []
+    regions = [waiting_region_bounds(n, a) for a, n in zip(areas, counts)]
+    spare_max = 0
+    for k, kf in enumerate(data["keyframes"]):
+        pts = np.array([q["pos"] for q in kf["points"]], dtype=float).reshape(-1, 3)
+        waiting = in_waiting_region(pts, areas, counts)
+        spare_max = max(spare_max, int(waiting.sum()))
+        formation = pts[~waiting]
+        if not len(formation):
+            continue
+        for i, (area, (lo, hi)) in enumerate(zip(areas, regions)):
+            d = distance_to_region(formation, lo, hi)
+            close = int((d < area.show_clearance_m).sum())
+            if close:
+                warnings.append({"path": f"/keyframes/{k}",
+                                 "message": f"{close} point(s) of {kf['shape_name']} are within "
+                                            f"{area.show_clearance_m:g} m of waiting area {i + 1} (closest "
+                                            f"{float(d.min()):.2f} m). Drones waiting there would be next to the show."})
+    from stage1_designer.core.holding_area import holding_region_bounds, layout_options
+    from stage1_designer.core.waiting_area import check_detours, size_needed
+
+    for i, (area, n) in enumerate(zip(areas, counts)):
+        if n > area.capacity:
+            w, length = size_needed(n, area)
+            warnings.append({"path": f"/project_metadata/waiting_areas/{i}",
+                             "message": f"Waiting area {i + 1} is declared {area.size[0]:g} × {area.size[1]:g} m "
+                                        f"({area.capacity} places) but holds {n}, so it grows to {w:g} × {length:g} m."})
+    fleet = meta["fleet_size"]
+    formations = []
+    for kf in data["keyframes"]:
+        pts = np.array([q["pos"] for q in kf["points"]], dtype=float).reshape(-1, 3)
+        formations.append((kf["shape_name"], pts[~in_waiting_region(pts, areas, counts)] if len(pts) else pts))
+    ha = meta["holding_area"]
+    lo, hi = holding_region_bounds(fleet, tuple(ha["center"]), tuple(ha["size"]), ha["max_height"],
+                                   ha["grid_spacing_m"], **layout_options(ha))
+    # The first formation's spare drones are on their pads: count only the drones outside the holding region.
+    formations = [(name, pts[distance_to_region(pts, lo, hi) > 0.0]) if len(pts) else (name, pts)
+                  for name, pts in formations]
+    for d in check_detours(areas, counts, formations, fleet, lo, hi):
+        warnings.append({"path": f"/keyframes/{d.keyframe_index}",
+                         "message": f"The {d.spare} spare drones of {d.shape_name} fly about {d.waiting_m:.0f} m to the "
+                                    f"nearest waiting area and back, against {d.home_m:.0f} m through the holding "
+                                    "area. A waiting area closer to the show would shorten the show."})
+    if spare_max > sum(counts):
+        warnings.append({"path": "/project_metadata/waiting_areas",
+                         "message": f"A formation leaves {spare_max} drones spare, but the waiting areas have "
+                                    f"{sum(counts)} slots."})
+    summary = [{
+        "center": list(a.center), "size": list(a.size), "grid_spacing_m": a.grid_spacing_m,
+        "show_clearance_m": a.show_clearance_m, "slot_count": n,
+        "slots": compute_waiting_positions(n, a).round(4).tolist(),
+        "region_min": lo.tolist(), "region_max": hi.tolist(),
+    } for a, n, (lo, hi) in zip(areas, counts, regions)]
+    for entry in summary:
+        entry["spare_max"] = spare_max
+    return summary, warnings
+
+
 def gatekeeper_floor_default() -> float | None:
     from .config_fields import get, load_defaults
 
@@ -167,6 +238,9 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
                                     f"{floor:g} m the safety check requires. Stage 2 will reject the show at "
                                     "takeoff. Use a grid spacing of at least that."})
 
+    waiting, waiting_warnings = waiting_summary(data)
+    warnings.extend(waiting_warnings)
+
     summary = {
         "fleet_size": meta["fleet_size"],
         "version": meta["version"],
@@ -181,6 +255,7 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
             "capacity": capacity,
             "gatekeeper_floor_m": floor,
         },
+        "waiting_areas": waiting,
         "first_formation_targets_in_holding_area": overlap,
         # Drones the first formation doesn't use, exported on their own holding slots: not an overlap.
         "first_formation_parked": parked,

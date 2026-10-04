@@ -395,6 +395,16 @@ export interface ValidationSummary {
   first_formation_targets_in_holding_area: number;
   /** Drones the first formation doesn't use, left parked on their holding slots (not an overlap). */
   first_formation_parked?: number;
+  /** Waiting areas (schema 1.7.0, tools/studio_bridge/validate.py); empty or absent without any. */
+  waiting_areas?: {
+    center: Vec3;
+    size: [number, number];
+    grid_spacing_m: number;
+    show_clearance_m: number;
+    slot_count: number;
+    /** The most spare drones at any formation (the same for every area). */
+    spare_max: number;
+  }[];
 }
 
 export interface Validation {
