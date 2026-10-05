@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "drone-show-studio",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "C++ libraries for stage2_core_engine (eigen3, osqp, nlohmann-json) and stage3_simulation_packer (nlohmann-json). pybind11 comes from pip (requirements.txt).",
   "dependencies": [
     "eigen3",

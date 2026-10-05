@@ -2,7 +2,72 @@
 
 All notable changes to Drone Show Studio are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## Release notes (1.2.1 — 2026-10-05)
+
+**Rain return planning now tells you how to close the gaps, and the flights home travel with the show.**
+
+- **Suggestions for uncovered moments.** When a rain window doesn't cover the whole show, the readiness panel lists what would help, most useful first: plan returns from inside a long move, start the return earlier, plan a missing return path, re-plan a slow return, or move a formation closer to the holding area. Each shows how much of the gap it closes, and one click acts on it.
+- **Return paths from inside a move.** The fleet no longer has to finish a long move before turning for home. On `200_cube`, one such return cut the rain window the show needs from 126 s to 97 s, and it flew home in the digital twin 29 s ahead of the rain limit.
+- **Flights home in the flight files.** Each drone's file now carries its planned flights home and a table saying which one to take when the return is called. This is a new file format (version 2).
+- **Fixes:** planning from a suggestion now shows its progress where you clicked, and weather values beside the timeline can be cleared while typing.
+
+**Before you upgrade:** anything that reads flight files must handle version 2. No drone firmware does yet, and the command that tells the fleet to return isn't built, so the flights home can be planned, simulated and packed but not flown by real drones.
+
 ## [Unreleased]
+
+## [1.2.1] — 2026-10-05
+
+The rain return readiness panel now says what would close the time a rain window doesn't cover, and the flights home it plans travel with the show in the flight files. Return paths can be planned from moments inside a move, not only from formations, so the fleet no longer has to finish a long move before turning for home: on `200_cube` that alone brings the rain window the show needs from 126 s down to 97 s.
+
+### Added
+
+#### Suggestions for uncovered moments (desktop app, `twin_sim`)
+
+- **What would close the gap:** under the readiness chart, "Suggest for *W* s" lists the options for that rain window, most useful first, each with a bar showing how much of the uncovered time it closes on its own and its numbers. The options:
+  - **Plan returns from inside a move:** candidate moments every 10 s inside the move whose time home is too long, with an estimated flight home. Only those that help are kept.
+  - **Start the return earlier:** how many seconds before the rain alert, and the lower alert level that would give that time with the rain rising steadily. When no alert level can, it says a forecast is needed.
+  - **Plan a return path** from a formation that has none.
+  - **Plan a return again at its minimum time**, offered only when it would save time. Otherwise it says the return is already as fast as the motion limits allow and names the farthest drone.
+  - **Bring a formation closer to the holding area:** how much shorter its return would need to be (a change in Blender).
+- **One click to act:** "Plan it / Plan them", "Plan again" or "Use *x* mm/h" (sets the scenario's alert level as an unsaved edit). The planning progress, with Cancel, shows in the row you clicked. The list dims and asks to suggest again when the window, the rain rule or the return paths change.
+- Command line: `studio_bridge suggest <run> --window-s W`. Estimates take well under a second and are cached per Stage 2 result.
+
+#### Return paths from inside a move (path planning, desktop app)
+
+- **Abort points:** a return can now start at any moment strictly inside a move, from the drones' positions, speeds and accelerations at that moment, and is checked like every other return. When the return is called during that move, the fleet flies on to whichever planned way home ahead of it gets it home first, an abort point or the formation, and turns for home there.
+- **In the app:** planned from the suggestions, then listed under Stage 2 › Return paths › "From inside a move" (the move, the moment, the flight home, closest approach, status, View and Plan again). The replay is labelled "Flight home from the move to *formation* at *time*".
+- **In the simulator:** a scenario whose rain calls the fleet home before an abort point flies on to it and returns from there; the result and the heads-up display say so.
+- Command line: `studio_bridge stage2-returns <run> --points K@T,...`. Python: `drone_core.plan_return_path(..., abort_time_sec=...)`, and `drone_core.estimate_return_paths()` for the minimum flight time of many starts without planning them.
+
+#### Flights home in the flight files (Stage 3)
+
+- **Flight files version 2:** each drone's file now carries the show and its planned flights home as separate tracks, plus a return table that says which flight home to take when the return is called at any moment, and a pack id shared by every file of one pack. Only the flights home the table uses are packed. "Pack flight files" builds the table from the same planning as the readiness chart. The Flight files card lists the flights home packed and warns when return paths were planned after packing. Command line: `pack_to_binary --plan <pack_plan.json> <out_dir>`.
+
+### Changed
+
+- **Flight file format 2 (`0x0200`):** the header grows from 16 to 24 bytes and is followed by a track directory and the return table, so readers of version 1 must be updated. The packer's `--verify`, its C++ reader and `flight_binary.py` still read version 1 files. On `200_cube`, a file holding the show and its 5 flights home is 174 KB (about 70 KB for the show alone).
+
+### Fixed
+
+- **"Plan it" seemed to do nothing:** planning from a suggestion started at once, but its progress showed at the top of the panel, out of view. It now shows in the row that started it.
+- **Weather key fields couldn't be emptied:** clearing a value beside the timeline (wind speed, gust, rain, show time) put 0 back straight away. A field can now be empty while typing, showing the key's value as a placeholder; left empty, the key keeps that value. Typing a show time that moves the key past another one keeps the field focused.
+- **The result of a return from inside a move** said the fleet "finished the move it was in"; it now says it flew on to that moment and turned for home there.
+
+### Verified
+
+- 357 automated Python tests pass (348 in 1.2.0), plus the packer's C++ tests for the new layout.
+- **`200_cube`, 100 s rain window:** 86 % of the show was covered (short by up to 26 s). The top suggestion, one return from 1:06.6 in the move to Shape_818 estimated at 51 s, closed all of it. Planned in 3.3 min, it passed on its first attempt in 51.31 s, exactly the estimate (closest approach 1.524 m). The show then needs a 97 s window instead of 126 s.
+- **Flown through the digital twin** with rain reaching its alert level at 0:45 (4 m/s wind): the fleet flew on to 1:06.6, turned for home and was all home by 1:55.5, 29 s before the rain limit, no drone more than 0.21 m from its slot, lowest battery 86 %.
+- **Flight files, `200_cube`:** 200 files with one pack id; every track within 5 mm of its plan (the format's resolution), and every flight home starts within 8 mm of where the show is at its start, so no drone jumps when it switches.
+
+### Known issues
+
+- **The drones can't fly the returns yet:** the flight files carry them, but no firmware reads version 2 and nothing sends the return command to the fleet.
+- **A rejected abort point isn't reported in the readiness panel** (only under Stage 2 › Return paths), and the suggestions offer it again.
+- **"Plan again at minimum time" hasn't met a real case:** every return planned so far was already at its minimum time.
+- **"Pack again" can be asked for needlessly:** the Flight files card compares with the last return-planning job, even a cancelled one that planned nothing new.
+- **A return from inside a move is estimated as if the drones started at rest;** one that needs safety-check retries takes longer than its estimate.
+- The other known issues of 1.2.0 remain, except that the readiness panel now suggests changes.
 
 ## [1.2.0] — 2026-10-04
 
@@ -40,8 +105,8 @@ Shows can now be checked against the weather, and every drone touches a pad only
 
 ### Fixed
 
-- **Stress-test crashes in the landing (P3-03):** the return leg (and every return path) now brings each drone to rest 2 m straight above its slot, flying no lower than 1 m above the lowest slot on the way, and then lowers the whole fleet straight down together ("Landing hover height" under Takeoff and landing; 0 = the old landing). Drones used to glide in sideways a few centimetres above the ground, and in the stress test a gust or the downwash of the drones parked above pushed some onto the ground short of their slot, where a neighbour hit them. `500_cube`, `200_cube` and `150_cone` now pass the stress test (0 crash flights, was 97, 3 and 4 of 100); shows are about 5.5 s longer.
-- **Takeoffs and mid-show stops on the pads (P3-04):** the same hover point now applies to every pad visit. At the first takeoff the departing drones climb straight up together before flying off. A drone parking mid-show flies to the hover point above its pad, descends, and climbs straight up again before it leaves; a stop too short for that keeps it hovering above its pad with LEDs off. A parked drone never moves to another pad. Where a straight climb or descent would pass too close to another parked or hovering drone, that drone goes the old way and the transition's report counts it. On `150_cone` and `200_cube` no drone needed the old way and none flew sideways below 1.05 m.
+- **Stress-test crashes in the landing:** the return leg (and every return path) now brings each drone to rest 2 m straight above its slot, flying no lower than 1 m above the lowest slot on the way, and then lowers the whole fleet straight down together ("Landing hover height" under Takeoff and landing; 0 = the old landing). Drones used to glide in sideways a few centimetres above the ground, and in the stress test a gust or the downwash of the drones parked above pushed some onto the ground short of their slot, where a neighbour hit them. `500_cube`, `200_cube` and `150_cone` now pass the stress test (0 crash flights, was 97, 3 and 4 of 100); shows are about 5.5 s longer.
+- **Takeoffs and mid-show stops on the pads:** the same hover point now applies to every pad visit. At the first takeoff the departing drones climb straight up together before flying off. A drone parking mid-show flies to the hover point above its pad, descends, and climbs straight up again before it leaves; a stop too short for that keeps it hovering above its pad with LEDs off. A parked drone never moves to another pad. Where a straight climb or descent would pass too close to another parked or hovering drone, that drone goes the old way and the transition's report counts it. On `150_cone` and `200_cube` no drone needed the old way and none flew sideways below 1.05 m.
 - **Padding on real pads:** drones a formation doesn't use now park on the first places of the whole fleet's holding layout. They used to get a layout computed for that smaller number, which differed from the fleet's when the fleet's holding area had to be widened.
 
 ### Changed
@@ -62,8 +127,8 @@ Shows can now be checked against the weather, and every drone touches a pad only
 ### Known issues
 
 - **Spare drones can still stretch a transition:** with or without waiting areas, a transition is lengthened when spare drones have far to fly, e.g. when drones that waited on their pads since the takeoff leave the holding area for a formation on the other side of the field (`150_cone`: two transitions about twice their design length; `300_cube`: still about twice where its waiting area is ~57 m from the formation).
-- **Check Kinematics can flag a false over-speed (P1-02):** when two keyframes sample a different number of points and the fleet is larger than the shape, the add-on compares a formation point with a holding slot and may lock Export or stretch the timeline after Auto-Fix. Stage 2 is not affected.
-- **RTK float near the ground (P3-02):** in the condition simulator, drones with degraded RTK touched the ground on the old low landing approach and stayed there. This scenario has not been re-run with the hover-point landing; the twin's ground model may be partly to blame.
+- **Check Kinematics can flag a false over-speed:** when two keyframes sample a different number of points and the fleet is larger than the shape, the add-on compares a formation point with a holding slot and may lock Export or stretch the timeline after Auto-Fix. Stage 2 is not affected.
+- **RTK float near the ground:** in the condition simulator, drones with degraded RTK touched the ground on the old low landing approach and stayed there. This scenario has not been re-run with the hover-point landing; the twin's ground model may be partly to blame.
 - **`500_cube` has not been re-planned with the mid-show pad rule** (its first plan with the landing fix passes the stress test).
 - **Rain thresholds are placeholders:** the rain alert and limit levels and the reaction time are not those of a specific drone. The readiness panel reports what is not covered but does not yet suggest changes.
 - **Jerk is over its limit at the joints between path parts** (12–44 % on the real shows), as in 1.1.0; return paths use the same solver, so this presumably applies to them too.
@@ -111,20 +176,20 @@ Files exported by add-on 1.5.0 (schema 1.5.0) stay valid and plan as before.
 
 #### Path planning — real shows now plan
 
-- **Near misses (P2-08):** the planner checked drone spacing only about every 0.6 s and kept every refinement step, good or bad, so it often returned paths it believed were safe but that came too close between its checks, and retries were a matter of luck. It now checks spacing as finely as the final safety check (100 times per second) and keeps a step only if it makes the paths better. The closest pass it reports is now what the safety check measures.
-- **Flyable starting paths (P2-10):** the planner's starting paths broke the speed, acceleration and jerk limits, so its first step on each part of a transition was a large unchecked jump. Each drone's starting path is now moved to the closest path within the limits before planning.
-- **Drones crossing at formation points (P2-07):** drones passed each formation point at speed, each in its own direction, so neighbours coming from different directions could cross just before or after it, where the planner can't adjust the path. All drones now pass a formation point with the same velocity, so near it they move together like the formation itself.
-- **Formations passed at a sensible speed (P2-14):** drones passed a formation at full speed in the direction they arrived from, even when the next formation was somewhere else, so a whole formation had to brake and turn at once. They now pass it with the speed and direction of the formation's own movement from the previous to the next formation: nearly at rest when it stays in place.
-- **Drones passing each other where long transitions are split (P2-15):** a long transition is planned in parts, and at each split every drone was sent straight towards its own target, so two drones passing each other there could come closer than planned just before or after the split, where the planner can't adjust the path. All drones now pass each split with the same velocity.
+- **Near misses:** the planner checked drone spacing only about every 0.6 s and kept every refinement step, good or bad, so it often returned paths it believed were safe but that came too close between its checks, and retries were a matter of luck. It now checks spacing as finely as the final safety check (100 times per second) and keeps a step only if it makes the paths better. The closest pass it reports is now what the safety check measures.
+- **Flyable starting paths:** the planner's starting paths broke the speed, acceleration and jerk limits, so its first step on each part of a transition was a large unchecked jump. Each drone's starting path is now moved to the closest path within the limits before planning.
+- **Drones crossing at formation points:** drones passed each formation point at speed, each in its own direction, so neighbours coming from different directions could cross just before or after it, where the planner can't adjust the path. All drones now pass a formation point with the same velocity, so near it they move together like the formation itself.
+- **Formations passed at a sensible speed:** drones passed a formation at full speed in the direction they arrived from, even when the next formation was somewhere else, so a whole formation had to brake and turn at once. They now pass it with the speed and direction of the formation's own movement from the previous to the next formation: nearly at rest when it stays in place.
+- **Drones passing each other where long transitions are split:** a long transition is planned in parts, and at each split every drone was sent straight towards its own target, so two drones passing each other there could come closer than planned just before or after the split, where the planner can't adjust the path. All drones now pass each split with the same velocity.
 - **Parked drones stay parked:** when a formation uses only part of the fleet, the drones left in the holding area used to hop up to several meters and land again while the others took off, sometimes close enough to each other or to a departing drone to fail the safety check. They now stay on their pads, and the other drones' paths go around them.
-- **Drones parking mid-show (P2-04):** a drone landing on a holding-area pad during the show used to arrive at flying speed, then slide about 2 m along the ground into the next pad. Every show that parked drones mid-show failed the safety check. Drones now land at rest and stay parked.
-- **Staggered takeoff (P2-06):** with launch rows leaving one after another, the early rows reached the first formation at flying speed and stopped dead to wait for the last row, which no drone can do. The takeoff now arrives at the first formation at rest.
+- **Drones parking mid-show:** a drone landing on a holding-area pad during the show used to arrive at flying speed, then slide about 2 m along the ground into the next pad. Every show that parked drones mid-show failed the safety check. Drones now land at rest and stay parked.
+- **Staggered takeoff:** with launch rows leaving one after another, the early rows reached the first formation at flying speed and stopped dead to wait for the last row, which no drone can do. The takeoff now arrives at the first formation at rest.
 
 #### Path planning — ground and timing
 
-- **Paths below the ground (P2-02):** Stage 2 now uses the design's ground level (`ground_z_m`) as an altitude floor. No point of any planned path goes below it, including takeoff, formations passed near the ground and the return. A show whose formations or holding area are below the ground is refused before planning. Files that declare no ground are planned as before.
+- **Paths below the ground:** Stage 2 now uses the design's ground level (`ground_z_m`) as an altitude floor. No point of any planned path goes below it, including takeoff, formations passed near the ground and the return. A show whose formations or holding area are below the ground is refused before planning. Files that declare no ground are planned as before.
 - **Ground-level takeoffs rejected by a few centimetres:** with the holding area on the ground, planned paths could come out 1–6 cm below it. The safety check then rejected attempts whose drone spacing was fine, and the error only mentioned spacing. Paths now keep a small buffer above the ground and never go below it. When a transition is rejected, the error and the progress report say which check failed on each attempt: drone spacing, ground, or holding-area clearance.
-- **Timing after a safety retry (P2-03):** a transition that passed only on a retry was flown longer than the timeline said. The next transition then started while it was still being flown, LED fades overshot, and the show's reported length (and the desktop app's replay) ended early. Every transition is now timed by the attempt that actually passed.
+- **Timing after a safety retry:** a transition that passed only on a retry was flown longer than the timeline said. The next transition then started while it was still being flown, LED fades overshot, and the show's reported length (and the desktop app's replay) ended early. Every transition is now timed by the attempt that actually passed.
 
 ### Changed
 
