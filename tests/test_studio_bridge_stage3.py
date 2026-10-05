@@ -104,14 +104,17 @@ def test_pack_writes_verified_files_identical_to_the_cli(passed_run, tmp_path):
     assert [e["name"] for e in events if e["type"] == "phase"] == ["packing", "verifying"]
     result = first(events, "pack_result")
     assert result["ok"] and result["files"] == result["verified_files"] == 4
-    assert result["file_size_bytes"] == 20 + 19 * result["records_per_file"]
+    # Version 2: the show is the only track (no return paths planned); the return table has one entry, no way
+    # home, since this show has no return leg.
+    assert result["return_tracks"] == [] and result["return_entries"] == 1 and result["file_version"] == 0x0200
+    assert result["file_size_bytes"] == 24 + 16 + 12 + 19 * result["records_per_file"] + 4
     assert result["total_bytes"] == 4 * result["file_size_bytes"]
     assert record(passed_run)["stage3"]["pack"]["status"] == "succeeded"
 
-    source = passed_run / "stage2" / "trajectory_splines.json"
+    plan = passed_run / "stage3" / "pack_plan.json"
     cli_dir = tmp_path / "cli_bin"
-    subprocess.run([str(PACKER), str(source), str(cli_dir)], check=True, capture_output=True)
+    subprocess.run([str(PACKER), "--plan", str(plan), str(cli_dir)], check=True, capture_output=True)
     ours = {p.name: p.read_bytes() for p in bin_dir.iterdir()}
     assert ours.keys() == {p.name for p in cli_dir.iterdir()}  # the stale file is gone
-    for p in cli_dir.iterdir():  # manifest.json too: same input path, so even its "source" matches
+    for p in cli_dir.iterdir():  # manifest.json too: same plan path, so even its "source" and "plan" match
         assert ours[p.name] == p.read_bytes(), p.name

@@ -1,7 +1,8 @@
-"""Rain return, milestone C2 (docs/4-condition_simulator.md §5.1, §5.2, B7, §9.4, §9.5).
+"""Rain return, milestones C2 and C3 (docs/4-condition_simulator.md §5.1-5.3, B7, §9.4-9.6).
 
 Time to home and coverage on a synthetic timeline against hand calculation (§9.4), the abort plan
-and the composed reference, and an abort flight through the digital twin (§9.5).
+and the composed reference, an abort flight through the digital twin (§9.5), abort points inside
+transitions and the suggestions (§9.6).
 """
 
 import numpy as np
@@ -9,16 +10,27 @@ import pytest
 
 from stage3_helpers import line_control_points, make_contract, make_segment, opencl_available
 from stage3_simulation_packer.twin_sim.rain_return import (
+    ABORT_POINT,
+    ABORT_POINTS,
+    DESIGN,
+    EARLIER_TRIGGER,
+    FASTER_RETURN,
     NONE,
+    PLAN_RETURN,
     REST_OF_SHOW,
     RETURN_LEG,
     RETURN_PATH,
+    AbortPoint,
+    ReturnFacts,
     ShowTiming,
     abort_plan,
     abort_reference,
     compose,
     coverage,
+    cut_segment,
     home_after,
+    point_id,
+    suggestions,
     time_to_home,
 )
 
@@ -193,3 +205,157 @@ def test_abort_flight_lands_every_drone_on_its_slot():
     assert flight.report["passed"]
     # The fleet never flew the move east: it went straight home from A.
     assert flight.positions[:, :, 0].max() < 4.0 + 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Milestone C3: abort points and suggestions (section 5.3, §9.6)
+# --------------------------------------------------------------------------- #
+
+def test_abort_points_take_the_soonest_way_home_ahead():
+    timing = ShowTiming.from_contract(meta(), ["A", "B", "C"])
+    # In A->B (12-30, B's return 25 s, home at 55): a point at 20 s (home at 32) and a worse one at 22 s
+    # (home at 62), which is never taken.
+    points = [AbortPoint(1, 20.0, 12.0), AbortPoint(1, 22.0, 40.0)]
+    pieces = time_to_home(timing, D, points)
+    h = lambda u: home_after(pieces, u, timing.end)  # noqa: E731
+    assert h(12.0) == pytest.approx(20.0)            # on to the point at 20 s, then 12 s
+    assert h(19.0) == pytest.approx(13.0)
+    assert h(20.0) == pytest.approx(35.0)            # past it: on to B (10 s), then B's return (25 s)
+    assert h(21.0) == pytest.approx(34.0)            # not the point at 22 s (1 + 40 s)
+    assert h(10.0) == pytest.approx(10.0) and h(31.0) == pytest.approx(39.0)   # elsewhere unchanged
+    point_pieces = [p for p in pieces if p.method == ABORT_POINT]
+    assert [(p.u0, p.u1, p.point_sec) for p in point_pieces] == [(12.0, 20.0, 20.0)]
+    # A point outside its transition is ignored; without points the pieces are the C2 ones.
+    assert time_to_home(timing, D, [AbortPoint(1, 35.0, 1.0)]) == time_to_home(timing, D)
+
+    plan = abort_plan(timing, D, 15.0, points)
+    assert (plan.formation, plan.method, plan.start_sec, plan.planned_home_sec) == (1, ABORT_POINT, 20.0, 32.0)
+    assert point_id(1, 20.0) == "1-20000"
+
+
+def test_cut_segment_is_exact():
+    from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+    from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
+
+    rng = np.random.default_rng(7)
+    seg = make_segment(0, 3.0, 11.0, rng.normal(size=(9, 3)), colors=[(3.0, [0, 0, 0]), (11.0, [200, 100, 0])])
+    for t in (3.5, 6.0, 7.0, 10.9):                         # 7.0 is a knot of the uniform vector
+        cut = cut_segment(seg, t)
+        assert cut["end_time_sec"] == t and len(cut["knot_vector"]) == len(cut["control_points"]) + 6
+        whole = build_piecewise(parse_contract_dict(make_contract([[seg]])))
+        part = build_piecewise(parse_contract_dict(make_contract([[cut]])))
+        times = np.linspace(3.0, t, 40)
+        for a, b in zip(evaluate_numpy(whole, times), evaluate_numpy(part, times)):
+            np.testing.assert_allclose(b, a, atol=1e-9)      # position, velocity, acceleration
+        assert cut["color_keyframes"][-1]["time_sec"] == t
+    assert cut_segment(seg, 7.0)["color_keyframes"][-1]["color_rgb"] == [100, 50, 0]
+
+
+def test_composed_reference_from_an_abort_point():
+    from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+    from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
+
+    show, _ = synthetic_show()
+    timing = ShowTiming.from_contract(show["metadata"])
+    show_pw = build_piecewise(parse_contract_dict(show))
+    at, _, _ = evaluate_numpy(show_pw, np.array([14.0]))     # halfway through the move east
+    ret = make_contract([[make_segment(0, 0.0, 6.0, line_control_points(at[i, 0], [x, y, 0.0], 8))]
+                         for i, (x, y) in enumerate(PADS)])
+    ret["metadata"]["total_duration_sec"] = 6.0
+    ret["metadata"]["return_path"] = {"keyframe_index": 1, "abort_time_sec": 14.0}
+    points = [AbortPoint(1, 14.0, 6.0)]
+    plan = abort_plan(timing, {0: 8.0}, 11.0, points)
+    assert (plan.method, plan.start_sec, plan.planned_home_sec) == (ABORT_POINT, 14.0, 20.0)
+    flown = abort_reference(show, timing, {}, plan, {point_id(1, 14.0): ret})
+    assert flown["metadata"]["total_duration_sec"] == 20.0
+    pw = build_piecewise(parse_contract_dict(flown))
+    times = np.array([5.0, 12.0, 13.9, 14.0, 20.0, 25.0])
+    pos, _, _ = evaluate_numpy(pw, times)
+    ref, _, _ = evaluate_numpy(show_pw, times[:4])
+    np.testing.assert_allclose(pos[:, :4], ref, atol=1e-9)              # the show until the point
+    np.testing.assert_allclose(pos[:, 4], [[x, y, 0] for x, y in PADS], atol=1e-9)
+    np.testing.assert_allclose(pos[:, 5], pos[:, 4], atol=1e-12)
+
+
+def test_suggestions_match_hand_calculation():
+    timing = ShowTiming.from_contract(meta(), ["A", "B", "C"])
+    # As test_coverage_intervals_match_hand_calculation: R 2, M 5, W 40 leaves t in [10, 20) (A->B, short by
+    # up to 10 s) and [28, 35) (B->C then the return leg, up to 7 s): 17 s uncovered.
+    facts = {0: ReturnFacts(planned_sec=10.0, min_sec=10.0, reversed_takeoff=True),
+             1: ReturnFacts(planned_sec=25.0, min_sec=25.0, attempts=1, farthest_drone=3, farthest_m=40.0)}
+    candidates = [AbortPoint(1, 20.0, 12.0), AbortPoint(1, 22.0, 12.0), AbortPoint(1, 26.0, 30.0)]
+    rule = {"alert_mm_h": 1.0, "limit_mm_h": 2.0}
+    result = suggestions(timing, D, [], 2.0, 5.0, 40.0, facts, candidates, rule)
+    assert result["uncovered_sec"] == pytest.approx(17.0)
+    items = {(i["kind"], i["formation"]): i for i in result["items"]}
+
+    # Earlier trigger: the largest shortfall, 10 s, closes everything; with the rain rising 1 mm/h in 40 s,
+    # an alert level 0.25 mm/h lower is reached 10 s earlier.
+    early = items[(EARLIER_TRIGGER, None)]
+    assert early["closes_all"] and early["numbers"]["lead_sec"] == pytest.approx(10.0)
+    assert early["numbers"]["alert_mm_h"] == pytest.approx(0.75) and early["action"]["alert_mm_h"] == 0.75
+
+    # Abort points: the one at 22 s alone covers A->B (home at 34: R + 34 - u + M <= 40 for every u >= 12);
+    # the one at 20 s helps only until 22 s is added, so it is dropped; the one at 26 s never helps.
+    points = items[(ABORT_POINTS, 1)]
+    assert points["action"] == {"kind": "plan_points", "points": [[1, 22.0]]}
+    assert points["closes_sec"] == pytest.approx(10.0) and points["estimate"]
+
+    # B's return is already at its Auto duration: nothing to gain, and the farthest drone says why.
+    faster = items[(FASTER_RETURN, 1)]
+    assert faster["closes_sec"] == 0.0 and not faster["numbers"]["possible"]
+    assert (faster["numbers"]["farthest_drone"], faster["numbers"]["farthest_m"]) == (3, 40.0)
+
+    # Design: B's return must be 10 s shorter (15 s); C's is the show's return leg, 7 s shorter (23 s).
+    design_b, design_c = items[(DESIGN, 1)], items[(DESIGN, 2)]
+    assert design_b["numbers"]["return_needed_sec"] == pytest.approx(15.0)
+    assert design_b["numbers"]["move_sec"] == pytest.approx(18.0) and design_b["closes_sec"] == pytest.approx(10.0)
+    assert design_c["numbers"]["return_leg"] and design_c["numbers"]["return_needed_sec"] == pytest.approx(23.0)
+
+    # Ranked by what each closes on its own.
+    assert [i["kind"] for i in result["items"]] == [EARLIER_TRIGGER, ABORT_POINTS, DESIGN, DESIGN, FASTER_RETURN]
+
+    # A return lengthened by retries (planned 25 s, Auto 18 s) can be re-planned faster.
+    slow = {**facts, 1: ReturnFacts(planned_sec=25.0, min_sec=18.0, attempts=3)}
+    faster = next(i for i in suggestions(timing, D, [], 2.0, 5.0, 40.0, slow, [], rule)["items"]
+                  if i["kind"] == FASTER_RETURN)
+    assert faster["numbers"]["new_sec"] == 18.0 and faster["closes_sec"] == pytest.approx(7.0)
+    assert faster["action"] == {"kind": "replan_return", "formation": 1}
+    # A formation without a return path: plan one (estimated).
+    plan_b = next(i for i in suggestions(timing, {0: 10.0}, [], 2.0, 5.0, 40.0, facts | {1: ReturnFacts(min_sec=20.0)},
+                                         [], rule)["items"] if i["kind"] == PLAN_RETURN)
+    assert plan_b["formation"] == 1 and plan_b["estimate"] and plan_b["closes_sec"] > 0
+    # Covered: nothing to suggest.
+    assert suggestions(timing, D, [], 2.0, 5.0, 60.0, facts, candidates, rule)["items"] == []
+
+
+@pytest.mark.skipif(not opencl_available(), reason="no OpenCL device")
+def test_abort_flight_from_an_abort_point():
+    from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+    from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
+    from stage3_simulation_packer.twin_sim.scenario_runner import fly_scenario
+    from stage3_simulation_packer.twin_sim.weather import Scenario
+
+    show, returns = synthetic_show()
+    pos, vel, _ = evaluate_numpy(build_piecewise(parse_contract_dict(show)), np.array([14.0]))
+    # From the moving fleet at 14 s, heading on a little, then down onto the pads in 8 s.
+    ret = make_contract([[make_segment(0, 0.0, 8.0, np.vstack([
+        pos[i, 0], pos[i, 0] + vel[i, 0] * 8.0 / 7 / 5, line_control_points(pos[i, 0], [x, y, 0.0], 8)[2:]]))]
+        for i, (x, y) in enumerate(PADS)])
+    ret["metadata"]["total_duration_sec"] = 8.0
+    ret["metadata"]["return_path"] = {"keyframe_index": 1, "abort_time_sec": 14.0}
+    scenario = Scenario.from_dict({
+        "name": "rain in the move east", "seed": 3,
+        "wind": [{"t": 0, "speed_mps": 2.0, "from_deg": 270, "turbulence": 0.1}],
+        "rain": [{"t": 0, "mm_h": 0.0}, {"t": 9, "mm_h": 0.0}, {"t": 11, "mm_h": 1.0}, {"t": 41, "mm_h": 4.0}],
+        "rain_rule": {"alert_mm_h": 0.5, "limit_mm_h": 2.5, "reaction_s": 1.0, "margin_s": 2.0},
+    })
+    flight = fly_scenario(show, scenario, returns=returns, points={point_id(1, 14.0): ret})
+    home = flight.report["rain"]["return"]
+    assert home["command_sec"] == pytest.approx(11.0)
+    assert (home["formation"], home["method"], home["start_sec"], home["planned_home_sec"]) == (1, ABORT_POINT,
+                                                                                            14.0, 22.0)
+    assert home["all_home"] and home["home_by_deadline"] and home["farthest_from_slot_m"] < 0.3
+    assert flight.report["passed"]
+    # The fleet turned for home at 14 s: it never reached B, 6 m east.
+    assert flight.positions[:, :, 0].max() < 4.0 + 6.0 - 1.0

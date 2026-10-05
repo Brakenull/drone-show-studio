@@ -10,7 +10,8 @@ later; the fleet finishes its transition and flies that formation's return path 
 the flight follows the composed reference instead of the rest of the show. Every drone must then be
 landed, and before the rain reaches the limit level when it does: a third pass criterion. Return paths
 come from Stage 2 (B4): `returns` maps a formation index to its return contract; a formation without
-one makes the fleet fly the rest of the show to its own return leg.
+one makes the fleet fly the rest of the show to its own return leg. `points` maps an abort point's id
+(`rain_return.point_id()`) to the return planned from inside a transition (section 5.3).
 
 Usage:
     python -m stage3_simulation_packer.twin_sim.scenario_runner trajectory_splines.json scenario.json
@@ -37,7 +38,7 @@ from .loaders.arrow_loader import TrajectoryContractError, load_trajectories
 from .loaders.spline_evaluator import evaluate_colors_numpy, evaluate_numpy
 from .monte_carlo_runner import D_CRASH_M, D_WARNING_M, MIN_LANDING_SOC, evaluate_run
 from .profile import load_profile
-from .rain_return import ShowTiming, abort_plan, abort_reference
+from .rain_return import AbortPoint, ShowTiming, abort_plan, abort_reference
 from .weather import Scenario, ScenarioError, rain_rule_defaults, scenario_disturbances
 
 RECORD_HZ = 20.0
@@ -160,8 +161,10 @@ def _return_report(plan, timing: ShowTiming, deadline: float | None, times, posi
 
 def fly_scenario(source: Any, scenario: Scenario, profile_path: str | None = None, *, device: str | None = None,
                  on_progress: Callable[[float, float], None] | None = None,
-                 returns: dict[int, dict[str, Any]] | None = None) -> ScenarioFlight:
-    """`returns`: formation index -> return-path contract (B4). The rain rule needs the show as a contract
+                 returns: dict[int, dict[str, Any]] | None = None,
+                 points: dict[str, dict[str, Any]] | None = None) -> ScenarioFlight:
+    """`returns`: formation index -> return-path contract (B4); `points`: abort point id -> its return
+    contract (section 5.3). The rain rule needs the show as a contract
     dict or a .json file (for its transition timing); otherwise it is reported as not applied.
     `on_progress(simulated_sec, total_sec)` about once per simulated second."""
     from .simulator import DigitalTwin, SimConfig
@@ -181,8 +184,12 @@ def fly_scenario(source: Any, scenario: Scenario, profile_path: str | None = Non
             timing = ShowTiming.from_contract(show["metadata"])
             returns = returns or {}
             durations = {k: float(r["metadata"]["total_duration_sec"]) for k, r in returns.items()}
-            plan = abort_plan(timing, durations, alert_t + rule["reaction_s"])
-            flown = abort_reference(show, timing, returns, plan)
+            points = points or {}
+            ways = [AbortPoint(int(r["metadata"]["return_path"]["keyframe_index"]),
+                               float(r["metadata"]["return_path"]["abort_time_sec"]),
+                               float(r["metadata"]["total_duration_sec"])) for r in points.values()]
+            plan = abort_plan(timing, durations, alert_t + rule["reaction_s"], ways)
+            flown = abort_reference(show, timing, returns, plan, points)
     twin = DigitalTwin(load_trajectories(flown or show or source), profile, device=device)
     pw = twin.pw
     show_duration = pw.end_time_sec - pw.start_time_sec
@@ -271,11 +278,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         scenario = Scenario.from_dict(json.loads(Path(args.scenario).read_text(encoding="utf-8")),
                                       rain_rule_defaults(load_profile(args.profile)))
-        returns = {}
+        returns, points = {}, {}
         if args.returns:
             for path in Path(args.returns).glob("return_*.json"):
-                returns[int(path.stem.split("_")[1])] = json.loads(path.read_text(encoding="utf-8"))
-        flight = fly_scenario(args.input, scenario, args.profile, device=args.device, returns=returns)
+                key = path.stem.split("_", 1)[1]
+                contract = json.loads(path.read_text(encoding="utf-8"))
+                if key.isdigit():
+                    returns[int(key)] = contract
+                else:
+                    points[key] = contract
+        flight = fly_scenario(args.input, scenario, args.profile, device=args.device, returns=returns,
+                              points=points)
     except (ScenarioError, TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

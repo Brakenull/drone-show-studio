@@ -10,6 +10,10 @@ when the gatekeeper rejects it) and listed in `stage2/returns/index.json`, so a 
 failed job keeps what it finished. Each return also gets a replay (`replay_<k>/`, the Stage 2 replay format):
 the show up to the formation, then the flight home. Returns belong to one Stage 2 result: `index.json` and run.json's
 `stage2_returns` keep the Stage 2 `ended_at` they came from, and a new Stage 2 run deletes them.
+
+Abort points (docs/4-condition_simulator.md section 5.3, `--points K@T,...`) are returns planned from show time T
+inside the transition into formation K, from the moving fleet. They are named by `rain_return.point_id()`
+(`return_1-66637.json`, `replay_1-66637/`) and listed in `index.json` under `points`.
 """
 
 from __future__ import annotations
@@ -35,16 +39,26 @@ INDEX_FILE = "index.json"
 SECTION = "stage2_returns"
 
 
-def return_file(k: int) -> str:
+def return_file(k: int | str) -> str:
+    """`k`: a formation index, or an abort point's id (`rain_return.point_id()`)."""
     return f"return_{k}.json"
 
 
-def replay_dir(k: int) -> str:
+def replay_dir(k: int | str) -> str:
     return f"replay_{k}"
 
 
-def failure_file(k: int) -> str:
+def failure_file(k: int | str) -> str:
     return f"failure_{k}.json"
+
+
+def return_key(info: dict[str, Any]) -> str:
+    """The files' name of a planned return: its formation, or its abort point's id."""
+    from stage3_simulation_packer.twin_sim.rain_return import point_id
+
+    if info.get("inside_transition"):
+        return point_id(info["keyframe_index"], info["abort_time_sec"])
+    return str(info["keyframe_index"])
 
 
 def _load_json(path: Path) -> Any:
@@ -172,23 +186,27 @@ def build_return_replay(run_dir: Path, show: dict[str, Any], ret: dict[str, Any]
         "duration_sec": ret["metadata"]["total_duration_sec"],
         "method": info.get("method", PLANNED),
     }
-    out = run_dir / "stage2" / RETURNS_DIR / replay_dir(info["keyframe_index"])
+    overlays["return_path"]["inside_transition"] = bool(info.get("inside_transition"))
+    out = run_dir / "stage2" / RETURNS_DIR / replay_dir(return_key(info))
     shutil.rmtree(out, ignore_errors=True)
     return build_replay(compose_abort_show(show, ret), out, overlays=overlays)
 
 
-def rebuild_return_replay(run_dir: Path, k: int) -> int:
-    """`replay <run> --return k`: the replay of a return planned earlier (or one whose replay failed)."""
+def rebuild_return_replay(run_dir: Path, k: str) -> int:
+    """`replay <run> --return k`: the replay of a return planned earlier (or one whose replay failed); `k` is a
+    formation index or an abort point's id."""
+    if Path(k).name != k:
+        return _input_error(f"No return {k!r}.")
     path = run_dir / "stage2" / RETURNS_DIR / return_file(k)
     if not path.exists():
-        return _input_error(f"This run has no planned return from formation {k}.")
+        return _input_error(f"This run has no planned return {k!r}.")
     emit("phase", name="replay", detail="sampling the show and its return for the 3D replay")
     header = build_return_replay(run_dir, _load_json(run_dir / "stage2" / CONTRACT_JSON), _load_json(path))
     index_path = run_dir / "stage2" / RETURNS_DIR / INDEX_FILE
     if index_path.exists():
         index = _load_json(index_path)
-        for entry in index["returns"]:
-            if entry["keyframe_index"] == k:
+        for entry in [*index["returns"], *index.get("points", [])]:
+            if str(entry.get("id", entry["keyframe_index"])) == k:
                 entry["replay"] = True
         write_json_atomic(index_path, index)
     emit("replay_ready", frames=header["frames"], fleet_size=header["fleet_size"])
@@ -205,9 +223,12 @@ def clear_returns(run_dir: Path) -> None:
         write_json_atomic(run_dir / "run.json", record)
 
 
-def run_stage2_returns(run_dir: Path, formations: list[int] | None, durations: dict[int, float]) -> int:
+def run_stage2_returns(run_dir: Path, formations: list[int] | None, durations: dict[int, float],
+                       points: list[tuple[int, float]] | None = None) -> int:
+    """`points`: abort points (formation, show time) to plan as well; with points and no `formations`, only
+    the points are planned."""
     try:
-        return _run(run_dir, formations, durations)
+        return _run(run_dir, formations, durations, points or [])
     except Exception as exc:
         # Never leave run.json saying "running" for a job that is gone.
         try:
@@ -223,7 +244,10 @@ def _input_error(message: str) -> int:
     return EXIT_INPUT
 
 
-def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float]) -> int:
+def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float],
+         points: list[tuple[int, float]]) -> int:
+    from stage3_simulation_packer.twin_sim.rain_return import point_id
+
     record = read_run(run_dir)
     stage_dir = run_dir / "stage2"
     contract_path = stage_dir / CONTRACT_JSON
@@ -235,13 +259,23 @@ def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float
     show = _load_json(contract_path)
     names = [kf["shape_name"] for kf in phase1["keyframes"]]
     if formations is None:
-        formations = default_formations(phase1, show)
-    bad = [k for k in [*formations, *durations] if not 0 <= k < len(names)]
+        formations = [] if points else default_formations(phase1, show)
+    bad = [k for k in [*formations, *durations, *(k for k, _ in points)] if not 0 <= k < len(names)]
     if bad:
         return _input_error(f"No formation {bad[0]}: this show has formations 0..{len(names) - 1}.")
-    if not formations:
+    if not formations and not points:
         return _input_error("No formation to plan a return from (the last one already has the show's return leg).")
     formations = sorted(set(formations))
+    # An abort point is a moment strictly inside the transition into its formation, kept to the millisecond.
+    into = [t for t in show["metadata"].get("transitions", []) if t["to_keyframe"] != "holding_area"]
+    wanted: dict[str, tuple[int, float]] = {}
+    for k, t in points:
+        t = round(t, 3)
+        if k >= len(into) or not into[k]["start_time_sec"] < t < into[k]["end_time_sec"]:
+            span = f"{into[k]['start_time_sec']:.1f} to {into[k]['end_time_sec']:.1f} s" if k < len(into) else "none"
+            return _input_error(f"An abort point at {t:.1f} s is not inside the move into {names[k]} ({span}).")
+        wanted[point_id(k, t)] = (k, t)
+    points = sorted(wanted.values(), key=lambda p: p[1])
     overrides_path = stage_dir / "config_overrides.json"
     overrides = _load_json(overrides_path) if overrides_path.exists() else {}
     # The settings file is written when Stage 2 starts, so this is what the show was planned with.
@@ -260,19 +294,24 @@ def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float
         index = {"stage2_ended_at": stage2_ended_at, "returns": []}
     returns_dir.mkdir(parents=True, exist_ok=True)
     entries = {e["keyframe_index"]: e for e in index["returns"]}
+    point_entries = {e["id"]: e for e in index.get("points", [])}
 
     started = time.perf_counter()
     update_run(run_dir, SECTION, status="running", started_at=now_iso(), ended_at=None, pid=os.getpid(),
-               message=None, wall_time_sec=None, stage2_ended_at=stage2_ended_at, formations=formations)
+               message=None, wall_time_sec=None, stage2_ended_at=stage2_ended_at, formations=formations,
+               points=[point_id(k, t) for k, t in points])
 
     def save_index() -> None:
         index["returns"] = [entries[k] for k in sorted(entries)]
+        index["points"] = sorted(point_entries.values(), key=lambda e: e["abort_time_sec"])
         write_json_atomic(index_path, index)
 
     def finish(status: str, code: int, **fields: Any) -> int:
         planned = sorted(k for k, e in entries.items() if e["status"] == "succeeded")
+        planned_points = [e["id"] for e in index.get("points", []) if e["status"] == "succeeded"]
         update_run(run_dir, SECTION, status=status, ended_at=now_iso(), pid=None,
-                   wall_time_sec=round(time.perf_counter() - started, 1), planned=planned, **fields)
+                   wall_time_sec=round(time.perf_counter() - started, 1), planned=planned,
+                   planned_points=planned_points, **fields)
         emit("done", status=status, exit_code=code)
         return code
 
@@ -286,30 +325,39 @@ def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float
                       message="drone_core was built before return paths (B4); rebuild stage2_core_engine")
 
     worst_status = "succeeded"
-    for position, k in enumerate(formations):
-        how = "takeoff flown backwards" if reverse_first and k == 0 else "return"
-        emit("phase", name="solving", detail=f"{how} from {names[k]} ({position + 1} of {len(formations)})")
-        tag = {"return_index": position, "return_count": len(formations), "keyframe_index": k}
+    jobs = [(k, None) for k in formations] + [(k, t) for k, t in points]
+    for position, (k, at) in enumerate(jobs):
+        key = str(k) if at is None else point_id(k, at)
+        how = ("takeoff flown backwards" if reverse_first and k == 0 and at is None else
+               "return" if at is None else f"return from {at:.1f} s, in the move into")
+        emit("phase", name="solving", detail=f"{how} {'from ' if at is None else ''}{names[k]} "
+                                             f"({position + 1} of {len(jobs)})")
+        tag = {"return_index": position, "return_count": len(jobs), "keyframe_index": k, "abort_time_sec": at}
 
         def forward(event: dict[str, Any], tag: dict[str, Any] = tag) -> None:
             emit("solve_progress", **event, **tag)
 
-        for stale in (return_file(k), failure_file(k)):
+        for stale in (return_file(key), failure_file(key)):
             (returns_dir / stale).unlink(missing_ok=True)
-        shutil.rmtree(returns_dir / replay_dir(k), ignore_errors=True)
-        reverse = reverse_first and k == 0
+        shutil.rmtree(returns_dir / replay_dir(key), ignore_errors=True)
+        reverse = reverse_first and k == 0 and at is None
         entry: dict[str, Any] = {"keyframe_index": k, "from_keyframe": names[k],
-                                 "method": REVERSED if reverse else PLANNED, "target_duration_sec": durations.get(k)}
+                                 "method": REVERSED if reverse else PLANNED,
+                                 "target_duration_sec": durations.get(k) if at is None else None}
+        if at is not None:
+            entry.update(id=key, abort_time_sec=at)
         t0 = time.perf_counter()
         try:
             if reverse:
                 result = reversed_takeoff(show, names[0])
             else:
-                result = drone_core.plan_return_path(phase1, show, k, overrides, durations.get(k), forward)
+                result = drone_core.plan_return_path(phase1, show, k, overrides,
+                                                     durations.get(k) if at is None else None, forward,
+                                                     abort_time_sec=at)
                 result["metadata"]["return_path"]["method"] = PLANNED
         except drone_core.SafetyViolationError as exc:
             report = exc.report
-            write_json_atomic(returns_dir / failure_file(k), report, indent=None)
+            write_json_atomic(returns_dir / failure_file(key), report, indent=None)
             attempts = report["attempts"]
             entry.update(status="failed_safety", message=str(exc), worst_separation_m=report["worst_separation_m"],
                          required_separation_m=report["required_separation_m"], attempts=len(attempts),
@@ -322,14 +370,16 @@ def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float
         else:
             from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict, write_json
 
-            write_json(parse_contract_dict(result), returns_dir / return_file(k))
+            write_json(parse_contract_dict(result), returns_dir / return_file(key))
             meta = result["metadata"]
             info = meta["return_path"]
             [timing] = meta["transitions"]
             entry.update(status="succeeded", message=None, abort_time_sec=info["abort_time_sec"],
                          planned_duration_sec=timing["planned_duration_sec"],
                          flown_duration_sec=timing["flown_duration_sec"], attempts=timing["attempts"],
-                         worst_separation_m=info["worst_separation_m"], replay=False)
+                         worst_separation_m=info["worst_separation_m"], min_duration_sec=info.get("min_duration_sec"),
+                         farthest_drone_id=info.get("farthest_drone_id"),
+                         farthest_distance_m=info.get("farthest_distance_m"), replay=False)
             try:
                 build_return_replay(run_dir, show, result)
                 entry["replay"] = True
@@ -338,10 +388,13 @@ def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float
                 emit("error", code="replay", message=f"replay of the return from {names[k]} failed: {replay_exc}")
         entry.setdefault("abort_time_sec", show["metadata"]["transitions"][k]["end_time_sec"])
         entry["wall_time_sec"] = round(time.perf_counter() - t0, 1)
-        entries[k] = entry
+        if at is None:
+            entries[k] = entry
+        else:
+            point_entries[key] = entry
         save_index()
         emit("return_result", **entry)
 
     code = {"succeeded": EXIT_OK, "failed_safety": EXIT_CRITERION}.get(worst_status, EXIT_INTERNAL)
     return finish(worst_status, code, message=None if worst_status == "succeeded" else
-                  "some formations have no return path; see stage2/returns/index.json")
+                  "some returns were not planned; see stage2/returns/index.json")

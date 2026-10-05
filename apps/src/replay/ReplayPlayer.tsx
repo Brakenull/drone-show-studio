@@ -153,7 +153,9 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
       ? {
           start: back.abort_time_sec,
           end: back.abort_time_sec + back.duration_sec,
-          label: `Flight home from ${back.from_keyframe}`,
+          label: back.inside_transition
+            ? `Flight home from the move to ${back.from_keyframe} at ${formatTime(back.abort_time_sec)}`
+            : `Flight home from ${back.from_keyframe}`,
           tone: "info" as const,
         }
       : simHome && simHome.formation_name && simHome.planned_home_sec !== null

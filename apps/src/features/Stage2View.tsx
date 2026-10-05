@@ -27,7 +27,7 @@ interface Props {
   onFinished: (runId: string, exit: JobExit) => void;
   onShowInReplay: (time: number, drones: number[]) => void;
   /** Open a return path's replay (the show up to that formation, then the flight home) at its abort time. */
-  onViewReturn: (keyframe: number, from: string, abortTime: number) => void;
+  onViewReturn: (keyframe: number | string, from: string, abortTime: number) => void;
   /** A copy of this run was made ("Try these settings in a new run"). */
   onCreated: (runId: string) => void;
 }
@@ -217,7 +217,7 @@ interface OutcomeProps {
   controls: React.ReactNode;
   onShowInReplay: (time: number, drones: number[]) => void;
   onChanged: () => void;
-  onViewReturn: (keyframe: number, from: string, abortTime: number) => void;
+  onViewReturn: (keyframe: number | string, from: string, abortTime: number) => void;
 }
 
 function Outcome({ run, status, job, controls, onShowInReplay, onChanged, onViewReturn }: OutcomeProps) {
@@ -272,7 +272,7 @@ function Passed({
   run: RunRecord;
   again: React.ReactNode;
   onChanged: () => void;
-  onViewReturn: (keyframe: number, from: string, abortTime: number) => void;
+  onViewReturn: (keyframe: number | string, from: string, abortTime: number) => void;
 }) {
   const [sep, setSep] = useState<Separation | null>(null);
   useEffect(() => {

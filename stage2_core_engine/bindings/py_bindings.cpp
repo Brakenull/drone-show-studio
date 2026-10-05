@@ -6,6 +6,7 @@
 #include <exception>
 #include <filesystem>
 #include <optional>
+#include <variant>
 
 #include "config.hpp"
 #include "io/pipeline.hpp"
@@ -374,9 +375,63 @@ std::vector<drone_core::io::TransitionTiming> contract_transitions(const nlohman
 // docs/4-condition_simulator.md B4, docs/2-phase_2.md section 1.24. Same
 // output format as optimize_trajectories(), timed from 0, plus
 // metadata["return_path"].
+// docs/4-condition_simulator.md section 5.3: the Auto duration of many
+// candidate returns (formations and abort points), without solving any.
+py::list estimate_return_paths(const py::dict& phase1_intermediate_json, const py::dict& show_result,
+                               const py::list& starts, const py::dict& optional_config_overrides) {
+    const nlohmann::json phase1_json = drone_core::bindings::py_to_json(phase1_intermediate_json);
+    const nlohmann::json overrides_json = drone_core::bindings::py_to_json(optional_config_overrides);
+    const nlohmann::json show_json = drone_core::bindings::py_to_json(show_result);
+    const drone_core::io::ProjectData project = drone_core::io::parse_project(phase1_json);
+    const std::filesystem::path default_config_path = std::filesystem::path(DRONE_CORE_CONFIG_DIR) / "core_config.json";
+    const drone_core::CoreConfig config = drone_core::resolve_core_config(
+        std::optional<nlohmann::json>(project.metadata.raw), overrides_json, default_config_path);
+    const std::vector<drone_core::DroneTrajectory> show = contract_trajectories(show_json);
+    const std::vector<drone_core::io::TransitionTiming> transitions = contract_transitions(show_json);
+
+    std::vector<std::pair<int, std::optional<double>>> wanted;
+    for (const auto& item : starts) {
+        const auto pair = item.cast<py::tuple>();
+        const py::object t = pair[1];
+        wanted.emplace_back(pair[0].cast<int>(), t.is_none() ? std::nullopt : std::optional<double>(t.cast<double>()));
+    }
+    std::vector<std::variant<drone_core::io::ReturnPathResult, std::string>> results;
+    {
+        py::gil_scoped_release no_gil;
+        for (const auto& [k, t] : wanted) {
+            try {
+                results.emplace_back(drone_core::io::plan_return_path(project, config, show, transitions, k,
+                                                                      std::nullopt, {}, t, true));
+            } catch (const std::exception& e) {
+                results.emplace_back(std::string(e.what()));
+            }
+        }
+    }
+    py::list out;
+    for (size_t i = 0; i < results.size(); ++i) {
+        py::dict info;
+        if (const auto* error = std::get_if<std::string>(&results[i])) {
+            info["keyframe_index"] = wanted[i].first;
+            info["error"] = *error;
+        } else {
+            const auto& r = std::get<drone_core::io::ReturnPathResult>(results[i]);
+            info["keyframe_index"] = r.keyframe_index;
+            info["from_keyframe"] = r.from_keyframe;
+            info["abort_time_sec"] = r.abort_time_sec;
+            info["inside_transition"] = wanted[i].second.has_value();
+            info["min_duration_sec"] = r.min_duration_sec;
+            info["farthest_drone_id"] = r.farthest_drone_id;
+            info["farthest_distance_m"] = r.farthest_distance_m;
+        }
+        out.append(info);
+    }
+    return out;
+}
+
 py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::dict& show_result, int keyframe_index,
                           const py::dict& optional_config_overrides, const py::object& target_duration_sec,
-                          const py::object& progress_callback) {
+                          const py::object& progress_callback, const py::object& abort_time_sec,
+                          bool estimate_only) {
     const nlohmann::json phase1_json = drone_core::bindings::py_to_json(phase1_intermediate_json);
     const nlohmann::json overrides_json = drone_core::bindings::py_to_json(optional_config_overrides);
     const nlohmann::json show_json = drone_core::bindings::py_to_json(show_result);
@@ -389,6 +444,8 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
     const std::vector<drone_core::io::TransitionTiming> transitions = contract_transitions(show_json);
     const std::optional<double> target =
         target_duration_sec.is_none() ? std::nullopt : std::optional<double>(target_duration_sec.cast<double>());
+    const std::optional<double> abort_time =
+        abort_time_sec.is_none() ? std::nullopt : std::optional<double>(abort_time_sec.cast<double>());
 
     drone_core::ProgressCallback progress;
     if (!progress_callback.is_none()) {
@@ -400,7 +457,8 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
     drone_core::io::ReturnPathResult r;
     {
         py::gil_scoped_release no_gil;
-        r = drone_core::io::plan_return_path(project, config, show, transitions, keyframe_index, target, progress);
+        r = drone_core::io::plan_return_path(project, config, show, transitions, keyframe_index, target, progress,
+                                             abort_time, estimate_only);
     }
 
     py::dict metadata = metadata_to_py(r.metadata);
@@ -409,8 +467,18 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
     info["from_keyframe"] = r.from_keyframe;
     info["abort_time_sec"] = r.abort_time_sec;
     info["worst_separation_m"] =
-        std::isfinite(r.worst_separation_m) ? py::object(py::float_(r.worst_separation_m)) : py::object(py::none());
+        std::isfinite(r.worst_separation_m) && !estimate_only ? py::object(py::float_(r.worst_separation_m))
+                                                               : py::object(py::none());
     info["target_duration_sec"] = target ? py::object(py::float_(*target)) : py::object(py::none());
+    info["min_duration_sec"] = r.min_duration_sec;
+    info["inside_transition"] = abort_time.has_value();
+    info["farthest_drone_id"] = r.farthest_drone_id;
+    info["farthest_distance_m"] = r.farthest_distance_m;
+    if (estimate_only) {
+        py::dict out;
+        out["return_path"] = info;
+        return out;
+    }
     metadata["return_path"] = info;
     py::dict out;
     out["metadata"] = metadata;
@@ -488,10 +556,20 @@ PYBIND11_MODULE(drone_core, m) {
     m.def("plan_return_path", &plan_return_path, py::arg("phase1_intermediate_json"), py::arg("show_result"),
           py::arg("keyframe_index"), py::arg("optional_config_overrides") = py::dict(),
           py::arg("target_duration_sec") = py::none(), py::arg("progress_callback") = py::none(),
+          py::arg("abort_time_sec") = py::none(), py::arg("estimate_only") = false,
           "Plans the return path from formation `keyframe_index` of an already planned show (`show_result`, "
           "the optimize_trajectories() output for the same Phase 1 file) to the holding-area slots. Returns "
           "the same format timed from 0, with metadata['return_path']. `target_duration_sec` None = Auto "
-          "(T_min). Raises drone_core.SafetyViolationError when the gatekeeper rejects it.");
+          "(T_min). `abort_time_sec` (show time strictly inside the transition into that formation) starts "
+          "the return from the moving fleet then instead. Raises drone_core.SafetyViolationError when the "
+          "gatekeeper rejects it. `estimate_only` returns just {'return_path': {...}} without solving: the "
+          "Auto duration (min_duration_sec) and the farthest drone.");
+
+    m.def("estimate_return_paths", &estimate_return_paths, py::arg("phase1_intermediate_json"),
+          py::arg("show_result"), py::arg("starts"), py::arg("optional_config_overrides") = py::dict(),
+          "plan_return_path(estimate_only=True) for many starts at once, reading the show once. `starts`: "
+          "(keyframe_index, abort_time_sec or None) pairs. Returns one dict per start: the return_path info "
+          "(min_duration_sec, farthest_drone_id, farthest_distance_m, ...), or {'error': message}.");
 
     m.def("holding_layout", &holding_layout, py::arg("phase1_intermediate_json"),
           "The holding-area slots (fleet_size of them, in slot order), their launch row indices and the "

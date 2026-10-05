@@ -6,6 +6,7 @@
 * `simulate <run> --scenario I`          -- fly the scenario through the digital twin (B6) and record it (B8);
                                            the rain rule flies the return paths (B7)
 * `readiness <run> [--scenario I] [--window-s W]` -- time to home and coverage (section 5.1, 5.2)
+* `suggest <run> [--scenario I] [--window-s W] ...` -- what would close the uncovered time (section 5.3)
 
 Scenarios live in `stage3/scenarios/<id>/scenario.json`; `<id>` is the folder name made from the name the
 scenario was created with and never changes (renaming only changes `name`). A simulation writes, next to
@@ -91,28 +92,47 @@ def rule_defaults() -> dict[str, float]:
     return rain_rule_defaults(load_profile())
 
 
-def load_returns(run_dir: Path, record: dict[str, Any]) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
-    """The run's planned return paths (B4) by formation, and their status for the UI. Returns planned from an
-    earlier Stage 2 result are ignored (they no longer start where the show is)."""
+def load_returns(run_dir: Path, record: dict[str, Any]
+                 ) -> tuple[dict[int, dict[str, Any]], dict[str, dict[str, Any]], dict[str, Any]]:
+    """The run's planned return paths (B4) by formation, its abort points' returns (section 5.3) by id, and
+    their status for the UI. Returns planned from an earlier Stage 2 result are ignored (they no longer start
+    where the show is)."""
     from .returns_job import INDEX_FILE, RETURNS_DIR, return_file
 
     folder = run_dir / "stage2" / RETURNS_DIR
     index_path = folder / INDEX_FILE
-    status: dict[str, Any] = {"planned": False, "stale": False, "entries": []}
+    status: dict[str, Any] = {"planned": False, "stale": False, "entries": [], "points": []}
     if not index_path.exists():
-        return {}, status
+        return {}, {}, status
     index = _load_json(index_path)
     if index.get("stage2_ended_at") != record.get("stage2", {}).get("ended_at"):
         status["stale"] = True
-        return {}, status
+        return {}, {}, status
     returns = {}
     for entry in index["returns"]:
         k = entry["keyframe_index"]
         path = folder / return_file(k)
         if entry["status"] == "succeeded" and path.exists():
             returns[k] = _load_json(path)
-    status.update(planned=bool(returns), entries=index["returns"])
-    return returns, status
+    points = {}
+    for entry in index.get("points", []):
+        path = folder / return_file(entry["id"])
+        if entry["status"] == "succeeded" and path.exists():
+            points[entry["id"]] = _load_json(path)
+    status.update(planned=bool(returns), entries=index["returns"], points=index.get("points", []))
+    return returns, points, status
+
+
+def abort_points(points: dict[str, dict[str, Any]]) -> list:
+    """`rain_return.AbortPoint`s of the planned abort-point returns."""
+    from stage3_simulation_packer.twin_sim.rain_return import AbortPoint
+
+    out = []
+    for ret in points.values():
+        info = ret["metadata"]["return_path"]
+        out.append(AbortPoint(int(info["keyframe_index"]), float(info["abort_time_sec"]),
+                              float(ret["metadata"]["total_duration_sec"])))
+    return sorted(out, key=lambda p: p.time_sec)
 
 
 def readiness_data(run_dir: Path, record: dict[str, Any], contract: dict[str, Any],
@@ -120,21 +140,24 @@ def readiness_data(run_dir: Path, record: dict[str, Any], contract: dict[str, An
     """H(t) as pieces (section 5.1) and what it is made of; the UI computes coverage for any window."""
     from dataclasses import asdict
 
-    from stage3_simulation_packer.twin_sim.rain_return import ShowTiming, time_to_home
+    from stage3_simulation_packer.twin_sim.rain_return import ShowTiming, point_id, time_to_home
 
-    returns, status = load_returns(run_dir, record)
+    returns, points, status = load_returns(run_dir, record)
     try:
         timing = ShowTiming.from_contract(contract["metadata"], names)
     except ValueError as exc:
         return {"error": str(exc), "returns": status}
     durations = {k: float(r["metadata"]["total_duration_sec"]) for k, r in returns.items()}
-    pieces = time_to_home(timing, durations)
+    planned_points = abort_points(points)
+    pieces = time_to_home(timing, durations, planned_points)
     return {
         "error": None,
         "end_sec": timing.end,
         "pieces": [asdict(p) for p in pieces],
-        "formations": [{"index": k, "name": n, "arrival_sec": timing.arrival[k],
+        "formations": [{"index": k, "name": n, "start_sec": timing.start[k], "arrival_sec": timing.arrival[k],
                         "return_sec": durations.get(k)} for k, n in enumerate(names)],
+        "points": [{"id": point_id(p.formation, p.time_sec), "formation": p.formation, "time_sec": p.time_sec,
+                    "return_sec": p.duration_sec} for p in planned_points],
         "return_leg_sec": None if timing.return_leg is None else timing.return_leg[1] - timing.return_leg[0],
         "returns": status,
     }
@@ -378,8 +401,8 @@ def _simulate(run_dir: Path, folder: Path, contract_path: Path, device: str, sta
     emit("phase", name="simulating", detail=f"flying {scenario.name!r} through the digital twin")
     emit("progress", stage="simulate", done=0.0, total=total)
     try:
-        returns, _ = load_returns(run_dir, read_run(run_dir))
-        flight = fly_scenario(str(contract_path), scenario, device=device, returns=returns,
+        returns, points, _ = load_returns(run_dir, read_run(run_dir))
+        flight = fly_scenario(str(contract_path), scenario, device=device, returns=returns, points=points,
                               on_progress=lambda done, all_: emit("progress", stage="simulate", done=round(done, 1),
                                                                    total=round(all_, 1)))
     except (TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
@@ -444,5 +467,118 @@ def run_readiness(run_dir: Path, scenario_id: str | None, window: float | None) 
     pieces = [Piece(**p) for p in data["pieces"]]
     cov = coverage(pieces, data["end_sec"], rule["reaction_s"], rule["margin_s"], window)
     emit("readiness", **data, rain_rule=rule, coverage=asdict(cov))
+    emit("done", status="succeeded", exit_code=EXIT_OK)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------- #
+# suggest
+# --------------------------------------------------------------------------- #
+
+ESTIMATES_FILE = "estimates.json"
+
+
+def return_estimates(run_dir: Path, record: dict[str, Any], phase1: dict[str, Any], contract: dict[str, Any],
+                     timing, step: float) -> dict[str, Any]:
+    """The Auto duration of a return from every formation and from candidate abort points every `step` seconds
+    inside each transition (drone_core, no solving), cached in stage2/returns/estimates.json for one Stage 2
+    result and step."""
+    from .paths import import_drone_core
+    from .returns_job import RETURNS_DIR
+
+    stage2_ended_at = record.get("stage2", {}).get("ended_at")
+    path = run_dir / "stage2" / RETURNS_DIR / ESTIMATES_FILE
+    if path.exists():
+        cached = _load_json(path)
+        if cached.get("stage2_ended_at") == stage2_ended_at and cached.get("step_sec") == step:
+            return cached
+    starts: list[tuple[int, float | None]] = [(k, None) for k in range(len(timing.names))]
+    for k in range(len(timing.names)):
+        t = timing.start[k] + step
+        while t < timing.arrival[k] - 0.25 * step:
+            starts.append((k, round(t, 3)))
+            t += step
+    emit("phase", name="estimating", detail=f"estimating {len(starts)} flights home")
+    drone_core = import_drone_core()
+    overrides_path = run_dir / "stage2" / "config_overrides.json"
+    overrides = _load_json(overrides_path) if overrides_path.exists() else {}
+    found = drone_core.estimate_return_paths(phase1, contract, starts, overrides)
+    estimates = {"stage2_ended_at": stage2_ended_at, "step_sec": step, "formations": [], "points": []}
+    for (k, t), info in zip(starts, found):
+        if info.get("error"):
+            log(f"estimate from formation {k} at {t}: {info['error']}")
+            continue
+        row = {"formation": k, "time_sec": t, "duration_sec": info["min_duration_sec"],
+               "farthest_drone": info["farthest_drone_id"], "farthest_m": info["farthest_distance_m"]}
+        estimates["formations" if t is None else "points"].append(row)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(path, estimates)
+    return estimates
+
+
+def run_suggest(run_dir: Path, scenario_id: str | None, window: float | None, rule_override: dict[str, float],
+                step: float) -> int:
+    """Section 5.3: for the rain window (given, else the scenario's), each option that would close uncovered
+    time, with its numbers, ranked by how much it closes."""
+    from stage3_simulation_packer.twin_sim.rain_return import AbortPoint, ReturnFacts, ShowTiming, suggestions
+    from stage3_simulation_packer.twin_sim.scenario_runner import rain_crossing
+    from stage3_simulation_packer.twin_sim.weather import Scenario, ScenarioError
+
+    contract_path, record = _passed_stage2(run_dir)
+    if contract_path is None:
+        return _input_error("Suggestions need a run whose Stage 2 passed; this one hasn't.")
+    if step < 1.0:
+        return _input_error("Candidate abort points must be at least 1 s apart.")
+    rule = rule_defaults()
+    if scenario_id is not None:
+        path = scenarios_dir(run_dir) / scenario_id / SCENARIO_FILE
+        if Path(scenario_id).name != scenario_id or not path.exists():
+            return _input_error(f"This run has no scenario {scenario_id!r}.")
+        try:
+            scenario = Scenario.from_dict(_load_json(path), rule)
+        except ScenarioError as exc:
+            return _input_error(f"The scenario has problems: {exc}", errors=exc.errors)
+        rule = dict(scenario.rain_rule)
+        if window is None:
+            alert, limit = rain_crossing(scenario, rule["alert_mm_h"]), rain_crossing(scenario, rule["limit_mm_h"])
+            if alert is not None and limit is not None:
+                window = limit - alert
+    rule = {**rule, **rule_override}
+    if window is None:
+        return _input_error("No rain window: give --window-s, or a scenario whose rain reaches the limit level.")
+
+    phase1 = _load_json(run_dir / "input" / "phase1.json")
+    names = [kf["shape_name"] for kf in phase1["keyframes"]]
+    contract = _load_json(contract_path)
+    try:
+        timing = ShowTiming.from_contract(contract["metadata"], names)
+    except ValueError as exc:
+        return _input_error(str(exc))
+    returns, points, status = load_returns(run_dir, record)
+    durations = {k: float(r["metadata"]["total_duration_sec"]) for k, r in returns.items()}
+    try:
+        estimates = return_estimates(run_dir, record, phase1, contract, timing, step)
+    except (ImportError, AttributeError) as exc:
+        log(traceback.format_exc())
+        estimates = {"formations": [], "points": []}
+        emit("error", code="estimates", message=f"no estimates for new return paths (drone_core: {exc}); "
+                                                "rebuild stage2_core_engine")
+    entries = {e["keyframe_index"]: e for e in status["entries"]}
+    facts = {}
+    for row in estimates["formations"]:
+        k = row["formation"]
+        e = entries.get(k) if k in durations else None
+        facts[k] = ReturnFacts(
+            planned_sec=durations.get(k),
+            # A return planned before section 5.3 doesn't record its Auto duration; the estimate is the same
+            # computation from the same start.
+            min_sec=(e or {}).get("min_duration_sec") or row["duration_sec"],
+            target_sec=(e or {}).get("target_duration_sec"), attempts=(e or {}).get("attempts"),
+            farthest_drone=row["farthest_drone"], farthest_m=row["farthest_m"],
+            reversed_takeoff=(e or {}).get("method") == "reversed_takeoff")
+    candidates = [AbortPoint(r["formation"], r["time_sec"], r["duration_sec"]) for r in estimates["points"]]
+    result = suggestions(timing, durations, abort_points(points), rule["reaction_s"], rule["margin_s"], window,
+                         facts, candidates, rule)
+    emit("suggestions", **result, rain_rule=rule, step_sec=step)
     emit("done", status="succeeded", exit_code=EXIT_OK)
     return EXIT_OK

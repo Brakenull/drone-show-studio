@@ -417,6 +417,7 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
                 disabled={running || busy}
                 onPlanned={() => void reload()}
                 onFlyThis={(t, w) => void flyThis(t, w)}
+                onSetAlert={(level) => setDraft({ ...draft, rain_rule: { ...draft.rain_rule, alert_mm_h: level } })}
               />
             )}
           </section>
@@ -532,6 +533,63 @@ function MetaField({
   );
 }
 
+/** A key's number in the inspector. While focused it keeps exactly what is typed, empty included: the value
+ *  the key had when the field was focused shows as the placeholder and is what an empty field keeps. */
+function KeyNumber({
+  label,
+  unit,
+  min,
+  max,
+  step,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  step: number;
+  value: number;
+  disabled: boolean;
+  onChange: (v: number) => void;
+}) {
+  const [local, setLocal] = useState<string | null>(null);
+  const [before, setBefore] = useState(value);
+  return (
+    <label className="field">
+      <span className="field-label">
+        {label}
+        {unit && <span className="muted"> ({unit})</span>}
+      </span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={local ?? String(value)}
+        placeholder={String(local === null ? value : before)}
+        disabled={disabled}
+        onFocus={() => {
+          setBefore(value);
+          setLocal(String(value));
+        }}
+        onBlur={() => setLocal(null)}
+        onChange={(e) => {
+          setLocal(e.target.value);
+          const t = e.target.value.trim();
+          if (t === "") {
+            if (value !== before) onChange(before);
+            return;
+          }
+          const n = Number(t);
+          if (Number.isFinite(n)) onChange(n);
+        }}
+      />
+    </label>
+  );
+}
+
 function Inspector({
   scenario,
   selected,
@@ -565,24 +623,19 @@ function Inspector({
   }
 
   const num = (field: string, label: string, opts: { min?: number; max?: number; step?: number; unit?: string } = {}) => (
-    <label className="field">
-      <span className="field-label">
-        {label}
-        {opts.unit && <span className="muted"> ({opts.unit})</span>}
-      </span>
-      <input
-        type="number"
-        min={opts.min}
-        max={opts.max}
-        step={opts.step ?? 0.1}
-        value={key[field] as number}
-        disabled={disabled}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          if (Number.isFinite(v)) set(field, v);
-        }}
-      />
-    </label>
+    <KeyNumber
+      // Not keyed by the key's index: typing a show time can reorder the keys, and the field must keep focus.
+      // Picking another key blurs the field first, which drops what was typed.
+      key={`${channel}-${field}`}
+      label={label}
+      unit={opts.unit}
+      min={opts.min}
+      max={opts.max}
+      step={opts.step ?? 0.1}
+      value={key[field] as number}
+      disabled={disabled}
+      onChange={(v) => set(field, v)}
+    />
   );
 
   const title = { wind: "Wind", gusts: "Gust", rtk: "RTK quality", rain: "Rain" }[channel];
@@ -826,6 +879,7 @@ const seconds = (v: number) => `${Math.round(v)} s`;
 
 const HOW: Record<RainReturn["method"], string> = {
   return_path: "its planned return path",
+  abort_point: "the return planned from that moment in the move",
   return_leg: "the show's own return leg",
   rest_of_show: "the rest of the show (no return path from there)",
   none: "nothing: there is no way home from there",
@@ -859,7 +913,8 @@ function RainReturnFacts({
           <dt>Flying home from</dt>
           <dd>
             <button className="fact-link" onClick={() => onOpen(home.start_sec, [])}>
-              {home.formation_name ?? "n/a"} at {formatTime(home.start_sec)}
+              {home.method === "abort_point" ? `the move to ${home.formation_name}` : (home.formation_name ?? "n/a")} at{" "}
+              {formatTime(home.start_sec)}
             </button>
           </dd>
         </div>
@@ -895,8 +950,15 @@ function RainReturnFacts({
       </dl>
       <p className="muted small">
         The return was called at {formatTime(home.command_sec)}
-        {reaction !== undefined && <>, {seconds(reaction)} after the rain alert</>}. The fleet finished the move it was in
-        and flew {HOW[home.method]}
+        {reaction !== undefined && <>, {seconds(reaction)} after the rain alert</>}.{" "}
+        {home.method === "abort_point" ? (
+          <>
+            The fleet flew on to {formatTime(home.start_sec)} in the move to {home.formation_name} and turned for home
+            there, on the return planned from that moment
+          </>
+        ) : (
+          <>The fleet finished the move it was in and flew {HOW[home.method]}</>
+        )}
         {home.planned_home_sec !== null && <>; the plan has it home at {formatTime(home.planned_home_sec)}</>}
         {home.lag_sec !== null && home.all_home && (
           <> and the last drone was within {metres(home.home_radius_m, 1)} of its slot {home.lag_sec >= 0 ? `${home.lag_sec.toFixed(1)} s after that` : `${(-home.lag_sec).toFixed(1)} s before that`}</>

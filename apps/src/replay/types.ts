@@ -52,6 +52,8 @@ export interface ReplayHeader {
       abort_time_sec: number;
       duration_sec: number;
       method: "planned" | "reversed_takeoff";
+      /** From a moment inside the move into the formation (an abort point, section 5.3). */
+      inside_transition?: boolean;
     };
     /** A condition-simulator flight (docs/4-condition_simulator.md §6): the weather to draw. */
     simulation?: SimWeather;

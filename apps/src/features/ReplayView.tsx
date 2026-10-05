@@ -11,7 +11,8 @@ import type { ReplayData, ReplayFocus, ReplayHeader, Separation } from "../repla
  *  or a weather scenario's simulated flight (docs/4-condition_simulator.md §6). */
 export type ReplaySource =
   | { kind: "show" }
-  | { kind: "return"; keyframe: number; from: string }
+  /** `keyframe`: a formation index, or an abort point's id (e.g. "1-66637", §5.3). */
+  | { kind: "return"; keyframe: number | string; from: string }
   | { kind: "scenario"; id: string; name: string };
 
 const folder = (source: ReplaySource) =>

@@ -12,8 +12,9 @@ import { formatTime, metres } from "../replay/sampling";
 interface Props {
   run: RunRecord;
   onChanged: () => void;
-  /** Open the replay of a planned return at its abort time. */
-  onView: (keyframe: number, from: string, abortTime: number) => void;
+  /** Open the replay of a planned return at its abort time; `keyframe` is a formation index or an abort
+   *  point's id. */
+  onView: (keyframe: number | string, from: string, abortTime: number) => void;
 }
 
 interface Phase1Head {
@@ -37,7 +38,7 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
   const [built, setBuilt] = useState<Set<number> | null>(null);
   const [replayCheck, setReplayCheck] = useState(0);
   /** The planned return whose missing 3D view the dialog offers to build. */
-  const [toBuild, setToBuild] = useState<{ keyframe: number; from: string; abortTime: number } | null>(null);
+  const [toBuild, setToBuild] = useState<{ keyframe: number | string; from: string; abortTime: number } | null>(null);
 
   useEffect(() => {
     readRunJson<Phase1Head>(run.run_id, "input/phase1.json")
@@ -182,6 +183,21 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
         </tbody>
       </table>
 
+      {(index?.points?.length ?? 0) > 0 && (
+        <AbortPointTable
+          points={index!.points!}
+          names={names}
+          running={running}
+          planningAt={running ? (job!.current?.abortTime ?? null) : null}
+          onView={(id, from, t, built) => (built ? onView(id, from, t) : setToBuild({ keyframe: id, from, abortTime: t }))}
+          onPlan={(k, t) => {
+            setStartError(null);
+            startReturns(run.run_id, run.run_dir, null, () => onChanged(), [[k, t]]).catch((e) => setStartError(String(e)));
+            setTimeout(onChanged, 800);
+          }}
+        />
+      )}
+
       {startError && <p className="notice notice-bad">Could not start planning: {startError}</p>}
       {toBuild && (
         <BuildViewDialog
@@ -227,7 +243,7 @@ function BuildViewDialog({
 }: {
   runDir: string;
   fleet: number;
-  target: { keyframe: number; from: string };
+  target: { keyframe: number | string; from: string };
   onClose: () => void;
   onBuilt: () => void;
 }) {
@@ -301,7 +317,9 @@ function Finished({ job }: { job: ReturnsJob }) {
   );
 }
 
-function ReturnsRunning({ job, runId, names }: { job: ReturnsJob; runId: string; names: string[] }) {
+/** A running `stage2-returns` job: which return, time running, the solver's step, a progress bar and Cancel.
+ *  Also shown in the readiness suggestions, in the row whose button started it. */
+export function ReturnsRunning({ job, runId, names }: { job: ReturnsJob; runId: string; names: string[] }) {
   const [now, setNow] = useState(Date.now());
   const [cancelError, setCancelError] = useState<string | null>(null);
   useEffect(() => {
@@ -327,7 +345,7 @@ function ReturnsRunning({ job, runId, names }: { job: ReturnsJob; runId: string;
         <div>
           <p className="running-phase">
             {cur
-              ? `Return ${cur.index + 1} of ${cur.count}: ${names[cur.keyframe] ?? "formation"} to the holding area`
+              ? `Return ${cur.index + 1} of ${cur.count}: ${cur.abortTime !== null ? `from ${formatTime(cur.abortTime)} in the move to ` : ""}${names[cur.keyframe] ?? "formation"} to the holding area`
               : "Starting"}
           </p>
           <p className="muted">
@@ -350,5 +368,77 @@ function ReturnsRunning({ job, runId, names }: { job: ReturnsJob; runId: string;
       <p className="muted small">Finished return paths are saved as they complete, so cancelling keeps them.</p>
       {cancelError && <p className="notice notice-bad">{cancelError}</p>}
     </div>
+  );
+}
+
+/** Returns planned from moments inside a move (docs/4-condition_simulator.md §5.3), from the readiness
+ *  suggestions: the fleet turns for home there instead of finishing the move. */
+function AbortPointTable({
+  points,
+  names,
+  running,
+  planningAt,
+  onView,
+  onPlan,
+}: {
+  points: ReturnEntry[];
+  names: string[];
+  running: boolean;
+  planningAt: number | null;
+  onView: (id: string, from: string, abortTime: number, built: boolean) => void;
+  onPlan: (formation: number, time: number) => void;
+}) {
+  return (
+    <>
+      <h4 className="returns-subhead">From inside a move</h4>
+      <table className="table data">
+        <thead>
+          <tr>
+            <th scope="col">In the move to</th>
+            <th scope="col" className="num">From</th>
+            <th scope="col" className="num">Flight home</th>
+            <th scope="col" className="num">Closest</th>
+            <th scope="col">Status</th>
+            <th scope="col">
+              <span className="visually-hidden">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {points.map((p) => {
+            const name = names[p.keyframe_index] ?? p.from_keyframe;
+            const planning = planningAt !== null && Math.abs(planningAt - p.abort_time_sec) < 1e-3;
+            const tone = planning ? "busy" : STATUS[p.status].tone;
+            const from = `the move to ${name} at ${formatTime(p.abort_time_sec)}`;
+            return (
+              <tr key={p.id}>
+                <td>{name}</td>
+                <td className="num">{formatTime(p.abort_time_sec)}</td>
+                <td className="num">{p.flown_duration_sec != null ? duration(p.flown_duration_sec) : "–"}</td>
+                <td className={`num ${p.status === "failed_safety" ? "tone-bad" : ""}`}>
+                  {p.worst_separation_m != null ? metres(p.worst_separation_m, 3) : "–"}
+                </td>
+                <td title={p.message ?? undefined}>
+                  <span className={`light light-${tone}`} aria-hidden="true" />
+                  {planning ? "Planning" : (ROW_STATUS[p.status] ?? STATUS[p.status].label)}
+                </td>
+                <td className="row-action">
+                  {p.status === "succeeded" && (
+                    <button className="link" onClick={() => onView(p.id!, from, p.abort_time_sec, !!p.replay)}>
+                      View
+                    </button>
+                  )}
+                  {!running && (
+                    <button className="link" onClick={() => onPlan(p.keyframe_index, p.abort_time_sec)}>
+                      Plan again
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
   );
 }

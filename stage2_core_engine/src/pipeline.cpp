@@ -1516,7 +1516,8 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
 ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& base_config,
                                   const std::vector<DroneTrajectory>& show,
                                   const std::vector<TransitionTiming>& transitions, int keyframe_index,
-                                  std::optional<double> target_duration_sec, const ProgressCallback& progress) {
+                                  std::optional<double> target_duration_sec, const ProgressCallback& progress,
+                                  std::optional<double> abort_time_sec, bool estimate_only) {
     const int n = project.metadata.fleet_size;
     const int keyframe_count = static_cast<int>(project.keyframes.size());
     if (keyframe_index < 0 || keyframe_index >= keyframe_count) {
@@ -1531,7 +1532,15 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         throw std::runtime_error("the show result's transitions don't match the Phase 1 file (no transition " +
                                  std::to_string(keyframe_index) + " into '" + from_name + "')");
     }
-    const double abort_time = transitions[keyframe_index].end_time_sec;
+    const TransitionTiming& into = transitions[keyframe_index];
+    const bool inside = abort_time_sec.has_value();
+    if (inside && !(into.start_time_sec < *abort_time_sec && *abort_time_sec < into.end_time_sec)) {
+        throw std::runtime_error("abort time " + std::to_string(*abort_time_sec) +
+                                 " s is not inside the transition into '" + from_name + "' (" +
+                                 std::to_string(into.start_time_sec) + " to " + std::to_string(into.end_time_sec) +
+                                 " s)");
+    }
+    const double abort_time = inside ? *abort_time_sec : into.end_time_sec;
     if (static_cast<int>(show.size()) != n) {
         throw std::runtime_error("the show result has " + std::to_string(show.size()) + " drones, the Phase 1 file " +
                                  std::to_string(n));
@@ -1547,9 +1556,11 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
 
     // Each drone's state and LED color at the abort time, from its own
     // spline: the segment that ends there (every transition ends at a
-    // segment boundary), else the one that contains it.
+    // segment boundary), else the one that contains it. At a formation the
+    // fleet is at rest; inside a transition it keeps its acceleration too.
     Eigen::MatrixXd P(n, 3);
     Eigen::MatrixXd start_velocity(n, 3);
+    Eigen::MatrixXd start_acceleration = Eigen::MatrixXd::Zero(n, 3);
     Eigen::MatrixXi start_color(n, 3);
     std::vector<int> drone_id_by_slot(n);
     constexpr double kTimeTolerance = 1e-6;
@@ -1573,6 +1584,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         const trajectory::QuinticBSpline spline(found->control_points, seg_duration);
         P.row(slot) = spline.position(local_t).transpose();
         start_velocity.row(slot) = spline.velocity(local_t).transpose();
+        if (inside) start_acceleration.row(slot) = spline.acceleration(local_t).transpose();
 
         Eigen::Vector3i color = Eigen::Vector3i::Zero();
         const auto& keys = found->color_keyframes;
@@ -1642,7 +1654,11 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         return pad_rule ? plans[slot].end : Eigen::Vector3d(slots.row(assign_result.assignment[slot]).transpose());
     };
     double d_max = 0.0;
-    for (int slot = 0; slot < n; ++slot) d_max = std::max(d_max, (end_of(slot) - start_of(slot)).norm());
+    int farthest = 0;
+    for (int slot = 0; slot < n; ++slot) {
+        const double d = (end_of(slot) - start_of(slot)).norm();
+        if (d > d_max) d_max = d, farthest = slot;
+    }
     const auto any_final = [&] {
         return pad_rule && std::any_of(plans.begin(), plans.end(), [](const PadPlan& p) { return p.final_descent; });
     };
@@ -1662,7 +1678,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         problem.drone_id = drone_id_by_slot[slot];
         problem.start.position = start_of(slot);
         problem.start.velocity = start_velocity.row(slot).transpose();
-        problem.start.acceleration = Eigen::Vector3d::Zero();
+        problem.start.acceleration = start_acceleration.row(slot).transpose();
         problem.end.position = end_of(slot);
         problem.end.velocity = Eigen::Vector3d::Zero();
         problem.end.acceleration = Eigen::Vector3d::Zero();
@@ -1699,6 +1715,15 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         if (final_s == 0.0 && any_final()) final_s = vertical_s;
     }
 
+    ReturnPathResult result;
+    result.keyframe_index = keyframe_index;
+    result.from_keyframe = from_name;
+    result.abort_time_sec = abort_time;
+    result.min_duration_sec = std::max(t_min, 1e-6) + final_s;
+    result.farthest_drone_id = drone_id_by_slot[farthest];
+    result.farthest_distance_m = d_max;
+    if (estimate_only) return result;
+
     const std::string to_name = "holding_area";
     ProgressCallback transition_progress;
     if (progress) {
@@ -1716,10 +1741,6 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         transition_progress(e);
     }
 
-    ReturnPathResult result;
-    result.keyframe_index = keyframe_index;
-    result.from_keyframe = from_name;
-    result.abort_time_sec = abort_time;
     ShowMetadata& meta = result.metadata;
     meta.fleet_size = n;
     meta.spline_degree = trajectory::kDegree;

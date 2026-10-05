@@ -54,6 +54,25 @@ export interface PackSummary {
   sampling_dt_ms: number;
   total_bytes: number;
   verify_message: string;
+  /** Version 2 (0x0200) files carry the return paths as tracks and the return table (4-condition_simulator.md §8.4). */
+  file_version?: number;
+  pack_id?: string;
+  return_tracks?: PackedReturn[];
+  return_entries?: number;
+  /** Why returns were left out, e.g. planned from an earlier Stage 2 result. */
+  returns_note?: string | null;
+  /** run.json stage2_returns.ended_at when these files were packed. */
+  returns_ended_at?: string | null;
+}
+
+/** A return path packed as a track of every flight file. */
+export interface PackedReturn {
+  id: string;
+  kind: "return" | "abort_point";
+  formation: number;
+  formation_name: string;
+  /** Show time the track starts at: the formation's arrival, or the moment inside the move. */
+  start_sec: number;
 }
 
 export type PackPart = Stage3Part & Partial<PackSummary>;
@@ -170,7 +189,8 @@ export interface RainReturn {
   /** The formation the fleet returned from; -1 when the show had already landed. */
   formation: number;
   formation_name: string | null;
-  method: "return_path" | "return_leg" | "rest_of_show" | "none" | "landed";
+  /** "abort_point": a return planned from a moment inside the move into the formation (§5.3). */
+  method: "return_path" | "abort_point" | "return_leg" | "rest_of_show" | "none" | "landed";
   start_sec: number;
   planned_home_sec: number | null;
   last_landing_sec: number | null;
@@ -195,15 +215,69 @@ export interface HomePiece {
   slope: number;
   formation: number;
   method: RainReturn["method"];
+  /** "abort_point": the show time its return starts from. */
+  point_sec?: number | null;
+}
+
+/** A return planned from inside the move into `formation` (docs/4-condition_simulator.md §5.3). */
+export interface PlannedAbortPoint {
+  id: string;
+  formation: number;
+  time_sec: number;
+  return_sec: number;
 }
 
 export interface Readiness {
   error: string | null;
   end_sec: number;
   pieces: HomePiece[];
-  formations: { index: number; name: string; arrival_sec: number; return_sec: number | null }[];
+  formations: { index: number; name: string; start_sec?: number; arrival_sec: number; return_sec: number | null }[];
+  points?: PlannedAbortPoint[];
   return_leg_sec: number | null;
-  returns: { planned: boolean; stale: boolean; entries: ReturnEntry[] };
+  returns: { planned: boolean; stale: boolean; entries: ReturnEntry[]; points?: ReturnEntry[] };
+}
+
+/** One option of the `suggest` command (twin_sim/rain_return.py `suggestions()`). */
+export interface Suggestion {
+  kind: "earlier_trigger" | "abort_points" | "plan_return" | "faster_return" | "design";
+  formation: number | null;
+  formation_name: string | null;
+  /** Uncovered alert time this option closes on its own, in seconds. */
+  closes_sec: number;
+  closes_all: boolean;
+  /** Its numbers come from estimates until Stage 2 plans it. */
+  estimate: boolean;
+  action:
+    | { kind: "plan_points"; points: [number, number][] }
+    | { kind: "plan_return" | "replan_return"; formation: number }
+    | { kind: "set_alert"; alert_mm_h: number }
+    | null;
+  numbers: {
+    lead_sec?: number;
+    alert_mm_h?: number | null;
+    current_alert_mm_h?: number | null;
+    points?: { time_sec: number; duration_sec: number }[];
+    duration_sec?: number;
+    possible?: boolean;
+    return_sec?: number;
+    new_sec?: number | null;
+    target_sec?: number | null;
+    attempts?: number | null;
+    farthest_drone?: number | null;
+    farthest_m?: number | null;
+    short_sec?: number;
+    return_needed_sec?: number;
+    move_sec?: number;
+    return_leg?: boolean;
+  };
+}
+
+export interface Suggestions {
+  window_sec: number;
+  uncovered_sec: number;
+  items: Suggestion[];
+  rain_rule: RainRule;
+  step_sec: number;
 }
 
 export interface ScenarioEntry {
@@ -233,8 +307,10 @@ export interface ConditionsInfo {
   defaults: { rain_rule: RainRule; rtk_states: RtkState[]; limits: Record<string, [number, number]> };
 }
 
-/** One formation's return path in stage2/returns/index.json. */
+/** One formation's return path in stage2/returns/index.json (or, with `id`, an abort point's). */
 export interface ReturnEntry {
+  /** Abort points only: the files' name, e.g. "1-66637" (formation, show time in ms). */
+  id?: string;
   keyframe_index: number;
   from_keyframe: string;
   /** "reversed_takeoff": the first formation with staggered takeoff on, the takeoff flown backwards. */
@@ -251,12 +327,16 @@ export interface ReturnEntry {
   wall_time_sec: number;
   /** stage2/returns/replay_<k>/ was built (the show up to the formation, then the flight home). */
   replay?: boolean;
+  /** Its Auto duration (T_min plus the final descent), before any retry. */
+  min_duration_sec?: number | null;
 }
 
 export interface ReturnIndex {
   /** Stage 2's ended_at the returns were planned from. */
   stage2_ended_at: string | null;
   returns: ReturnEntry[];
+  /** Returns from abort points inside transitions (§5.3). */
+  points?: ReturnEntry[];
 }
 
 /** One Stage 2 planner setting (tools/studio_bridge/config_fields.py). `path` is dotted, e.g.
@@ -341,6 +421,10 @@ export interface McReport {
 /** stage3/bin/manifest.json, written by pack_to_binary. */
 export interface PackManifest {
   source: string;
+  file_version?: number;
+  pack_id?: string;
+  tracks?: { id: string; kind: "show" | "return" | "abort_point"; formation: number | null; start_ms: number; records: number }[];
+  return_entries?: number;
   fleet_size: number;
   sampling_dt_ms: number;
   records_per_file: number;
@@ -465,6 +549,8 @@ interface SolveTransition {
   return_index?: number;
   return_count?: number;
   keyframe_index?: number;
+  /** An abort point's show time (§5.3); null for a formation's return. */
+  abort_time_sec?: number | null;
 }
 
 interface SolveAttempt extends SolveTransition {
@@ -520,6 +606,7 @@ export type BridgeEvent =
   | { type: "config_warnings"; warnings: ConfigWarning[] }
   | ({ type: "return_result" } & ReturnEntry)
   | ({ type: "conditions" } & ConditionsInfo)
+  | ({ type: "suggestions" } & Suggestions)
   | { type: "scenario_saved"; id: string; scenario: Scenario }
   | { type: "scenario_deleted"; id: string }
   | { type: "sim_result"; id: string; result: ScenarioResult }

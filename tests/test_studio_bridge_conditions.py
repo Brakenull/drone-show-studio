@@ -191,3 +191,99 @@ def test_rain_in_the_takeoff_flies_the_fleet_home(run_with_legs):
     assert sim["rain_return"]["planned_home_sec"] == pytest.approx(home["planned_home_sec"])
     # The fleet never flew past the first formation: the flight is the takeoff, then back down.
     assert result["sim_duration_sec"] < home["planned_home_sec"] + 11.0
+
+
+# --------------------------------------------------------------------------- #
+# Milestone C3: abort points and suggestions (section 5.3)
+# --------------------------------------------------------------------------- #
+
+def test_abort_points_are_planned_read_and_suggested(run_with_legs):
+    from stage3_simulation_packer.twin_sim.rain_return import point_id
+
+    show = json.loads((run_with_legs / "stage2" / "trajectory_splines.json").read_text(encoding="utf-8"))
+    into = [t for t in show["metadata"]["transitions"] if t["to_keyframe"] != "holding_area"]
+    k = 1 if len(into) > 1 else 0
+    t = round((into[k]["start_time_sec"] + into[k]["end_time_sec"]) / 2, 3)
+
+    code, events = bridge("stage2-returns", str(run_with_legs), "--points", f"{k}@{into[k]['end_time_sec'] + 1}")
+    assert code == 2 and "not inside" in first(events, "error")["message"]
+    code, events = bridge("stage2-returns", str(run_with_legs), "--points", f"{k}@{t}")
+    assert code == 0
+    result = first(events, "return_result")
+    pid = point_id(k, t)
+    assert result["id"] == pid and result["status"] == "succeeded" and result["abort_time_sec"] == t
+    assert result["min_duration_sec"] > 0 and result["replay"]
+    folder = run_with_legs / "stage2" / "returns"
+    index = json.loads((folder / "index.json").read_text(encoding="utf-8"))
+    assert [p["id"] for p in index["points"]] == [pid]
+    assert (folder / f"return_{pid}.json").exists() and (folder / f"replay_{pid}" / "replay.json").exists()
+    assert record(run_with_legs)["stage2_returns"]["planned_points"] == [pid]
+    code, _ = bridge("replay", str(run_with_legs), "--return", pid)
+    assert code == 0
+
+    code, events = bridge("readiness", str(run_with_legs), "--window-s", "5")
+    data = first(events, "readiness")
+    assert data["points"] == [{"id": pid, "formation": k, "time_sec": t, "return_sec": result["flown_duration_sec"]}]
+    # The point's piece, if its return is sooner than going on to the formation, ends at the point.
+    for p in data["pieces"]:
+        if p["method"] == "abort_point":
+            assert p["point_sec"] == t and p["u1"] == pytest.approx(t)
+
+    code, events = bridge("suggest", str(run_with_legs), "--window-s", "5")
+    assert code == 0
+    sugg = first(events, "suggestions")
+    assert sugg["window_sec"] == 5.0 and sugg["uncovered_sec"] > 0 and sugg["items"]
+    assert sugg["items"][0]["closes_sec"] >= sugg["items"][-1]["closes_sec"]
+    assert {i["kind"] for i in sugg["items"]} >= {"earlier_trigger"}
+    estimates = json.loads((folder / "estimates.json").read_text(encoding="utf-8"))
+    assert estimates["step_sec"] == 10.0 and len(estimates["formations"]) == len(into)
+    code, events = bridge("suggest", str(run_with_legs), "--window-s", "1000")
+    assert code == 0 and first(events, "suggestions")["items"] == []
+
+
+def test_pack_carries_the_return_paths_and_the_return_table(run_with_legs):
+    """Flight files version 2 (section 8.4): every return the table uses is a track, and each starts where the show
+    is at its start time, so a drone switching to it doesn't jump."""
+    from test_studio_bridge_stage3 import PACKER
+
+    from stage3_simulation_packer.flight_binary import TRACK_ABORT_POINT, read_flight_file
+    from stage3_simulation_packer.twin_sim.loaders.arrow_loader import parse_contract_dict
+    from stage3_simulation_packer.twin_sim.loaders.spline_evaluator import build_piecewise, evaluate_numpy
+
+    if PACKER is None:
+        pytest.skip("pack_to_binary not built")
+    bridge("stage2-returns", str(run_with_legs))                     # formation 0: the takeoff flown backwards
+    code, events = bridge("readiness", str(run_with_legs))
+    readiness = first(events, "readiness")
+    code, events = bridge("pack", str(run_with_legs))
+    assert code == 0
+    result = first(events, "pack_result")
+    assert result["ok"] and result["return_tracks"] and result["returns_note"] is None
+    plan = json.loads((run_with_legs / "stage3" / "pack_plan.json").read_text(encoding="utf-8"))
+    assert len(plan["tracks"]) == len(result["return_tracks"])
+    # Every way home the readiness pieces take through a return path is packed.
+    wanted = {("return", str(p["formation"])) for p in readiness["pieces"] if p["method"] == "return_path"}
+    wanted |= {("abort_point", f"{p['formation']}-{round(p['point_sec'] * 1000)}") for p in readiness["pieces"]
+               if p["method"] == "abort_point"}
+    assert {(t["kind"], t["id"]) for t in plan["tracks"]} == wanted
+
+    show = json.loads((run_with_legs / "stage2" / "trajectory_splines.json").read_text(encoding="utf-8"))
+    show_pw = build_piecewise(parse_contract_dict(show))
+    ff = read_flight_file(run_with_legs / "stage3" / "bin" / "drone_0.bin")
+    assert len(ff.tracks) == 1 + len(plan["tracks"]) and ff.return_table.size == result["return_entries"]
+    for track in ff.tracks[1:]:
+        at, _, _ = evaluate_numpy(show_pw, np.array([track.start_ms / 1000.0]), np.array([0]))
+        assert np.linalg.norm(track.positions_m[0] - at[0, 0]) < 0.02
+    # The table agrees with the readiness pieces at the middle of each one.
+    for p in readiness["pieces"]:
+        u = (p["u0"] + p["u1"]) / 2 if p["u1"] is not None else p["u0"] + 1.0
+        track, switch = ff.return_at(u)
+        if p["method"] in ("return_path", "abort_point"):
+            kind = ff.tracks[track].kind
+            assert (kind == TRACK_ABORT_POINT) == (p["method"] == "abort_point")
+            assert ff.tracks[track].formation == p["formation"]
+            assert switch == pytest.approx(max(u, ff.tracks[track].start_ms / 1000.0))
+        elif p["method"] == "none":
+            assert track is None
+        else:                                                         # the show's own return leg, or landed
+            assert track == 0

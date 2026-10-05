@@ -1,12 +1,16 @@
-// Rain return readiness (docs/4-condition_simulator.md §5.1, §5.2, §5.4, §6): for every moment of the
-// show, can the fleet be home before the rain gets too heavy? The chart shares the timeline's time axis.
+// Rain return readiness (docs/4-condition_simulator.md §5, §6): for every moment of the show, can the
+// fleet be home before the rain gets too heavy, and if not, what would close the gap? The chart shares
+// the timeline's time axis.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Readiness, RunRecord, Scenario } from "../bridge/types";
+import type { Readiness, RunRecord, Scenario, Suggestions } from "../bridge/types";
+import { runJob } from "../bridge/api";
 import { coverage, spans } from "../app/readiness";
 import { cancelReturns, startReturns, useReturnsJob } from "../app/returnsJobs";
 import { formatTime } from "../replay/sampling";
 import { LABEL_W, PAD_R } from "./TimelineEditor";
+import { ReturnsRunning } from "./ReturnPaths";
+import { SuggestionList } from "./SuggestionList";
 
 interface Props {
   run: RunRecord;
@@ -19,6 +23,8 @@ interface Props {
   disabled: boolean;
   onPlanned: () => void;
   onFlyThis: (alertTime: number, rainWindow: number) => void;
+  /** "Earlier trigger": set this scenario's alert level (an unsaved edit). */
+  onSetAlert: (alertMmH: number) => void;
 }
 
 const H = 132;
@@ -27,12 +33,17 @@ const PAD_B = 22;
 
 const seconds = (v: number) => `${Math.round(v)} s`;
 
-export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWindow, disabled, onPlanned, onFlyThis }: Props) {
+export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWindow, disabled, onPlanned, onFlyThis, onSetAlert }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const job = useReturnsJob(run.run_id);
   const planning = !!job && !job.exit;
   const [planError, setPlanError] = useState<string | null>(null);
+  /** The suggestion whose button started the running job: its progress shows in that row, where the click was. */
+  const [planFrom, setPlanFrom] = useState<number | null>(null);
+  useEffect(() => {
+    if (!planning) setPlanFrom(null);
+  }, [planning]);
   const { reaction_s: reaction, margin_s: margin } = scenario.rain_rule;
 
   useEffect(() => {
@@ -67,10 +78,42 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
   );
   const failed = entries.filter((e) => e.status !== "succeeded");
 
-  function plan() {
+  /** Plan return paths: by default the missing ones (all when none are planned or they are out of date). */
+  function plan(
+    formations: number[] | null = readiness.returns.stale || !readiness.returns.planned ? null : missing.map((f) => f.index),
+    points: [number, number][] = [],
+  ) {
     setPlanError(null);
-    const formations = readiness.returns.stale || !readiness.returns.planned ? null : missing.map((f) => f.index);
-    startReturns(run.run_id, run.run_dir, formations, () => onPlanned()).catch((e) => setPlanError(String(e)));
+    startReturns(run.run_id, run.run_dir, formations, () => onPlanned(), points).catch((e) => setPlanError(String(e)));
+  }
+
+  // Suggestions (§5.3) come from the bridge for one window and rule; they go out of date when either, or the
+  // planned return paths, change.
+  const rule = scenario.rain_rule;
+  const suggestKey = [rainWindow, reaction, margin, rule.alert_mm_h, rule.limit_mm_h, JSON.stringify(readiness.pieces)].join("|");
+  const [suggested, setSuggested] = useState<{ key: string; result: Suggestions } | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  async function suggest() {
+    setSuggesting(true);
+    setSuggestError(null);
+    const key = suggestKey;
+    try {
+      const args = ["suggest", run.run_dir, "--window-s", String(rainWindow), "--reaction-s", String(reaction),
+        "--margin-s", String(margin), "--alert-mm-h", String(rule.alert_mm_h), "--limit-mm-h", String(rule.limit_mm_h)];
+      const { events, exit } = await runJob(args);
+      const found = events.find((e) => e.type === "suggestions");
+      if (exit.code !== 0 || !found || found.type !== "suggestions") {
+        const err = events.find((e) => e.type === "error");
+        throw new Error(err && err.type === "error" ? err.message : `exit code ${exit.code}`);
+      }
+      const { type: _type, ...result } = found;
+      setSuggested({ key, result });
+    } catch (e) {
+      setSuggestError(String(e));
+    } finally {
+      setSuggesting(false);
+    }
   }
 
   /** What happens if the alert comes at t. */
@@ -80,7 +123,9 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
     const needed = s.needed === null ? null : s.needed + s.slope * (t - s.a);
     const name = readiness.formations[s.formation]?.name ?? "";
     const how =
-      s.method === "return_path"
+      s.method === "abort_point" && s.pointSec != null
+        ? `fly on to ${formatTime(s.pointSec)} in the move to ${name}, then the return planned from there`
+        : s.method === "return_path"
         ? `finish the move to ${name}, then fly its return`
         : s.method === "return_leg"
           ? "fly the show's own return leg"
@@ -114,14 +159,14 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
       {readiness.returns.stale && (
         <p className="notice notice-warn">The return paths were planned from an earlier Stage 2 result. Plan them again.</p>
       )}
-      {planning ? (
+      {planning && planFrom === null ? (
         <div className="running-head readiness-planning">
           <span className="light light-busy" aria-hidden="true" />
           <div>
             <p className="running-phase">
               Planning return paths
               {job!.current &&
-                `: ${readiness.formations[job!.current.keyframe]?.name ?? ""} (${job!.current.index + 1} of ${job!.current.count})`}
+                `: ${job!.current.abortTime !== null ? `from ${formatTime(job!.current.abortTime)} in the move to ` : ""}${readiness.formations[job!.current.keyframe]?.name ?? ""} (${job!.current.index + 1} of ${job!.current.count})`}
             </p>
             <p className="muted small">Each one is planned like a show transition; this can take several minutes each.</p>
           </div>
@@ -130,6 +175,7 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
           </button>
         </div>
       ) : (
+        !planning &&
         (!readiness.returns.planned || missing.length > 0) && (
           <div className="notice readiness-plan">
             <p>
@@ -140,7 +186,7 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
               cone, about 7 minutes each).
             </p>
             <div className="actions">
-              <button className="primary" onClick={plan} disabled={disabled}>
+              <button className="primary" onClick={() => plan()} disabled={disabled}>
                 Plan return paths
               </button>
             </div>
@@ -234,6 +280,43 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
         {cov.required !== null &&
           `The show is covered if the rain takes at least ${seconds(Math.ceil(cov.required))} to go from the alert to the limit level.`}
       </p>
+
+      {cov.uncovered.length > 0 && (
+        <div className="readiness-suggest">
+          <div className="readiness-suggest-head">
+            <h3>What would close the gap</h3>
+            <button onClick={() => void suggest()} disabled={disabled || suggesting || planning}>
+              {suggesting ? "Working it out…" : suggested ? "Suggest again" : `Suggest for ${seconds(rainWindow)}`}
+            </button>
+          </div>
+          {!suggested && !suggesting && (
+            <p className="muted small">
+              For this window, the options that would cover more of the show, with their numbers. New return paths are
+              estimated in a moment; planning them takes longer.
+            </p>
+          )}
+          {suggested && suggested.key !== suggestKey && (
+            <p className="notice notice-warn small">
+              These were worked out for a {seconds(suggested.result.window_sec)} window and the return paths planned
+              then. Suggest again to bring them up to date.
+            </p>
+          )}
+          {suggestError && <p className="notice notice-bad">Could not work out suggestions: {suggestError}</p>}
+          {suggested && (
+            <SuggestionList
+              result={suggested.result}
+              current={suggested.key === suggestKey}
+              disabled={disabled || planning}
+              busyIndex={planning ? planFrom : null}
+              progress={planning ? <ReturnsRunning job={job!} runId={run.run_id} names={run.input.keyframes} /> : null}
+              onStart={setPlanFrom}
+              onPlanPoints={(points) => plan(null, points)}
+              onPlanReturn={(k) => plan([k])}
+              onSetAlert={onSetAlert}
+            />
+          )}
+        </div>
+      )}
     </section>
   );
 }

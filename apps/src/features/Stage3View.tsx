@@ -9,6 +9,7 @@ import type {
   McRecord,
   McReport,
   PackManifest,
+  PackPart,
   RunRecord,
   RunStatus,
   SimDevice,
@@ -504,12 +505,19 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
       </h2>
       <p className="muted stage3-about">
         One file per drone with its position and LED colour every 50 ms, in the format the drone's flight controller
-        reads. Every file is read back and checked after it is written.
+        reads. Each file also carries the flights home planned under Return paths, and a table that tells the drone
+        which one to fly when the return is called. Every file is read back and checked after it is written.
       </p>
       {startError && <p className="notice notice-bad">Could not start packing: {startError}</p>}
       {!running && isStale(run, part) && (
         <p className="notice notice-warn">
           These files are from an earlier Stage 2 result. Pack again before loading them onto drones.
+        </p>
+      )}
+      {!running && status === "succeeded" && !isStale(run, part) && returnsChanged(run, part) && (
+        <p className="notice notice-warn">
+          Return paths were planned after these files were packed, so the files don't carry them. Pack again to include
+          them.
         </p>
       )}
 
@@ -560,14 +568,32 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
                 <dt>All files</dt>
                 <dd>{bytes(part.total_bytes)}</dd>
               </div>
+              {part.return_tracks && (
+                <div>
+                  <dt>Flights home</dt>
+                  <dd>{part.return_tracks.length}</dd>
+                </div>
+              )}
             </dl>
           </VerdictCard>
+          <PackedReturns part={part} />
           {manifest && (
             <details className="manifest">
               <summary>
                 File list ({manifest.files.length} files, {verified} checked)
               </summary>
               <div className="table-scroll">
+                {manifest.tracks && manifest.tracks.length > 1 && (
+                  <p className="muted small">
+                    Each file: the show ({manifest.tracks[0].records.toLocaleString()} samples) and{" "}
+                    {manifest.tracks.length - 1} flights home (
+                    {manifest.tracks
+                      .slice(1)
+                      .reduce((n, t) => n + t.records, 0)
+                      .toLocaleString()}{" "}
+                    samples), pack {manifest.pack_id}.
+                  </p>
+                )}
                 <table className="table data">
                   <thead>
                     <tr>
@@ -601,6 +627,50 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
         <Stopped runId={run.run_id} part="pack" status={status} message={part?.message} job={job} />
       )}
     </section>
+  );
+}
+
+/** Return paths were planned (or planned again) after the files were packed. */
+function returnsChanged(run: RunRecord, part: PackPart | undefined): boolean {
+  const planned = run.stage2_returns?.ended_at ?? null;
+  if (!part || !planned || run.stage2_returns?.status === "running") return false;
+  if (part.returns_ended_at === undefined) return true; // packed before return paths went into the files
+  return part.returns_ended_at !== planned;
+}
+
+/** Which flights home the files carry. */
+function PackedReturns({ part }: { part: PackPart }) {
+  if (!part.return_tracks) {
+    return (
+      <p className="muted small">
+        These files were packed before flights home went into them: they hold the show only. Pack again to add them.
+      </p>
+    );
+  }
+  const formations = part.return_tracks.filter((t) => t.kind === "return");
+  const points = part.return_tracks.filter((t) => t.kind === "abort_point");
+  return (
+    <div className="packed-returns">
+      {part.returns_note && <p className="notice notice-warn small">Flights home left out: {part.returns_note}.</p>}
+      {part.return_tracks.length === 0 ? (
+        <p className="muted small">
+          No flights home are planned, so if the return is called the drones keep flying the show to its own return leg
+          (or have no planned way home when the show has none). Plan them under Stage 2 › Return paths, then pack again.
+        </p>
+      ) : (
+        <p className="muted small">
+          {formations.length > 0 && <>Flights home from {formations.map((t) => t.formation_name).join(", ")}</>}
+          {formations.length > 0 && points.length > 0 && "; "}
+          {points.length > 0 && (
+            <>
+              from inside a move at {points.map((t) => `${formatTime(t.start_sec)} (to ${t.formation_name})`).join(", ")}
+            </>
+          )}
+          . Every drone has the same return table ({part.return_entries} entries) and pack id {part.pack_id}, so the whole
+          fleet picks the same flight home.
+        </p>
+      )}
+    </div>
   );
 }
 

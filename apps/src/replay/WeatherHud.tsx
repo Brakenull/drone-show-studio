@@ -2,6 +2,7 @@
 // direction, gusts passing, rain against the alert and limit levels, RTK state.
 
 import type { SimWeather } from "./types";
+import { formatTime } from "./sampling";
 import { compass, rainLabel, RTK_LABEL, weatherAt } from "./weather";
 
 export function WeatherHud({ weather, time }: { weather: SimWeather; time: number }) {
@@ -52,7 +53,9 @@ export function WeatherHud({ weather, time }: { weather: SimWeather; time: numbe
       {weather.rain_return && weather.rain_return.formation_name && time >= weather.rain_return.command_sec && (
         <p className="hud-return">
           {time < weather.rain_return.start_sec
-            ? `Return called: finishing the move to ${weather.rain_return.formation_name}`
+            ? weather.rain_return.method === "abort_point"
+              ? `Return called: flying on to ${formatTime(weather.rain_return.start_sec)} in the move to ${weather.rain_return.formation_name}`
+              : `Return called: finishing the move to ${weather.rain_return.formation_name}`
             : "Returning to the holding area"}
         </p>
       )}

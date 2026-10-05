@@ -123,20 +123,30 @@ struct ReturnPathResult {
     std::vector<DroneTrajectory> trajectories;  // one entry per drone_id, ascending
     int keyframe_index = 0;
     std::string from_keyframe;
-    double abort_time_sec = 0.0;      // show time at which the fleet is at the formation
+    double abort_time_sec = 0.0;      // show time the return starts from (the formation, or a point before it)
     double worst_separation_m = 0.0;  // the passing attempt's, as the gatekeeper measured it
+    double min_duration_sec = 0.0;    // the Auto duration (T_min, plus the final descent), before any retry
+    int farthest_drone_id = -1;       // the drone with the longest way to its slot, which sets T_min
+    double farthest_distance_m = 0.0;
 };
 
 // `show` is the show's own result (trajectories in show time); `transitions`
 // its metadata.transitions. Every drone's state at the end of transition
 // `keyframe_index` (the one into project.keyframes[keyframe_index]) is the
-// return's start. `target_duration_sec` nullopt = Auto (T_min), otherwise
-// max(target, T_min) like a leg. Throws PipelineSafetyError when the
-// gatekeeper rejects the return, std::runtime_error on bad input.
+// return's start. With `abort_time_sec` (show time strictly inside that
+// transition; docs/4-condition_simulator.md section 5.3, "more abort
+// points") the start is every drone's state then instead: position,
+// velocity and acceleration, the fleet still moving. `target_duration_sec`
+// nullopt = Auto (T_min), otherwise max(target, T_min) like a leg. Throws
+// PipelineSafetyError when the gatekeeper rejects the return,
+// std::runtime_error on bad input. `estimate_only` stops before solving:
+// the result has no trajectories, only min_duration_sec and the farthest
+// drone (the estimate the section 5.3 suggestions use).
 ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& config,
                                   const std::vector<DroneTrajectory>& show,
                                   const std::vector<TransitionTiming>& transitions, int keyframe_index,
                                   std::optional<double> target_duration_sec,
-                                  const ProgressCallback& progress = {});
+                                  const ProgressCallback& progress = {},
+                                  std::optional<double> abort_time_sec = std::nullopt, bool estimate_only = false);
 
 }  // namespace drone_core::io

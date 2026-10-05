@@ -13,6 +13,8 @@ export interface Span {
   slope: number;
   formation: number;
   method: HomePiece["method"];
+  /** "abort_point": the show time its return starts from. */
+  pointSec: number | null;
 }
 
 export interface CoverageResult {
@@ -32,7 +34,7 @@ export function spans(pieces: HomePiece[], end: number, reaction: number, margin
     const b = Math.min(u1 - reaction, end);
     if (b <= a) continue;
     const v = p.value0 === null ? null : p.value0 + p.slope * (a + reaction - p.u0);
-    out.push({ a, b, needed: v === null ? null : reaction + v + margin, slope: p.slope, formation: p.formation, method: p.method });
+    out.push({ a, b, needed: v === null ? null : reaction + v + margin, slope: p.slope, formation: p.formation, method: p.method, pointSec: p.point_sec ?? null });
   }
   return out;
 }

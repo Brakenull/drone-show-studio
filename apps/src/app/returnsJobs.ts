@@ -9,8 +9,9 @@ import { nextSolve, type SolveState } from "./stage2Jobs";
 export interface ReturnsJob {
   jobId: number;
   startedAt: number; // ms epoch
-  /** The return being planned: position in the job (0-based), job size, formation index. */
-  current: { index: number; count: number; keyframe: number } | null;
+  /** The return being planned: position in the job (0-based), job size, formation index, and for an
+   *  abort point (§5.3) its show time. */
+  current: { index: number; count: number; keyframe: number; abortTime: number | null } | null;
   solve: SolveState | null;
   /** Returns this job has finished, in order. */
   results: ReturnEntry[];
@@ -29,12 +30,14 @@ function set(runId: string, patch: Partial<ReturnsJob>) {
   subscribers.forEach((fn) => fn());
 }
 
-/** `formations` null = the bridge's default (every formation without a return leg). */
+/** `formations` null = the bridge's default (every formation without a return leg), or none when `points`
+ *  are given: abort points as [formation, show time] (docs/4-condition_simulator.md §5.3). */
 export async function startReturns(
   runId: string,
   runDir: string,
   formations: number[] | null,
   onFinished: (exit: JobExit) => void,
+  points: [number, number][] = [],
 ): Promise<void> {
   const onEvent = (e: BridgeEvent) => {
     const job = jobs[runId];
@@ -45,7 +48,12 @@ export async function startReturns(
         current:
           e.return_index === undefined
             ? job.current
-            : { index: e.return_index, count: e.return_count ?? 1, keyframe: e.keyframe_index ?? -1 },
+            : {
+                index: e.return_index,
+                count: e.return_count ?? 1,
+                keyframe: e.keyframe_index ?? -1,
+                abortTime: e.abort_time_sec ?? null,
+              },
         solve: nextSolve(fresh ? null : job.solve, e),
       });
     } else if (e.type === "return_result") {
@@ -69,7 +77,12 @@ export async function startReturns(
   subscribers.forEach((fn) => fn());
   let job;
   try {
-    const args = ["stage2-returns", runDir, ...(formations ? ["--formations", formations.join(",")] : [])];
+    const args = [
+      "stage2-returns",
+      runDir,
+      ...(formations ? ["--formations", formations.join(",")] : []),
+      ...(points.length ? ["--points", points.map(([k, t]) => `${k}@${t}`).join(",")] : []),
+    ];
     job = await startJob(args, { run: { dir: runDir, section: "stage2_returns" }, onEvent });
   } catch (err) {
     const exit = { code: null, cancelled: false };

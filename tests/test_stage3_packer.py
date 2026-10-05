@@ -10,6 +10,12 @@ import pytest
 
 from stage3_helpers import grid_show, make_contract, make_segment
 from stage3_simulation_packer.flight_binary import (
+    MAGIC,
+    RECORD_DTYPE,
+    TRACK_ABORT_POINT,
+    TRACK_RETURN,
+    V1_HEADER_DTYPE,
+    VERSION_1,
     FlightFileError,
     expected_file_size,
     parse_flight_bytes,
@@ -67,7 +73,7 @@ def test_packed_files_match_python_evaluator(tmp_path):
     for drone_id in range(4):
         path = out / f"drone_{drone_id}.bin"
         data = path.read_bytes()
-        assert len(data) == 20 + 19 * k == expected_file_size(k)
+        assert len(data) == 24 + 16 + 19 * k + 4 == expected_file_size(k)   # version 2, the show alone
         assert int.from_bytes(data[-4:], "little") == zlib.crc32(data[:-4])     # CRC-32-IEEE
         ff = read_flight_file(path)
         assert ff.drone_id == drone_id and ff.sampling_dt_ms == 50
@@ -149,4 +155,68 @@ def test_python_reader_rejects_bad_files():
 
 def test_flight_binary_spec_header_is_shared_by_python_reader():
     header = (REPO / "stage3_simulation_packer" / "packer" / "include" / "flight_binary_spec.h").read_text()
-    assert "0x44534857u" in header and "FLIGHT_FILE_VERSION 0x0101u" in header
+    assert "0x44534857u" in header and "FLIGHT_FILE_VERSION 0x0200u" in header and "FLIGHT_FILE_VERSION_1 0x0101u" in header
+
+
+@needs_packer
+def test_plan_packs_return_tracks_and_the_return_table(tmp_path):
+    """Version 2 (docs/4-condition_simulator.md §8.4): the show, two returns as tracks, the return table."""
+    show = grid_show(2, duration=6.0, hold=1.0)                  # 7 s
+    back = grid_show(2, duration=3.0, hold=0.0)                  # a 3 s "return", timed from 0
+    early = grid_show(2, duration=2.0, hold=0.0)
+    for name, contract in (("show.json", show), ("ret_0.json", back), ("ret_p.json", early)):
+        (tmp_path / name).write_text(json.dumps(contract))
+    plan = {"show": "show.json",
+            "tracks": [{"id": "0", "file": "ret_0.json", "kind": "return", "formation": 0, "start_ms": 4000},
+                       {"id": "0-2500", "file": "ret_p.json", "kind": "abort_point", "formation": 0, "start_ms": 2500}],
+            "return_table": [{"from_ms": 0, "to_ms": 2500, "track": 2}, {"from_ms": 2500, "to_ms": 6000, "track": 1},
+                             {"from_ms": 6000, "to_ms": 7000, "track": 0}, {"from_ms": 7000, "to_ms": None, "track": None}]}
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    result = run_packer("--plan", tmp_path / "plan.json", tmp_path / "bin")
+    assert result.returncode == 0, result.stderr
+    assert run_packer("--verify", tmp_path / "bin").returncode == 0
+
+    k_show, k_back, k_early = 141, 61, 41                         # ceil(T / 50 ms) + 1
+    manifest = json.loads((tmp_path / "bin" / "manifest.json").read_text())
+    assert manifest["file_version"] == 0x0200 and manifest["records_per_file"] == k_show + k_back + k_early
+    assert [t["kind"] for t in manifest["tracks"]] == ["show", "return", "abort_point"]
+    pw = build_piecewise(parse_contract_dict(back))
+    ids = set()
+    for drone_id in range(4):
+        ff = read_flight_file(tmp_path / "bin" / f"drone_{drone_id}.bin")
+        ids.add(ff.pack_id)
+        assert ff.version == 0x0200 and len(ff.tracks) == 3 and ff.return_table.size == 4
+        assert len(ff.records) == k_show                         # .records is still the show
+        ret = ff.tracks[1]
+        assert (ret.kind, ret.formation, ret.start_ms) == (TRACK_RETURN, 0, 4000)
+        np.testing.assert_array_equal(ret.records["time_ms"], np.arange(k_back) * 50)   # timed from its start
+        pos, _, _ = evaluate_numpy(pw, ret.records["time_ms"] / 1000.0, np.array([drone_id]))
+        assert np.max(np.abs(ret.positions_m - pos[0])) <= 0.005 + 1e-9
+        assert ff.tracks[2].kind == TRACK_ABORT_POINT and ff.tracks[2].times_sec[0] == 2.5
+        # The table: before the point, fly on to it; then the formation's return (at once while holding there);
+        # the show's own end; nothing after it.
+        assert ff.return_at(1.0) == (2, 2.5)
+        assert ff.return_at(3.0) == (1, 4.0) and ff.return_at(5.0) == (1, 5.0)
+        assert ff.return_at(6.5) == (0, 6.5) and ff.return_at(9.0) == (None, 9.0)
+    assert len(ids) == 1 and manifest["pack_id"] == f"{ids.pop():08x}"
+
+    # A plan naming a track that isn't packed, or a return with another fleet, is refused.
+    bad = {**plan, "return_table": [{"from_ms": 0, "to_ms": None, "track": 5}]}
+    (tmp_path / "bad.json").write_text(json.dumps(bad))
+    assert run_packer("--plan", tmp_path / "bad.json", tmp_path / "bad").returncode == 2
+    (tmp_path / "small.json").write_text(json.dumps(grid_show(1, duration=3.0, hold=0.0)))
+    other = {**plan, "tracks": [{**plan["tracks"][0], "file": "small.json"}]}
+    (tmp_path / "other.json").write_text(json.dumps(other))
+    result = run_packer("--plan", tmp_path / "other.json", tmp_path / "other")
+    assert result.returncode == 2 and "drones" in result.stderr
+
+
+def test_python_reader_still_reads_version_1():
+    records = np.zeros(2, RECORD_DTYPE)
+    records["time_ms"] = [0, 50]
+    records["pos_z_cm"] = [100, 200]
+    body = (np.array([(MAGIC, VERSION_1, 9, 2, 50, 0)], V1_HEADER_DTYPE).tobytes() + records.tobytes())
+    data = body + zlib.crc32(body).to_bytes(4, "little")
+    ff = parse_flight_bytes(data)
+    assert (ff.version, ff.drone_id, len(ff.tracks), ff.return_table.size) == (VERSION_1, 9, 1, 0)
+    assert ff.positions_m[1, 2] == 2.0 and ff.return_at(1.0) is None

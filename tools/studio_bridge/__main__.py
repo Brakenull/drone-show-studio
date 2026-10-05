@@ -146,10 +146,17 @@ def _formation_duration(text: str) -> tuple[int, float]:
         raise argparse.ArgumentTypeError(f"expected FORMATION=SECONDS like 2=30, got {text!r}") from None
 
 
+def _abort_points(text: str) -> list[tuple[int, float]]:
+    try:
+        return [(int(k), float(t)) for k, t in (part.split("@", 1) for part in text.split(",") if part.strip())]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected FORMATION@SECONDS like 1@66.6,1@76.6, got {text!r}") from None
+
+
 def cmd_stage2_returns(args: argparse.Namespace) -> int:
     from .returns_job import run_stage2_returns
 
-    return run_stage2_returns(Path(args.run_dir), args.formations, dict(args.duration_s or []))
+    return run_stage2_returns(Path(args.run_dir), args.formations, dict(args.duration_s or []), args.points)
 
 
 def cmd_config(args: argparse.Namespace) -> int:
@@ -219,6 +226,15 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     return run_readiness(Path(args.run_dir), args.scenario, args.window_s)
 
 
+def cmd_suggest(args: argparse.Namespace) -> int:
+    from .conditions_job import run_suggest
+
+    rule = {"reaction_s": args.reaction_s, "margin_s": args.margin_s, "alert_mm_h": args.alert_mm_h,
+            "limit_mm_h": args.limit_mm_h}
+    return run_suggest(Path(args.run_dir), args.scenario, args.window_s,
+                       {k: v for k, v in rule.items() if v is not None}, args.step_s)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="studio_bridge", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -245,14 +261,18 @@ def main(argv: list[str] | None = None) -> int:
                         "the last when the show has a return leg)")
     p.add_argument("--duration-s", type=_formation_duration, action="append", metavar="K=SECONDS",
                    help="Target duration of formation K's return (default: Auto, the minimum); repeatable")
+    p.add_argument("--points", type=_abort_points, default=None, metavar="K@T,...",
+                   help="Abort points: also plan returns from show time T inside the move into formation K "
+                        "(alone: only these)")
     p.set_defaults(fn=cmd_stage2_returns)
     p = sub.add_parser("config")
     p.add_argument("run_dir")
     p.set_defaults(fn=cmd_config)
     p = sub.add_parser("replay")
     p.add_argument("run_dir")
-    p.add_argument("--return", dest="return_from", type=int, default=None, metavar="K",
-                   help="Rebuild the replay of formation K's return path instead of the show's")
+    p.add_argument("--return", dest="return_from", default=None, metavar="K",
+                   help="Rebuild the replay of formation K's return path (or of abort point K, e.g. 1-66637) "
+                        "instead of the show's")
     p.set_defaults(fn=cmd_replay)
     p = sub.add_parser("monte_carlo")
     p.add_argument("run_dir")
@@ -289,6 +309,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scenario", default=None, help="Take the rain rule and window from this scenario")
     p.add_argument("--window-s", type=float, default=None, help="Seconds from the rain alert to the limit level")
     p.set_defaults(fn=cmd_readiness)
+    p = sub.add_parser("suggest", help="Suggestions for the moments a rain window doesn't cover (section 5.3)")
+    p.add_argument("run_dir")
+    p.add_argument("--scenario", default=None, help="Take the rain rule and window from this scenario")
+    p.add_argument("--window-s", type=float, default=None, help="Seconds from the rain alert to the limit level")
+    p.add_argument("--reaction-s", type=float, default=None, help="Instead of the scenario's reaction time")
+    p.add_argument("--margin-s", type=float, default=None, help="Instead of the scenario's margin")
+    p.add_argument("--alert-mm-h", type=float, default=None, help="Instead of the scenario's alert level")
+    p.add_argument("--limit-mm-h", type=float, default=None, help="Instead of the scenario's limit level")
+    p.add_argument("--step-s", type=float, default=10.0, help="Spacing of candidate abort points in a transition")
+    p.set_defaults(fn=cmd_suggest)
     args = parser.parse_args(argv)
     reserve_stdout()
     try:
