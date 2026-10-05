@@ -1,4 +1,4 @@
-"""Stage 2 takeoff and return legs (1-phase_1.md section 3.8, schema 1.6.0).
+"""Stage 2 takeoff and return legs (schema 1.6.0).
 
 Runs the 4-drone smoke-test show with `project_metadata.legs` and checks the leg
 timing rules, that the return leg lands every drone at rest on a holding-area

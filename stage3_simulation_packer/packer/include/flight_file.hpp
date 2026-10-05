@@ -1,6 +1,6 @@
 #pragma once
 
-// drone_<id>.bin encode / write / verify (docs/3-phase-3.md §4.2, §5): version 2, the show and its return
+// drone_<id>.bin encode / write / verify: version 2, the show and its return
 // paths as tracks plus the return table; version 1 files are still read and verified.
 
 #include <cstdint>

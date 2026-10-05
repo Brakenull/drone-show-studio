@@ -1,4 +1,4 @@
-"""Run folders (docs/5-studio_gui.md §3): one folder per run, `run.json` is the record."""
+"""Run folders: one folder per run, `run.json` is the record."""
 
 from __future__ import annotations
 

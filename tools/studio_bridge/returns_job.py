@@ -1,4 +1,4 @@
-"""`stage2-returns` command: return paths from abort points (docs/4-condition_simulator.md B4, §7).
+"""`stage2-returns` command: return paths from abort points.
 
 Plans, after the show passed Stage 2, one return path per formation from the run's saved result
 (`stage2/trajectory_splines.json`) to the holding-area slots, with the run's own planner settings.
@@ -11,7 +11,7 @@ failed job keeps what it finished. Each return also gets a replay (`replay_<k>/`
 the show up to the formation, then the flight home. Returns belong to one Stage 2 result: `index.json` and run.json's
 `stage2_returns` keep the Stage 2 `ended_at` they came from, and a new Stage 2 run deletes them.
 
-Abort points (docs/4-condition_simulator.md section 5.3, `--points K@T,...`) are returns planned from show time T
+Abort points (`--points K@T,...`) are returns planned from show time T
 inside the transition into formation K, from the moving fleet. They are named by `rain_return.point_id()`
 (`return_1-66637.json`, `replay_1-66637/`) and listed in `index.json` under `points`.
 """
@@ -322,7 +322,7 @@ def _run(run_dir: Path, formations: list[int] | None, durations: dict[int, float
         return finish("failed_error", EXIT_INTERNAL, message=f"drone_core import failed: {exc}")
     if not hasattr(drone_core, "plan_return_path"):
         return finish("failed_error", EXIT_INTERNAL,
-                      message="drone_core was built before return paths (B4); rebuild stage2_core_engine")
+                      message="drone_core was built before return paths; rebuild stage2_core_engine")
 
     worst_status = "succeeded"
     jobs = [(k, None) for k in formations] + [(k, t) for k, t in points]

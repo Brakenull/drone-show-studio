@@ -1,4 +1,4 @@
-"""NDJSON event stream (docs/5-studio_gui.md §4). Stdout carries events only."""
+"""NDJSON event stream. Stdout carries events only."""
 
 from __future__ import annotations
 

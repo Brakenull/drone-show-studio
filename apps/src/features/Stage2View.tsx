@@ -1,4 +1,4 @@
-// Run Stage 2 and read its outcome (docs/5-studio_gui.md §6.2).
+// Run Stage 2 and read its outcome.
 
 import { useEffect, useState } from "react";
 import { readRunJson, readRunText, runJob } from "../bridge/api";

@@ -1,4 +1,4 @@
-// Electrochemical battery model (docs/3-phase-3.md §3.3); model in physics.py.
+// Electrochemical battery model; model in physics.py.
 
 __constant float OCV_SOC[OCV_N] = { OCV_SOC_LIST };
 __constant float OCV_VOLTS[OCV_N] = { OCV_VOLTS_LIST };

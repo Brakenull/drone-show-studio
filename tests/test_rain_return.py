@@ -1,8 +1,8 @@
-"""Rain return, milestones C2 and C3 (docs/4-condition_simulator.md §5.1-5.3, B7, §9.4-9.6).
+"""Rain return: time to home, coverage, abort flights, abort points, suggestions.
 
-Time to home and coverage on a synthetic timeline against hand calculation (§9.4), the abort plan
-and the composed reference, an abort flight through the digital twin (§9.5), abort points inside
-transitions and the suggestions (§9.6).
+Time to home and coverage on a synthetic timeline against hand calculation, the abort plan
+and the composed reference, an abort flight through the digital twin, abort points inside
+transitions and the suggestions.
 """
 
 import numpy as np
@@ -122,7 +122,7 @@ def test_abort_plan():
 
 
 # --------------------------------------------------------------------------- #
-# Composed reference and an abort flight (B7, §9.5)
+# Composed reference and an abort flight
 # --------------------------------------------------------------------------- #
 
 PADS = [(0.0, 0.0), (4.0, 0.0), (0.0, 4.0), (4.0, 4.0)]
@@ -208,7 +208,7 @@ def test_abort_flight_lands_every_drone_on_its_slot():
 
 
 # --------------------------------------------------------------------------- #
-# Milestone C3: abort points and suggestions (section 5.3, §9.6)
+# Abort points and suggestions
 # --------------------------------------------------------------------------- #
 
 def test_abort_points_take_the_soonest_way_home_ahead():
@@ -225,7 +225,7 @@ def test_abort_points_take_the_soonest_way_home_ahead():
     assert h(10.0) == pytest.approx(10.0) and h(31.0) == pytest.approx(39.0)   # elsewhere unchanged
     point_pieces = [p for p in pieces if p.method == ABORT_POINT]
     assert [(p.u0, p.u1, p.point_sec) for p in point_pieces] == [(12.0, 20.0, 20.0)]
-    # A point outside its transition is ignored; without points the pieces are the C2 ones.
+    # A point outside its transition is ignored; without points the pieces are unchanged.
     assert time_to_home(timing, D, [AbortPoint(1, 35.0, 1.0)]) == time_to_home(timing, D)
 
     plan = abort_plan(timing, D, 15.0, points)

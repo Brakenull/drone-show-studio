@@ -1,4 +1,4 @@
-// Two runs' closest-pair distance over show time, overlaid (docs/5-studio_gui.md §6.5).
+// Two runs' closest-pair distance over show time, overlaid.
 // No Tauri imports: it takes the two separation series like the rest of src/replay.
 
 import { useEffect, useMemo, useRef, useState } from "react";

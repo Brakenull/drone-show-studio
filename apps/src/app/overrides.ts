@@ -1,4 +1,4 @@
-// Planner-settings overrides (docs/5-studio_gui.md §6.2). Values are keyed by dotted path; only settings
+// Planner-settings overrides. Values are keyed by dotted path; only settings
 // that differ from the run's baseline are sent. The warning rules mirror
 // tools/studio_bridge/config_fields.py safety_warnings(), which records the same warnings in run.json.
 
@@ -63,7 +63,7 @@ export function warningsFor(fields: ConfigField[], values: Values): ConfigWarnin
       message: verb ? `${f.label} ${verb} from ${before} to ${after}.` : `${f.label} turned off.`,
     });
   }
-  // The check only finds pairs whose planning-distance boxes touch (2-phase_2.md §5, known limit).
+  // The check only finds pairs whose planning-distance boxes touch (known limit).
   const floorPath = "solver.continuous_gatekeeper.min_allowable_distance_m";
   const floor = Number(effective(floorPath));
   const enforced =

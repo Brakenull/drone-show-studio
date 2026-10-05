@@ -1,4 +1,4 @@
-"""Studio bridge `stage2-returns` (docs/4-condition_simulator.md B4, §7), driven as a subprocess like the
+"""Studio bridge `stage2-returns`, driven as a subprocess like the
 Tauri shell does, on runs of the 4-drone demo whose Stage 2 passed."""
 
 import json
@@ -77,7 +77,7 @@ def test_return_leg_covers_the_last_formation_and_subsets_add_up(tmp_path):
 def test_gatekeeper_rejection_is_reported_per_formation(tmp_path):
     run_dir = passed_run(tmp_path, build_phase1_json())
     # After the show passed: a floor of 2.5 m can't be kept on 2 m slots (enforced distance 3.15 m keeps
-    # the floor inside the gatekeeper's range, bug-report P2-01).
+    # the floor inside the gatekeeper's range).
     overrides = {"safety": {"min_distance_m": 3.0},
                  "solver": {"continuous_gatekeeper": {"min_allowable_distance_m": 2.5}}}
     (run_dir / "stage2" / "config_overrides.json").write_text(json.dumps(overrides), encoding="utf-8")

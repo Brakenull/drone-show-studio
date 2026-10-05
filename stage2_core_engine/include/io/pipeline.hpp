@@ -15,27 +15,26 @@
 #include "types.hpp"
 
 // Orchestrates the full show: holding area -> keyframe[0] -> keyframe[1] ->
-// ... (-> holding area, when the Phase 1 file has a return leg), chaining the Point Assignment Module (section 3.1) and the SCP
-// trajectory optimizer (section 3.3) transition-by-transition while tracking
+// ... (-> holding area, when the Phase 1 file has a return leg), chaining the Point Assignment Module and the SCP
+// trajectory optimizer transition-by-transition while tracking
 // each physical drone's persistent identity, outgoing velocity, and current
 // LED color across transitions. This glue is not one of the 4 algorithmic
-// modules in section 5's file tree; it exists to give bindings/py_bindings.cpp
-// something end-to-end to call, and to assemble the section 5 output schema.
+// algorithm modules; it exists to give bindings/py_bindings.cpp
+// something end-to-end to call, and to assemble the output schema.
 
 namespace drone_core::io {
 
-// Actual show-time span of a takeoff or return leg (1-phase_1.md section
-// 3.8), reported only when the Phase 1 file has `legs`.
+// Actual show-time span of a takeoff or return leg, reported only when the Phase 1 file has `legs`.
 struct LegTiming {
     double start_time_sec = 0.0;
     double end_time_sec = 0.0;
     std::optional<double> target_duration_sec;  // the designer's target; nullopt = Auto
 };
 
-// Planned vs flown timing of one transition (bug-report P2-03). A transition
+// Planned vs flown timing of one transition. A transition
 // that passes only after a gatekeeper retry is flown longer than planned; the
 // show timeline follows the flown duration.
-// Section 1.28: the vertical pad moves of one transition, per drone count.
+// The vertical pad moves of one transition, per drone count.
 struct PadMoves {
     int parked = 0;   // flown to the hover point above their pad
     int landed = 0;   // descended onto their pad (in the transition or right after the last one)
@@ -53,7 +52,7 @@ struct TransitionTiming {
     double planned_duration_sec = 0.0;  // max(nominal, T_min) before any retry
     double flown_duration_sec = 0.0;    // the passing attempt's duration
     int attempts = 1;
-    PadMoves pad_moves;  // section 1.28
+    PadMoves pad_moves;
 };
 
 struct ShowMetadata {
@@ -76,10 +75,10 @@ struct PipelineResult {
     std::vector<DroneTrajectory> trajectories;  // one entry per drone_id, ascending
 };
 
-// A gatekeeper rejection placed in show context (docs/5-studio_gui.md B1).
+// A gatekeeper rejection placed in show context.
 // `solver` keeps its transition-local times exactly as optimizer::solve()
 // produced them; add transition_start_time_sec for show time. Both
-// trajectory lists use show time and the section 5 output segment format.
+// trajectory lists use show time and the output segment format.
 struct TransitionSafetyFailure {
     optimizer::SafetyViolationReport solver;
     int transition_index = 0;          // 0 = holding area -> keyframes[0]
@@ -108,14 +107,13 @@ private:
 // Throws PipelineSafetyError when a transition fails the continuous
 // gatekeeper; other errors stay std::runtime_error.
 //
-// `progress` (docs/5-studio_gui.md B2), when set, receives every
+// `progress`, when set, receives every
 // ProgressEvent kind with the transition fields filled in.
 PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& config,
                             const ProgressCallback& progress = {});
 
 // Return path from one formation of an already planned show to the
-// holding-area slots (docs/4-condition_simulator.md B4, docs/2-phase_2.md
-// section 1.24). Planned after the show passed, from its saved result.
+// holding-area slots. Planned after the show passed, from its saved result.
 struct ReturnPathResult {
     // One transition (formation -> holding_area), timed from 0;
     // return_leg holds its span and target.
@@ -134,14 +132,13 @@ struct ReturnPathResult {
 // its metadata.transitions. Every drone's state at the end of transition
 // `keyframe_index` (the one into project.keyframes[keyframe_index]) is the
 // return's start. With `abort_time_sec` (show time strictly inside that
-// transition; docs/4-condition_simulator.md section 5.3, "more abort
-// points") the start is every drone's state then instead: position,
+// transition, an abort point) the start is every drone's state then instead: position,
 // velocity and acceleration, the fleet still moving. `target_duration_sec`
 // nullopt = Auto (T_min), otherwise max(target, T_min) like a leg. Throws
 // PipelineSafetyError when the gatekeeper rejects the return,
 // std::runtime_error on bad input. `estimate_only` stops before solving:
 // the result has no trajectories, only min_duration_sec and the farthest
-// drone (the estimate the section 5.3 suggestions use).
+// drone (the estimate the rain return suggestions use).
 ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& config,
                                   const std::vector<DroneTrajectory>& show,
                                   const std::vector<TransitionTiming>& transitions, int keyframe_index,

@@ -1,4 +1,4 @@
-// Pick a Phase 1 export, validate it, create a run folder (docs/5-studio_gui.md §6.1).
+// Pick a Phase 1 export, validate it, create a run folder.
 
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";

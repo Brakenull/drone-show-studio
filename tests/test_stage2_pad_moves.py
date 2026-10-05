@@ -1,4 +1,4 @@
-"""Every pad visit vertical, mid-show too (2-phase_2.md section 1.28, bug-report P3-04).
+"""Every pad visit vertical, mid-show too.
 
 9 drones on a 3 x 3 holding grid on the ground; the 6 of the back rows stay parked. The 3 of
 the front row take off (the first takeoff: only they climb off their pads first), fly a line,
@@ -45,7 +45,7 @@ def drone_core():
 def show(stop_sec, far=0.0):
     """line -> park_one (one parks) -> hold (it stays parked for `stop_sec`) -> line_3 (it leaves).
     `far` moves the airborne formations that many metres north: longer paths, more control points
-    per window (adaptive count, section 1.1)."""
+    per window (adaptive count)."""
     p = build_phase1_json()
     meta = p["project_metadata"]
     meta["version"] = "1.6.0"

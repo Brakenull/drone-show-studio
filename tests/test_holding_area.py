@@ -57,7 +57,7 @@ def test_overflow_forces_extra_layers_but_respects_ceiling():
 
 
 def test_full_sweep_of_park_counts_never_violates_invariants():
-    # Acceptance criteria (spec 5): for every N_fleet - k in [1, N_fleet],
+    # Acceptance criteria: for every N_fleet - k in [1, N_fleet],
     # all holding-area points must be valid, unique, and within max_height.
     fleet_size = 120
     small_max_height = 6.0  # forces the width-expansion branch repeatedly
@@ -149,7 +149,7 @@ def test_bottom_layer_sits_at_center_z():
         assert compute_holding_positions(n_park, CENTER, SIZE, MAX_HEIGHT, 2.0)[:, 2].min() == CENTER[2]
 
 
-# --- Stacked layout, option C (1-phase_1.md section 3.2.3, schema 1.7.0) ---
+# --- Stacked layout, option C (schema 1.7.0) ---
 
 from stage1_designer.core.holding_area import (  # noqa: E402
     compute_holding_row_indices,
@@ -214,7 +214,7 @@ def test_no_slot_straight_above_the_layer_below():
 
 def test_hover_point_clear_of_the_slot_above():
     # A pad's vertical path to its hover point (2 m up) keeps the planning
-    # distance (1.575 m) from every other slot: 2-phase_2.md section 1.28's
+    # distance (1.575 m) from every other slot: the hover point's
     # column check always passes with option C.
     slots = compute_holding_positions(452, GROUND, SIZE, MAX_HEIGHT, 2.0, **OPTION_C)
     for h in np.linspace(0.0, 2.0, 9):

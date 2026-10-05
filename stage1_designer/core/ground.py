@@ -1,4 +1,4 @@
-"""Ground level check (spec section 3.9).
+"""Ground level check.
 
 Pure module (NumPy only) - no `bpy` dependency, fully unit-testable.
 

@@ -1,4 +1,4 @@
-// Planner settings for a Stage 2 run, and the buttons that run it (docs/5-studio_gui.md §6.2).
+// Planner settings for a Stage 2 run, and the buttons that run it.
 
 import { useEffect, useMemo, useState } from "react";
 import { runJob } from "../bridge/api";

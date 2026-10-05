@@ -1,5 +1,5 @@
-// Parallel 6-DOF multi-agent dynamics + onboard tracking controller
-// (docs/3-phase-3.md §3.1); model in physics.py.
+// Parallel 6-DOF multi-agent dynamics + onboard tracking controller;
+// model in physics.py.
 
 inline float4 motor_mix(float f, float3 tau) {
     // Inverse of: f = sum T, tau_x = sum y_m T, tau_y = -sum x_m T, tau_z = c_q sum s_m T,

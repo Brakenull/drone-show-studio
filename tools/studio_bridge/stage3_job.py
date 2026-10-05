@@ -1,7 +1,7 @@
-"""`monte_carlo` and `pack` commands (docs/5-studio_gui.md §4, §6.3).
+"""`monte_carlo` and `pack` commands.
 
 Both read the run's Stage 2 contract (`stage2/trajectory_splines.json`) and call the same code the CLIs
-use: `run_monte_carlo()` (with the B3 `on_record` callback) and the `pack_to_binary` executable. Each
+use: `run_monte_carlo()` (with the `on_record` callback) and the `pack_to_binary` executable. Each
 Stage 3 record in run.json keeps the Stage 2 `ended_at` it was made from, so the UI can tell when a
 later Stage 2 run has made it stale.
 """
@@ -110,8 +110,8 @@ PLAN_FILE = "pack_plan.json"
 
 
 def pack_plan(run_dir: Path, record: dict[str, Any], source: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The pack plan for pack_to_binary --plan (docs/4-condition_simulator.md §8.4): the show, the return paths the
-    return table uses, and the table itself, taken from the time-to-home pieces the readiness chart shows (§5.1).
+    """The pack plan for pack_to_binary --plan: the show, the return paths the
+    return table uses, and the table itself, taken from the time-to-home pieces the readiness chart shows.
     Paths are relative to stage3/, where the plan is written, so the plan (and the pack id) don't depend on where
     the run folder is. Also returns what the result reports about it."""
     from stage3_simulation_packer.twin_sim.rain_return import (

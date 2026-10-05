@@ -1,12 +1,12 @@
-"""Condition simulator commands (docs/4-condition_simulator.md §6, §7; milestone C1).
+"""Condition simulator commands.
 
 * `conditions <run>`                     -- the show's timing and the run's scenarios with their last results
 * `scenario-save <run> --json J [--id I]` -- create (no id) or replace a scenario, validated
 * `scenario-delete <run> --id I`         -- remove a scenario and its results
-* `simulate <run> --scenario I`          -- fly the scenario through the digital twin (B6) and record it (B8);
-                                           the rain rule flies the return paths (B7)
-* `readiness <run> [--scenario I] [--window-s W]` -- time to home and coverage (section 5.1, 5.2)
-* `suggest <run> [--scenario I] [--window-s W] ...` -- what would close the uncovered time (section 5.3)
+* `simulate <run> --scenario I`          -- fly the scenario through the digital twin and record it;
+                                           the rain rule flies the return paths
+* `readiness <run> [--scenario I] [--window-s W]` -- time to home and coverage
+* `suggest <run> [--scenario I] [--window-s W] ...` -- what would close the uncovered time
 
 Scenarios live in `stage3/scenarios/<id>/scenario.json`; `<id>` is the folder name made from the name the
 scenario was created with and never changes (renaming only changes `name`). A simulation writes, next to
@@ -94,7 +94,7 @@ def rule_defaults() -> dict[str, float]:
 
 def load_returns(run_dir: Path, record: dict[str, Any]
                  ) -> tuple[dict[int, dict[str, Any]], dict[str, dict[str, Any]], dict[str, Any]]:
-    """The run's planned return paths (B4) by formation, its abort points' returns (section 5.3) by id, and
+    """The run's planned return paths by formation, its abort points' returns by id, and
     their status for the UI. Returns planned from an earlier Stage 2 result are ignored (they no longer start
     where the show is)."""
     from .returns_job import INDEX_FILE, RETURNS_DIR, return_file
@@ -137,7 +137,7 @@ def abort_points(points: dict[str, dict[str, Any]]) -> list:
 
 def readiness_data(run_dir: Path, record: dict[str, Any], contract: dict[str, Any],
                    names: list[str]) -> dict[str, Any]:
-    """H(t) as pieces (section 5.1) and what it is made of; the UI computes coverage for any window."""
+    """H(t) as pieces and what it is made of; the UI computes coverage for any window."""
     from dataclasses import asdict
 
     from stage3_simulation_packer.twin_sim.rain_return import ShowTiming, point_id, time_to_home
@@ -435,7 +435,7 @@ def _simulate(run_dir: Path, folder: Path, contract_path: Path, device: str, sta
 # --------------------------------------------------------------------------- #
 
 def run_readiness(run_dir: Path, scenario_id: str | None, window: float | None) -> int:
-    """Section 5.1-5.2: H(t), coverage for the window (given, else the scenario's alert-to-limit time) and
+    """H(t), coverage for the window (given, else the scenario's alert-to-limit time) and
     the required window, without any physics."""
     from dataclasses import asdict
 
@@ -518,7 +518,7 @@ def return_estimates(run_dir: Path, record: dict[str, Any], phase1: dict[str, An
 
 def run_suggest(run_dir: Path, scenario_id: str | None, window: float | None, rule_override: dict[str, float],
                 step: float) -> int:
-    """Section 5.3: for the rain window (given, else the scenario's), each option that would close uncovered
+    """For the rain window (given, else the scenario's), each option that would close uncovered
     time, with its numbers, ranked by how much it closes."""
     from stage3_simulation_packer.twin_sim.rain_return import AbortPoint, ReturnFacts, ShowTiming, suggestions
     from stage3_simulation_packer.twin_sim.scenario_runner import rain_crossing
@@ -570,7 +570,7 @@ def run_suggest(run_dir: Path, scenario_id: str | None, window: float | None, ru
         e = entries.get(k) if k in durations else None
         facts[k] = ReturnFacts(
             planned_sec=durations.get(k),
-            # A return planned before section 5.3 doesn't record its Auto duration; the estimate is the same
+            # An older return doesn't record its Auto duration; the estimate is the same
             # computation from the same start.
             min_sec=(e or {}).get("min_duration_sec") or row["duration_sec"],
             target_sec=(e or {}).get("target_duration_sec"), attempts=(e or {}).get("attempts"),

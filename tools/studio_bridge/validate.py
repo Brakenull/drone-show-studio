@@ -1,4 +1,4 @@
-"""Phase 1 file validation (docs/5-studio_gui.md §6.1): every error at once, plus a summary and warnings."""
+"""Phase 1 file validation: every error at once, plus a summary and warnings."""
 
 from __future__ import annotations
 
@@ -66,8 +66,8 @@ PARKED_TOLERANCE_M = 1e-3
 def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray, slots: np.ndarray) -> tuple[int, int]:
     """(overlapping, parked) targets of a formation inside the holding area: the declared volume plus the
     parked grid padded by half a grid step, the same region the Blender add-on checks (holding_region_bounds).
-    A target exactly on a holding slot is a drone the formation doesn't use, left parked (2-phase_2.md
-    §1.15); only the others overlap the area."""
+    A target exactly on a holding slot is a drone the formation doesn't use, left parked;
+    only the others overlap the area."""
     from scipy.spatial import cKDTree
 
     from stage1_designer.core.holding_area import holding_region_bounds, layout_options
@@ -109,7 +109,7 @@ def holding_capacity(meta: dict[str, Any], slots: np.ndarray) -> dict[str, Any]:
 
 
 def waiting_summary(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    """Each waiting area (schema 1.7.0, 1-phase_1.md section 3.10) with its slots and region, the most spare
+    """Each waiting area (schema 1.7.0) with its slots and region, the most spare
     drones any keyframe has, and warnings: formation points (the points outside every waiting region) closer
     to a waiting region than its safe distance, or more spare drones than waiting slots."""
     from stage1_designer.core.holding_area import distance_to_region

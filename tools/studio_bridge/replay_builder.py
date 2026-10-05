@@ -1,4 +1,4 @@
-"""Replay data for the viewer (docs/5-studio_gui.md §3, §6.4).
+"""Replay data for the viewer.
 
 Samples a Phase 2 -> 3 contract with stage3's NumPy spline evaluator at a fixed
 frame rate and writes raw little-endian arrays the UI maps straight into typed
@@ -31,10 +31,10 @@ REPLAY_FPS = 20.0
 CHUNK_FRAMES = 400
 D_CRASH_M = 0.5  # stage3 monte_carlo_runner's crash distance, drawn as a reference line
 # Ground height when the Phase 1 file doesn't declare one (schema < 1.6.0):
-# the ENU origin plane. 1.6.0 files carry project_metadata.ground_z_m
-# (1-phase_1.md section 3.9), passed in as overlays["ground_z_m"]. Only used
+# the ENU origin plane. 1.6.0 files carry project_metadata.ground_z_m,
+# passed in as overlays["ground_z_m"]. Only used
 # to flag drones that go below it. Stage 2 enforces it as an altitude floor
-# only for files that declare it (2-phase_2.md section 1.13).
+# only for files that declare it.
 GROUND_Z_M = 0.0
 # Stage 2 accepts a path this far under its floor (its solver tolerance); a
 # drone on the floor must not be listed as below ground.
@@ -52,7 +52,7 @@ def join_failure_show(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def show_timeline(contract: dict[str, Any], overlays: dict[str, Any] | None, t0: float) -> dict[str, Any]:
-    """Where each Phase 1 formation falls in the planned show (docs/5-studio_gui.md §6.4).
+    """Where each Phase 1 formation falls in the planned show.
 
     Stage 2 adds the takeoff and return legs and may lengthen transitions, so a formation is reached
     later than the time it has in the Blender export. Formations are matched to the contract's
@@ -140,7 +140,7 @@ def build_replay(contract: dict[str, Any], out_dir: Path, *, overlays: dict[str,
     sep_a = np.empty(frames, dtype=np.int32)
     sep_b = np.empty(frames, dtype=np.int32)
     ground_z = float((overlays or {}).get("ground_z_m", GROUND_Z_M))
-    lowest_z = np.full(n, np.inf)  # per drone, for the below-ground warning (bug-report P2-02)
+    lowest_z = np.full(n, np.inf)  # per drone, for the below-ground warning
     lowest_t = np.zeros(n)
 
     pos_tmp = out_dir / "positions.f32.tmp"

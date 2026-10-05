@@ -1,4 +1,4 @@
-"""Ground level as a scene object (spec section 3.9, "Show in Scene").
+"""Ground level as a scene object ("Show in Scene").
 
   DSS Ground (collection)
   └── DSS_Ground   wire grid at the ground level, 10 m cells, covering the

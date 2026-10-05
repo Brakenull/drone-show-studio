@@ -1,7 +1,7 @@
 #pragma once
 
-// Loads the Phase 2 -> Phase 3 contract (trajectory_splines.json,
-// docs/3-phase-3.md §1.2) and samples each drone's B-spline timeline on the
+// Loads the Phase 2 -> Phase 3 contract (trajectory_splines.json)
+// and samples each drone's B-spline timeline on the
 // fixed 20 Hz flight-file grid.
 //
 // This is an independent C++ implementation (de Boor on the B-spline and

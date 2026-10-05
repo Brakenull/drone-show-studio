@@ -1,4 +1,4 @@
-"""True North compass gizmo overlay (spec section 3.3)."""
+"""True North compass gizmo overlay."""
 
 import math
 

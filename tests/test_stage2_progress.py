@@ -1,7 +1,7 @@
-"""drone_core.optimize_trajectories(progress_callback=...) (docs/5-studio_gui.md B2).
+"""drone_core.optimize_trajectories(progress_callback=...).
 
 Runs the 4-drone smoke-test show with a recording callback and checks the event
-stream's structure, that it agrees with the result / the B1 failure report, and
+stream's structure, that it agrees with the result / the failure report, and
 that a callback exception aborts the solve. Skips if drone_core is not built for
 this Python.
 """

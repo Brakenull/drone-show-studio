@@ -13,28 +13,28 @@
 #include "progress.hpp"
 #include "trajectory/quintic_bspline.hpp"
 
-// Cluster-based Gauss-Seidel Sequential Convex Programming optimizer
-// (docs/2-phase_2.md Rev 2.9 section 3.3): minimizes integrated
+// Cluster-based Gauss-Seidel Sequential Convex Programming optimizer:
+// minimizes integrated
 // w_smoothness_snap*snap^2 + w_smoothness_jerk*jerk^2 +
 // 1/2*w_slack_collision*sum(s_k^2) subject to kinematic limits (section
 // 1.2/3.2) and linearized inter-drone separation constraints, with a
-// trust-region step limit. As of Rev 2.7 section 1.8, separation is a soft
+// trust-region step limit. As, separation is a soft
 // constraint: each collision row gets its own nonnegative slack variable
 // s_k instead of a hard bound, so OSQP always has a feasible solution
 // regardless of local geometry (the still-hard kinematic-box/trust-region
-// rows can still trigger the 2-tier infeasibility fallback in section 1.4,
+// rows can still trigger the 2-tier infeasibility fallback,
 // just not the collision rows themselves anymore).
 //
 // Every SCP iteration rebuilds the 4D spatio-temporal candidate-pair index
 // and, from it, a conflict graph with one edge per unique drone pair sharing
 // a candidate pair (this graph is deliberately NOT filtered by
-// cluster_distance_threshold_m or capped by max_cluster_size — section 4
-// describes both, but applying either here would let two drones that still
+// cluster_distance_threshold_m or capped by max_cluster_size — the config
+// has both, but applying either here would let two drones that still
 // share a soft collision QP row land in different clusters/colors and race
 // on each other's workspace state across OpenMP threads; see
 // scp_solver.cpp's build_conflict_edges() for the real-incident writeup).
 // Singleton components (no conflict) solve independently in parallel over
-// OpenMP. Components with >1 drone are, as of Rev 2.7 section 1.8, split
+// OpenMP. Components with >1 drone are, as, split
 // into color batches by greedy graph coloring instead of swept with a pure
 // ascending-drone-id Gauss-Seidel order: drones sharing a color have no edge
 // between them and solve together in parallel, while each color still
@@ -44,7 +44,7 @@
 // to a pure sequential-within-cluster sweep (still over the same uncapped,
 // unfiltered clusters, for the same safety reason).
 //
-// ADDRESSED KNOWN LIMITATION (Rev 2.7 -> Rev 2.8 -> Rev 2.9): the parity-bow
+// ADDRESSED KNOWN LIMITATION: the parity-bow
 // seeding this solver used to rely on did not reliably converge to a safe
 // separation for real *N-way* simultaneous conflicts (many drones
 // converging on the same region at once), as opposed to isolated pairwise
@@ -52,25 +52,25 @@
 // pairs) and a synthetic ring-swap stress test, and reproducible regardless
 // of enable_graph_coloring, iteration budget, slack weight, or collision
 // time-window density (i.e. a seeding/local-optimum problem, not a solver-
-// tuning one). Rev 2.8 replaced that seeding with a joint N-body APF
+// tuning one). A later version replaced that seeding with a joint N-body APF
 // warm-start simulation (trajectory/apf_seeder.hpp's incident writeup has
 // the full root-cause evidence) and added a Slack Rejection Gatekeeper, but
 // that gatekeeper did *not* independently catch a residual N=40 case,
 // because its worst-case tracking shared the same per-iteration
 // candidate-pair bookkeeping the QP rows come from (see SingleStageResult's
 // comment below), which could under-report the true continuous-time worst
-// case. Rev 2.9 closes that gap from two directions: Adaptive Cutting-Plane
-// Collocation (section 1.10, scp_solver.cpp's find_inter_sample_minima())
+// case. Two mechanisms close that gap: Adaptive Cutting-Plane
+// Collocation (scp_solver.cpp's find_inter_sample_minima())
 // inserts extra hard collocation rows exactly at detected near-miss extrema
 // so the *optimizer* reacts to them every iteration, and the Decoupled
-// Continuous Gatekeeper (section 1.9, below) replaces the Slack Rejection
+// Continuous Gatekeeper (below) replaces the Slack Rejection
 // Gatekeeper with a verification pass that reuses none of the solver's own
 // bookkeeping. solve() can still throw std::runtime_error if a transition
 // remains unsafe after the retry budget — callers (pipeline.cpp and,
 // through it, the pybind11 binding) must be prepared for that.
 //
-// Decoupled Continuous Gatekeeper (docs/2-phase_2.md Rev 2.9 section 1.9):
-// a converged soft-slack solution (section 1.8) is only ever
+// Decoupled Continuous Gatekeeper:
+// a converged soft-slack solution is only ever
 // OSQP-*feasible*, never automatically flight-*safe*. After solving,
 // `solve()` independently re-verifies the final splines from scratch (see
 // scp_solver.cpp's evaluate_continuous_clearance()) — a fresh
@@ -89,19 +89,19 @@ struct DroneTransitionProblem {
     int drone_id = 0;
     trajectory::BoundaryConditions start;
     trajectory::BoundaryConditions end;
-    // Flies the show in this transition: keep out of config.safety.keep_out
-    // (section 1.14). False for drones taking off, landing or parked.
+    // Flies the show in this transition: keep out of config.safety.keep_out.
+    // False for drones taking off, landing or parked.
     bool keep_out = false;
-    // Section 1.28: a parked drone's prescribed path in this transition
+    // A parked drone's prescribed path in this transition
     // (e.g. descend onto its pad, wait, climb again). Never solved: held like
-    // a stationary parked drone (section 1.15), an obstacle the others avoid.
+    // a stationary parked drone, an obstacle the others avoid.
     // Called with a window [t0, t1] of the transition (seconds from its
     // start), the transition's duration (which a gatekeeper retry may have
     // stretched) and the window's control-point count; returns that window's
     // control points, at rest at both ends. Empty = solved, or a stationary
     // hold when start == end at rest.
     std::function<Eigen::MatrixXd(double t0, double t1, double duration, int num_control_points)> prescribed;
-    // Section 1.28: this drone's own altitude floor, used in place of the
+    // This drone's own altitude floor, used in place of the
     // config's when higher (a drone flying to or from a hover point above a
     // pad keeps half the hover height). Only meaningful with a config floor.
     std::optional<double> floor_m;
@@ -110,7 +110,7 @@ struct DroneTransitionProblem {
     Eigen::MatrixXd held_control_points;
 };
 
-// Rev 2.6 section 1.7: a transition longer than the mega-cluster threshold
+// a transition longer than the mega-cluster threshold
 // is decomposed into consecutive Gauss-Seidel sub-stages (each an
 // independent SCP problem, chained by pinning a sub-stage's solved end state
 // as the next sub-stage's start), so `stages` may hold more than one piece.
@@ -118,7 +118,7 @@ struct DroneTrajectorySolution {
     int drone_id = 0;
 
     struct Stage {
-        // Rev 2.5: adaptive control-point count (section 1.1) — rows() may
+        // Adaptive control-point count — rows() may
         // exceed config.solver.num_control_points_min for long transitions.
         // Callers needing the knot vector should derive n from
         // control_points.rows() rather than assuming the configured minimum.
@@ -129,8 +129,8 @@ struct DroneTrajectorySolution {
     std::vector<Stage> stages;  // chronological; size 1 unless mega-cluster-decomposed
 };
 
-// Structured diagnostics for a Decoupled Continuous Gatekeeper rejection
-// (docs/5-studio_gui.md section 5.1, B1). Every time here is
+// Structured diagnostics for a Decoupled Continuous Gatekeeper rejection.
+// Every time here is
 // transition-local (0 = the start of the rejected transition's synchronized,
 // unstaggered solve); pipeline.cpp shifts them to show time.
 struct SeparationViolation {
@@ -145,7 +145,7 @@ struct SeparationViolation {
 struct GatekeeperAttempt {
     double duration_sec = 0.0;
     double worst_separation_m = 0.0;
-    // The other two gatekeeper checks (section 1.13 floor, 1.14 zone), so a
+    // The other two gatekeeper checks (floor, keep-out zone), so a
     // rejection whose separation was fine still says why it was rejected.
     bool floor_ok = true;
     bool zone_ok = true;
@@ -169,10 +169,10 @@ struct SafetyViolationReport {
 
 inline constexpr int kMaxReportedViolations = 200;
 
-// Thrown by solve() below. what() keeps the exact pre-B1 message so callers
+// Thrown by solve() below. what() keeps the exact original message so callers
 // matching on the text are unaffected; the report is shared (not copied) so
 // the exception stays cheap and nothrow-copyable.
-// Holding-area keep-out zone (docs/2-phase_2.md section 1.14): Euclidean
+// Holding-area keep-out zone: Euclidean
 // distance from `p` to the zone's region box (0 inside it).
 double distance_to_keep_out_region(const Eigen::Vector3d& p, const KeepOutZone& zone);
 
@@ -211,21 +211,21 @@ private:
 // resolved through the 4-tier / 3-tier fallback in config.hpp) fully
 // determine solver behavior; there is no longer a separate options struct.
 //
-// Throws SafetyViolationError (a std::runtime_error; Rev 2.9 section 1.9's
+// Throws SafetyViolationError (a std::runtime_error; the
 // Decoupled Continuous Gatekeeper) if this transition is still unsafe after
 // its retry budget. pipeline.cpp adds transition context and rethrows it as
 // io::PipelineSafetyError, which the binding maps to
 // drone_core.SafetyViolationError (a Python RuntimeError subclass).
 //
-// `progress` (docs/5-studio_gui.md B2), when set, receives AttemptStart /
+// `progress`, when set, receives AttemptStart /
 // ScpIteration / AttemptEnd events with only the attempt, sub-stage and
 // iteration fields filled; pipeline.cpp adds the transition fields.
 //
 // The returned splines are the attempt that passed, which after a retry is
 // longer than `duration` (x expansion_factor per retry). `stats`, when set,
 // receives that attempt's number and duration: callers must time the
-// transition by `flown_duration_sec`, not by `duration` (bug-report P2-03).
-// Altitude floor (docs/2-phase_2.md section 1.13). A quintic B-spline stays
+// transition by `flown_duration_sec`, not by `duration`.
+// Altitude floor. A quintic B-spline stays
 // inside the convex hull of its control points, so "every control point at or
 // above the floor" guarantees the whole path is. The free control points get a
 // hard QP row for it; the pinned boundary ones follow from the boundary
@@ -238,8 +238,8 @@ double max_pinned_lead_time_s(const CoreConfig& config);
 Eigen::Vector3d floor_safe_velocity(const Eigen::Vector3d& position, const Eigen::Vector3d& velocity,
                                     const CoreConfig& config);
 
-// Section 1.28: how solve() splits a transition of `duration` into windows
-// (sub-stages, section 1.7) and how many control points each window gets, so
+// How solve() splits a transition of `duration` into windows
+// (sub-stages) and how many control points each window gets, so
 // a caller can build a prescribed path (DroneTransitionProblem::prescribed)
 // that fits them. The count depends on the problems' largest displacement.
 int substage_count(double duration, const CoreConfig& config);
@@ -254,13 +254,12 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                                             const CoreConfig& config, const ProgressCallback& progress = {},
                                             SolveStats* stats = nullptr);
 
-// Staggered Wave Takeoff cross-row race check (docs/2-phase_2.md section
-// 1.7; fixed 2026-09-18): pipeline.cpp re-times each launch row's
+// Staggered Wave Takeoff cross-row race check (fixed 2026-09-18): pipeline.cpp re-times each launch row's
 // already-solved maneuver (from a single joint solve() call above, which
 // assumes every drone starts at the same local time 0) into a different
 // absolute-time window by wrapping it with a pre-delay hold and/or
 // post-gap hold. That re-timing is never itself checked by solve()'s own
-// Decoupled Continuous Gatekeeper (section 1.9), which only ever verified
+// Decoupled Continuous Gatekeeper, which only ever verified
 // the synchronized, local-time-0 solve. This function independently
 // re-verifies the REAL, per-drone chained timeline the caller actually
 // intends to fly — using the exact same decoupled, no-solver-bookkeeping

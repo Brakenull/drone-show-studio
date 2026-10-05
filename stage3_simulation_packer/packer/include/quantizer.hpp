@@ -1,6 +1,6 @@
 #pragma once
 
-// Waypoint quantization (docs/3-phase-3.md §4.1):
+// Waypoint quantization:
 //   position  -> int16 cm     [-327.68 m, +327.67 m]
 //   velocity  -> int16 mm/s   [-32.768 m/s, +32.767 m/s]
 //   color     -> uint8 x 3

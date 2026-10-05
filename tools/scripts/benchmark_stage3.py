@@ -1,4 +1,4 @@
-"""Digital twin throughput benchmark (docs/3-phase-3.md §5: >= 1.0x realtime for 1,000 drones).
+"""Digital twin throughput benchmark (>= 1.0x realtime for 1, 000 drones).
 
     python tools/scripts/benchmark_stage3.py [--drones 1000] [--seconds 10] [--device auto|gpu|cpu|opencl:P:D]
                                              [--batch R] [--list]

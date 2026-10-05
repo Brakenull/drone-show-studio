@@ -1,4 +1,4 @@
-// The scenario weather of a simulated flight at any playback time (docs/4-condition_simulator.md §6).
+// The scenario weather of a simulated flight at any playback time.
 // Samples come from the bridge at `hz`; wind and rain are blended, RTK steps.
 
 import type { SimWeather } from "./types";
@@ -86,7 +86,7 @@ export function carryAt(table: Float32Array, hz: number, t: number): [number, nu
 const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 export const compass = (deg: number) => COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
 
-/** Meteorological rain scale (§3.2). */
+/** Meteorological rain scale. */
 export function rainLabel(mmH: number): string {
   if (mmH <= 0) return "No rain";
   if (mmH < 0.5) return "Drizzle";

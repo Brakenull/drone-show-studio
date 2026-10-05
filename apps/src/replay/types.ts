@@ -1,4 +1,4 @@
-// Replay data (docs/5-studio_gui.md §6.4). Built by tools/studio_bridge/replay_builder.py.
+// Replay data. Built by tools/studio_bridge/replay_builder.py.
 // This folder has no Tauri imports so the Phase 4 dashboard can reuse it.
 
 export type V3 = [number, number, number];
@@ -52,10 +52,10 @@ export interface ReplayHeader {
       abort_time_sec: number;
       duration_sec: number;
       method: "planned" | "reversed_takeoff";
-      /** From a moment inside the move into the formation (an abort point, section 5.3). */
+      /** From a moment inside the move into the formation (an abort point). */
       inside_transition?: boolean;
     };
-    /** A condition-simulator flight (docs/4-condition_simulator.md §6): the weather to draw. */
+    /** A condition-simulator flight: the weather to draw. */
     simulation?: SimWeather;
   };
 }

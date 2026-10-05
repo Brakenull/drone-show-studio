@@ -1,4 +1,4 @@
-"""LED color channel extraction (spec section: Color & Light Channel).
+"""LED color channel extraction.
 
 `linear_to_srgb8` is pure and unit-testable. The Blender-facing readers below
 it need `bpy` and import it locally so this module still loads outside

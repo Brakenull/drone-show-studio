@@ -1,4 +1,4 @@
-"""Spare drones wait in waiting areas in the air (2-phase_2.md section 1.29, 1-phase_1.md section 3.10).
+"""Spare drones wait in waiting areas in the air.
 
 6 drones on a 3 x 2 holding grid on the ground; two waiting areas 10 m up, one west and one
 east of the show (2 slots each). The show: a line of 6 -> a line of the 4 western points (2
@@ -197,7 +197,7 @@ def test_first_formation_spare_drones_stay_on_their_pads(first_keyframe_short):
         for t in np.linspace(0.0, times["four"], 200):
             assert np.linalg.norm(position(result, d, t) - pad) < 1e-6, (d, t)
         # Through the next short formation it stays over its pad (it has not flown, so no waiting
-        # area): at most the climb to its hover point before it leaves (section 1.28).
+        # area): at most the climb to its hover point before it leaves.
         for t in np.linspace(times["four"], times["four_again"], 200):
             p = position(result, d, t)
             assert np.linalg.norm(p[:2] - pad[:2]) < 1e-6 and -1e-6 <= p[2] - pad[2] <= 2.0 + 1e-6, (d, t, p)

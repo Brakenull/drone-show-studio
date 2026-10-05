@@ -1,5 +1,5 @@
 // pack_to_binary: Phase 2 trajectory contract -> drone_<id>.bin flight files
-// (docs/3-phase-3.md §4; version 2 with return tracks, docs/4-condition_simulator.md §8.4).
+// (version 2 with return tracks).
 //
 //   pack_to_binary <trajectory_splines.json> <out_dir> [--dt-ms 50]
 //   pack_to_binary --plan <pack_plan.json> <out_dir> [--dt-ms 50]

@@ -1,4 +1,4 @@
-"""Waiting areas (1-phase_1.md section 3.10)."""
+"""Waiting areas."""
 
 import itertools
 

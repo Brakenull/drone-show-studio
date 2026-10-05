@@ -1,4 +1,4 @@
-// Live "Plan return paths" jobs (bridge `stage2-returns`, docs/4-condition_simulator.md B4) keyed by
+// Live "Plan return paths" jobs (bridge `stage2-returns`) keyed by
 // run id. Lives outside React, like stage2Jobs, so a job keeps streaming while the user looks elsewhere.
 
 import { useSyncExternalStore } from "react";
@@ -10,7 +10,7 @@ export interface ReturnsJob {
   jobId: number;
   startedAt: number; // ms epoch
   /** The return being planned: position in the job (0-based), job size, formation index, and for an
-   *  abort point (§5.3) its show time. */
+   *  abort point its show time. */
   current: { index: number; count: number; keyframe: number; abortTime: number | null } | null;
   solve: SolveState | null;
   /** Returns this job has finished, in order. */
@@ -31,7 +31,7 @@ function set(runId: string, patch: Partial<ReturnsJob>) {
 }
 
 /** `formations` null = the bridge's default (every formation without a return leg), or none when `points`
- *  are given: abort points as [formation, show time] (docs/4-condition_simulator.md §5.3). */
+ *  are given: abort points as [formation, show time]. */
 export async function startReturns(
   runId: string,
   runDir: string,

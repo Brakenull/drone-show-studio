@@ -1,4 +1,4 @@
-"""Stage 2 speed-ups: SCP stall stop and fail-fast retries (2-phase_2.md sections 1.16 and 1.17).
+"""Stage 2 speed-ups: SCP stall stop and fail-fast retries.
 
 Runs the 4-drone smoke-test show. The stall stop ends a sub-stage's SCP loop once its best
 iterate stops improving; a gatekeeper miss deeper than min_retry_separation_m is reported

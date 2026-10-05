@@ -160,7 +160,7 @@ def test_flight_binary_spec_header_is_shared_by_python_reader():
 
 @needs_packer
 def test_plan_packs_return_tracks_and_the_return_table(tmp_path):
-    """Version 2 (docs/4-condition_simulator.md §8.4): the show, two returns as tracks, the return table."""
+    """Version 2: the show, two returns as tracks, the return table."""
     show = grid_show(2, duration=6.0, hold=1.0)                  # 7 s
     back = grid_show(2, duration=3.0, hold=0.0)                  # a 3 s "return", timed from 0
     early = grid_show(2, duration=2.0, hold=0.0)

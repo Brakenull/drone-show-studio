@@ -1,4 +1,4 @@
-"""drone_profile.json loader with the 3-tier fallback of docs/3-phase-3.md §1.3.
+"""drone_profile.json loader with the 3-tier fallback.
 
     Tier 1: --profile <path>                (project-specific, optional)
     Tier 2: config/drone_profile.json       (Phase 3 default)

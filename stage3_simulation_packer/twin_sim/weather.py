@@ -1,4 +1,4 @@
-"""Weather timeline of a condition-simulator scenario (docs/4-condition_simulator.md §3, B6).
+"""Weather timeline of a condition-simulator scenario.
 
 A scenario is a weather timeline over show time (t = 0 at the show start):
 
@@ -9,7 +9,7 @@ A scenario is a weather timeline over show time (t = 0 at the show start):
 * gusts       -- discrete (1 - cos) gust fronts, the Stage 3 shape, sweeping
                  across the field at the wind speed of the event's time;
 * RTK keys    -- `fixed` / `float` / `gps`, a step at each key;
-* rain keys   -- mm/h, linear; no physical effect in this revision (§1.1).
+* rain keys   -- mm/h, linear; no physical effect in this revision.
 
 Every channel holds its first value before its first key and its last value
 after its last key. `tabulate()` turns the timeline into the 10 Hz table the
@@ -42,7 +42,7 @@ WX_STRIDE = 8
 
 RTK_STATES = ("fixed", "float", "gps")
 # (noise m, drift m/sqrt(s)) for the degraded states; `fixed` takes the profile's tolerances.
-# Defaults to be confirmed (docs/4-condition_simulator.md §10).
+# Defaults to be confirmed.
 RTK_DEGRADED = {"float": (0.3, 0.05), "gps": (1.5, 0.2)}
 
 # Same turbulence and gust model as the Monte Carlo stress test (monte_carlo_runner.StressConfig).
@@ -51,8 +51,8 @@ TURBULENCE_MODES = 8
 GUST_MIN_SPEED_MPS = 2.0
 AMBIENT_C = 25.0
 
-# Rain rule (§3.1, §4.3): alert, limit and reaction come from the drone profile's `environment` keys
-# (placeholders until the drone's water protection rating is known, §10); the margin is a planning choice.
+# Rain rule: alert, limit and reaction come from the drone profile's `environment` keys
+# (placeholders until the drone's water protection rating is known); the margin is a planning choice.
 DEFAULT_RAIN_RULE = {"alert_mm_h": 0.5, "limit_mm_h": 2.5, "reaction_s": 5.0, "margin_s": 10.0}
 
 
@@ -62,7 +62,7 @@ def rain_rule_defaults(profile: DroneProfile) -> dict[str, float]:
             "reaction_s": float(profile.get("environment.return_reaction_s")),
             "margin_s": DEFAULT_RAIN_RULE["margin_s"]}
 
-# Meteorological rain scale (§3.2), upper bounds in mm/h.
+# Meteorological rain scale, upper bounds in mm/h.
 RAIN_SCALE = (("drizzle", 0.5), ("light", 2.5), ("moderate", 7.6), ("heavy", math.inf))
 
 LIMITS = {"speed_mps": (0.0, 40.0), "turbulence": (0.0, 1.0), "peak_mps": (0.0, 30.0),
@@ -175,7 +175,7 @@ def folder_name(name: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Interpolation (§3.1)
+# Interpolation
 # --------------------------------------------------------------------------- #
 
 def _linear(keys: list[dict], name: str, t: np.ndarray, default: float) -> np.ndarray:

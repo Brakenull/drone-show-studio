@@ -1,4 +1,4 @@
-"""Stage 2 shared formation velocity (2-phase_2.md section 1.18).
+"""Stage 2 shared formation velocity.
 
 The 4-drone smoke-test show with a formation inserted between the square and the diamond:
 the square grown by 10% and shifted 10 m east, so every drone flies into it in a different
@@ -81,14 +81,14 @@ def square_east_velocities(result):
 
 
 def test_a_mid_show_formation_is_passed_with_its_centre_velocity(result):
-    # Section 1.23: the velocity of the formation's centre between the previous and the next
+    # The velocity of the formation's centre between the previous and the next
     # formation. The diamond's centre is the square's, so the show goes east and straight back:
     # square_east is passed at rest.
     np.testing.assert_allclose(square_east_velocities(result), [0.0, 0.0, 0.0], atol=1e-2)
 
 
 def test_the_incoming_rule_passes_it_at_full_speed_along_the_way_in(result_incoming_rule):
-    # Section 1.18's rule (centered_formation_velocity off): the mean of the 4 incoming travel
+    # The incoming rule (centered_formation_velocity off): the mean of the 4 incoming travel
     # directions (all partly east, spread +-17 deg) times 3 m/s.
     v = square_east_velocities(result_incoming_rule)
     assert v[0] > 2.5 and abs(v[1]) < 1e-2 and abs(v[2]) < 1e-2
@@ -111,7 +111,7 @@ def test_no_velocity_jumps_between_segments(result):
 
 
 def test_moving_drones_share_one_velocity_at_every_sub_stage_boundary(drone_core):
-    # 2-phase_2.md section 1.22 / bug-report P2-15: a transition longer than 15 s is split into
+    # A transition longer than 15 s is split into
     # sub-stages, and every moving drone passes each split with the same velocity.
     sys.path.insert(0, str(REPO / "tests"))
     from test_stage2_keep_out import over_show  # 4 drones fly y = -30 -> +30 in one ~40 s transition

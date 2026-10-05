@@ -1,4 +1,4 @@
-"""Landing through a hover point above the slot and taking off through one (2-phase_2.md sections 1.26, 1.27, bug-report P3-03, P3-04).
+"""Landing through a hover point above the slot and taking off through one.
 
 Plans the 4-drone smoke-test show with legs, with the default hover height and with it off, and
 checks that the return leg (and a return path from an abort point) ends with every drone
@@ -48,7 +48,7 @@ def phase1(ret=None):
     data["project_metadata"]["version"] = "1.6.0"
     data["project_metadata"]["legs"] = {"takeoff": {"duration_sec": None}, "return": {"duration_sec": ret}}
     # The ground at the holding area, as real 1.6.0 files declare it: the hover legs' raised floor
-    # only applies to a design with a ground (section 1.13).
+    # only applies to a design with a ground.
     data["project_metadata"]["ground_z_m"] = data["project_metadata"]["holding_area"]["center"][2]
     return data
 
@@ -160,7 +160,7 @@ def test_approach_stays_above_half_the_hover_height(landed):
             assert sample(seg, degree, ts)[:, 2].min() >= floor - 0.01
 
 
-# ---- Takeoff (section 1.27): the mirror -------------------------------------------------------
+# ---- Takeoff: the mirror -------------------------------------------------------
 
 def test_takeoff_starts_with_a_common_vertical_climb(landed):
     data, result = landed

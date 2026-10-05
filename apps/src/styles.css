@@ -1530,7 +1530,7 @@ input[type="radio"]:focus-visible {
   }
 }
 
-/* Stage 2: return paths (docs/4-condition_simulator.md B4) */
+/* Stage 2: return paths */
 .returns {
   margin-top: 2rem;
 }
@@ -1606,7 +1606,7 @@ input[type="radio"]:focus-visible {
   margin-top: 1.25rem;
 }
 
-/* Conditions: weather scenarios (docs/4-condition_simulator.md §6). Each weather channel has its own
+/* Conditions: weather scenarios. Each weather channel has its own
    colour, kept apart from the status colours: wind mint, gusts silver, RTK violet, rain blue. The rain
    alert line is caution yellow and the limit line danger red, as everywhere else. */
 :root {
@@ -2028,7 +2028,7 @@ input[type="radio"]:focus-visible {
   }
 }
 
-/* Rain return readiness (docs/4-condition_simulator.md §5, §6): the chart shares the timeline's axis. */
+/* Rain return readiness: the chart shares the timeline's axis. */
 .readiness {
   margin-top: 0;
 }
@@ -2123,7 +2123,7 @@ input[type="radio"]:focus-visible {
   min-height: 44px;
 }
 
-/* Suggestions (docs/4-condition_simulator.md section 5.3): ranked by what each closes; the meter shows it. */
+/* Suggestions: ranked by what each closes; the meter shows it. */
 .readiness-suggest {
   margin-top: 1.5rem;
   padding-top: 1.25rem;
@@ -2581,7 +2581,7 @@ input[type="radio"]:focus-visible {
   }
 }
 
-/* Replay: formation marks (docs/5-studio_gui.md §6.4). */
+/* Replay: formation marks. */
 .strip-formation {
   flex: 0 1 auto;
   min-width: 0;
@@ -2773,7 +2773,7 @@ input[type="radio"]:focus-visible {
   font-size: 22px;
 }
 
-/* Flight files: which flights home the files carry (docs/4-condition_simulator.md section 8.4). */
+/* Flight files: which flights home the files carry. */
 .packed-returns {
   margin: 0.75rem 0 0.5rem;
   max-width: 70ch;

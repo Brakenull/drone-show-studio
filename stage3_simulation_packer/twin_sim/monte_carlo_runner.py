@@ -1,4 +1,4 @@
-"""Monte Carlo stress test of a Phase 2 show (docs/3-phase-3.md §3.4).
+"""Monte Carlo stress test of a Phase 2 show.
 
 Each run draws an independent scenario -- mean wind, travelling turbulence,
 a discrete gust front, ambient temperature, RTK GNSS drift, launch placement
@@ -207,7 +207,7 @@ def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: Stress
                     progress: bool = False,
                     on_record: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """`batch` is the number of runs simulated together (0 = `auto_batch_size`). `progress` prints one line
-    per run (for the CLI). `on_record` (docs/5-studio_gui.md B3) is called with a copy of each finished
+    per run (for the CLI). `on_record` is called with a copy of each finished
     record: the nominal one first (run = -1), then runs 0..N-1 in order, one batch at a time. An exception
     it raises stops the test (later batches are not started) and propagates."""
     from .simulator import DigitalTwin, Disturbances, SimConfig

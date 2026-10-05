@@ -1,5 +1,5 @@
 // Stage 3, the digital twin: the Monte Carlo stress test, weather scenarios (Conditions) and the flight
-// files, as three sections of one tab (docs/5-studio_gui.md §6.3, §6.7).
+// files, as three sections of one tab.
 
 import type { JobExit, RunRecord, SimDevice } from "../bridge/types";
 import { conditionsState, packState, stressState, type StageState } from "../app/stages";

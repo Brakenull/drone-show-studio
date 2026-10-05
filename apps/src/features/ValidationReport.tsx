@@ -1,10 +1,10 @@
-// Result of `studio_bridge validate` (docs/5-studio_gui.md §6.1).
+// Result of `studio_bridge validate`.
 
 import type { Validation } from "../bridge/types";
 
 const fmt = (v: number, d = 1) => v.toFixed(d);
 
-/** Holding-area capacity (docs/5-studio_gui.md §6.1): one block per layer the area may stack, filled by
+/** Holding-area capacity: one block per layer the area may stack, filled by
  *  the drones parked in it, so a crowded or overflowing area shows before a long Stage 2 run. */
 function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) {
   const ha = summary.holding_area;
@@ -53,7 +53,7 @@ function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) 
   );
 }
 
-/** Waiting areas (docs/5-studio_gui.md §6.1): where spare drones wait in the air instead of going home. */
+/** Waiting areas: where spare drones wait in the air instead of going home. */
 function WaitingAreas({ summary }: { summary: NonNullable<Validation["summary"]> }) {
   const areas = summary.waiting_areas ?? [];
   if (!areas.length) return null;

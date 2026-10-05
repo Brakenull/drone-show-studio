@@ -33,15 +33,15 @@ using trajectory::QuinticBSpline;
 using Clock = std::chrono::steady_clock;
 double seconds_since(Clock::time_point start) { return std::chrono::duration<double>(Clock::now() - start).count(); }
 
-// Adaptive 4D voxel time bucket (docs/2-phase_2.md Rev 2.6 section 1.7/4):
+// Adaptive 4D voxel time bucket:
 // Delta T_bucket = max(0.5s, T/target_time_windows). A fixed 0.5s bucket
-// (Rev 2.3's original choice) is fine for an 8s transition (16 windows) but
+// (the original choice) is fine for an 8s transition (16 windows) but
 // explodes to ~100 windows once T_min auto-scaling stretches a long real
 // transition to 40-50s — each extra window means another broad-phase pass
 // and another round of collision rows per SCP iteration, which is what took
 // a real 300-drone/50s transition from a projected 15s budget to 6+ minutes
 // of wall time before this fix.
-// Altitude floor planning buffer (section 1.13): the QP keeps free control
+// Altitude floor planning buffer: the QP keeps free control
 // points this far above the floor, while the gatekeeper still verifies the
 // floor itself (1 mm tolerance). Same idea as collision_margin_fraction for
 // separation. The floor rows are hard, but try_solve_qp() accepts OSQP's
@@ -108,16 +108,16 @@ Eigen::VectorXd dense_basis_row(int num_control_points, int degree, const Eigen:
 // shared by every drone in a transition).
 struct DroneWorkspace {
     int drone_id = 0;
-    bool keep_out = false;  // section 1.14: this drone flies the show here
-    bool fixed = false;     // section 1.15: parked, held as an obstacle and never solved
-    std::optional<double> floor_m;  // section 1.28: this drone's own floor, see drone_floor()
+    bool keep_out = false;  // this drone flies the show here
+    bool fixed = false;     // parked, held as an obstacle and never solved
+    std::optional<double> floor_m;  // this drone's own floor, see drone_floor()
     Eigen::MatrixXd control_points;  // current iterate, num_control_points x 3
     DerivativeOperators ops;
     std::unique_ptr<QuinticBSpline> spline;  // rebuilt after every drone-level solve
 };
 
-// The altitude floor a drone keeps (section 1.13): the config's, or its own
-// (section 1.28) when that is higher. None without a config floor.
+// The altitude floor a drone keeps: the config's, or its own
+// when that is higher. None without a config floor.
 std::optional<double> drone_floor(std::optional<double> own, const CoreConfig& config) {
     if (!config.safety.altitude_floor_m) return std::nullopt;
     return own ? std::max(*config.safety.altitude_floor_m, *own) : config.safety.altitude_floor_m;
@@ -133,7 +133,7 @@ struct LinearRow {
     double upper = OSQP_INFTY;
 };
 
-// One-sided linearized separation constraint (docs/2-phase_2.md section 3.3)
+// One-sided linearized separation constraint
 // contributed to `self`'s QP, treating `other`'s trajectory as fixed at
 // whatever value it currently holds (in Gauss-Seidel order, that may already
 // be this iteration's updated solution for cluster-mates solved earlier in
@@ -160,7 +160,7 @@ LinearRow build_collision_row(const FreeIndexMap& map, const DroneWorkspace& sel
     }
     // n^T(p_i-p_j) >= d_enforce*||n|| is invariant to rescaling n (both sides
     // scale identically), so using the unit normal here (n_hat = n/dist) is
-    // the same half-space as the doc's literal unnormalized n_ij, just far
+    // the same half-space as the unnormalized n_ij, just far
     // better conditioned: at real show coordinate scales (positions ~O(10 m)
     // apart), the raw n_ij made this row's coefficients and bound ~10-100x
     // larger than the kinematic/trust-region rows it's solved alongside.
@@ -200,7 +200,7 @@ LinearRow build_box_row(const FreeIndexMap& map, const Eigen::MatrixXd& control_
     return row;
 }
 
-// Trust Region step-limit row (section 1.3/3.3): a single decision variable
+// Trust Region step-limit row: a single decision variable
 // pinned to [anchor - delta, anchor + delta], where `anchor` is that
 // variable's value at the *start* of this SCP iteration (not the possibly
 // already-Gauss-Seidel-updated `ws.control_points`).
@@ -213,7 +213,7 @@ LinearRow build_trust_region_row(int flat_index, int dim, double anchor, double 
     return row;
 }
 
-// ---- Holding-area keep-out zone (docs/2-phase_2.md section 1.14) ----------
+// ---- Holding-area keep-out zone ----------
 
 Eigen::Vector3d zone_lo(const KeepOutZone& z) { return Eigen::Vector3d(z.lo[0], z.lo[1], z.lo[2]); }
 Eigen::Vector3d zone_hi(const KeepOutZone& z) { return Eigen::Vector3d(z.hi[0], z.hi[1], z.hi[2]); }
@@ -328,8 +328,8 @@ std::optional<Eigen::MatrixXd> try_solve_qp(const FreeIndexMap& map, const Eigen
                                              const Eigen::MatrixXd& P_dense, const Eigen::VectorXd& q,
                                              const std::vector<LinearRow>& rows) {
     const int num_free = map.num_free();
-    // Rev 2.7: dim is no longer always 3*num_free -- the soft-slack
-    // collision formulation (section 1.8) appends one extra decision
+    // Dim is no longer always 3*num_free -- the soft-slack
+    // collision formulation appends one extra decision
     // variable per collision row, so P_dense/q/every row here may be wider
     // than the position-only block. Only the first 3*num_free columns of the
     // solution (the positions) are read back out below.
@@ -409,8 +409,8 @@ std::optional<Eigen::MatrixXd> try_solve_qp(const FreeIndexMap& map, const Eigen
     return result;
 }
 
-// Deterministic "orthogonal perturbation jitter" (docs/2-phase_2.md Rev 2.4
-// section 1.4/3.3 tier 2): nudges each free control point by
+// Deterministic "orthogonal perturbation jitter" (infeasibility fallback,
+// tier 2): nudges each free control point by
 // +-jitter_magnitude_m perpendicular to the drone's own nominal direction of
 // travel (end - start, read off the pinned boundary control points), sign
 // alternating by (control-point index + drone_id) parity. A fixed,
@@ -438,7 +438,7 @@ LinearRow pad_hard_row(const LinearRow& row, int total_dim) {
     return padded;
 }
 
-// Rev 2.7 section 1.8/3.3: converts one hard collision row (coeffs of length
+// converts one hard collision row (coeffs of length
 // `dim`, `normal^T p >= lower`) into its soft-slack form by appending a
 // dedicated nonnegative slack column at `slack_col`:
 // `normal^T p + s_k >= lower, s_k >= 0` — returns both the softened
@@ -502,7 +502,7 @@ SoftQp assemble_soft_qp(const Eigen::MatrixXd& P_position, const Eigen::VectorXd
     return qp;
 }
 
-// The hard rows every drone QP carries (section 1.3/1.13): the per-axis
+// The hard rows every drone QP carries: the per-axis
 // speed/acceleration/jerk box on the derivative control points (rows that
 // only involve pinned control points are left out: no free variable can
 // change them) and, with an altitude floor, z >= floor + kFloorPlanningMarginM
@@ -528,7 +528,7 @@ std::vector<LinearRow> build_hard_kinematic_rows(const FreeIndexMap& map, const 
     add_box(ws.ops.velocity, v_limit);
     add_box(ws.ops.acceleration, a_limit);
     add_box(ws.ops.jerk, j_limit);
-    // Altitude floor (section 1.13). Hard, like the kinematic box; the convex
+    // Altitude floor. Hard, like the kinematic box; the convex
     // hull property then keeps the whole spline above it (the pinned control
     // points are floor-safe by construction, see floor_safe_velocity()).
     if (const std::optional<double> floor = drone_floor(ws.floor_m, config)) {
@@ -544,14 +544,14 @@ std::vector<LinearRow> build_hard_kinematic_rows(const FreeIndexMap& map, const 
     return rows;
 }
 
-// Section 1.21: moves a drone's free control points to the closest (least
+// Moves a drone's free control points to the closest (least
 // squares) path that satisfies its hard rows, before the SCP starts.
 // The basic seed pins the first and last three control points from the
 // boundary states and interpolates the middle linearly; where that meets the
 // pinned ends the path needs more acceleration or jerk than allowed (on a
 // real 150-drone show, every starting path; also with APF seeding off), so
 // the first step's QPs with a trust region were infeasible and that step was
-// an unbounded jump (bug-report P2-10).
+// an unbounded jump.
 //
 // This small QP (no collision rows) is solved accurately, unlike the SCP's
 // own QPs: for the step d from the seed x0 (bounds shifted by each row's
@@ -648,9 +648,8 @@ SeedRepair repair_to_flyable(const FreeIndexMap& map, DroneWorkspace& ws, double
 // for it, and a trust-region step limit anchored at `trust_region_anchor`
 // (this iteration's starting point).
 //
-// Two-tier infeasibility self-healing (docs/2-phase_2.md Rev 2.4 section
-// 1.4/3.3, retained by Rev 2.7 section 1.4 alongside the section 1.8 soft-
-// slack collision rows added below), tried in order whenever OSQP reports
+// Two-tier infeasibility self-healing (kept alongside the soft-slack
+// collision rows added below), tried in order whenever OSQP reports
 // anything other than OSQP_SOLVED/OSQP_SOLVED_INACCURATE (this function's
 // earlier, wrong behavior was to silently keep the drone's unmodified
 // previous iterate on *any* non-solved status):
@@ -789,7 +788,7 @@ double pair_window_distance(const collision::CandidatePair& pair, const std::vec
 // function's own caller is mid-write — undefined behavior, not just a
 // weaker constraint. This is not a hypothetical: an earlier version of this
 // function filtered edges to distance < cluster_distance_threshold_m (a
-// literal reading of docs/2-phase_2.md Rev 2.7 section 4's "don't wire an
+// literal reading of "don't wire an
 // edge just because bounding boxes overlap at long range") while
 // collect_collision_rows kept using the full unfiltered `pairs` list for QP
 // rows — that mismatch let two drones sharing a real collision row land in
@@ -835,8 +834,8 @@ using DynamicCollocationMap = std::map<std::pair<int, int>, std::vector<double>>
 // Gauss-Seidel ordering within a cluster, may already reflect this same
 // iteration's update).
 //
-// Adaptive Cutting-Plane Collocation (docs/2-phase_2.md Rev 2.9 section
-// 1.10): beyond the one per-window midpoint sample below, also emits one
+// Adaptive Cutting-Plane Collocation: beyond the one per-window midpoint
+// sample below, also emits one
 // extra hard row at every dynamic-collocation timestamp `dynamic_collocations`
 // carries for this pair (populated by scan_pair_separation() when the
 // iterate this iteration starts from was evaluated) — these are the actual detected near-miss
@@ -857,7 +856,7 @@ std::vector<LinearRow> collect_collision_rows(const FreeIndexMap& map, const Dro
         if (it == drone_index.end()) continue;
         const DroneWorkspace& other_ws = workspaces[it->second];
 
-        // One linearization sample per window (the doc's section 3.3 formula
+        // One linearization sample per window (the collocation formula
         // is written for a single collocation time t_c per constraint); too
         // many samples per pair pile up more half-space rows than 12 free
         // variables can jointly satisfy, which is its own source of spurious
@@ -888,11 +887,11 @@ std::vector<LinearRow> collect_collision_rows(const FreeIndexMap& map, const Dro
 // Dense scan of the real (non-linearized) separation between drones `a` and
 // `b` over [t_lo, t_hi] (NOT necessarily the whole transition — see the
 // caller's window-bounding comment), at `scan_frequency_hz` (the gatekeeper's
-// own rate, section 1.10/1.19).
+// own rate).
 //
 // `min_distance` is the pair's smallest sampled distance: what the gatekeeper
 // will measure for this pair, so the solver ranks its iterates by it
-// (section 1.19) instead of by one midpoint sample per window. `dips` are the
+// instead of by one midpoint sample per window. `dips` are the
 // local minima strictly under `d_enforce`, closest first, capped at
 // `max_points` (<= 0: all of them): each gets its own collision row next
 // iteration. A boundary sample (s == 0 or the last sample) counts as a local
@@ -934,7 +933,7 @@ PairScan scan_pair_separation(const DroneWorkspace& a, const DroneWorkspace& b, 
     return result;
 }
 
-// Adaptive control-point count (docs/2-phase_2.md Rev 2.5 section 1.1):
+// Adaptive control-point count:
 // N_ctrl = max(min_points, min_points + 2*floor(D_max/15m)). Longer
 // transitions get more free interior points (in pairs, to keep the 6
 // boundary-pinned + N-6 free split even) so there is enough geometric
@@ -949,7 +948,7 @@ int adaptive_num_control_points(double d_max, int min_points) {
 // One independent Cluster-based Gauss-Seidel SCP solve over `problems` for
 // exactly `duration` seconds, returning each drone's control points in the
 // same order as `problems`. This is the whole of what `solve()` used to be
-// before Rev 2.6 section 1.7 added mega-cluster decomposition on top: the
+// before mega-cluster decomposition was added on top: the
 // public `solve()` below is now a thin orchestrator that calls this once per
 // sub-stage when a transition is too long to solve as a single problem.
 //
@@ -970,9 +969,9 @@ int adaptive_num_control_points(double d_max, int min_points) {
 // `min_separation` is the worst-case real (non-linearized) pairwise
 // separation this function tracks internally, purely to pick the best
 // iterate to return (best_min_separation below) when Gauss-Seidel SCP
-// doesn't converge monotonically. As of Rev 2.9, this is no longer the
+// doesn't converge monotonically. This is no longer the
 // caller's final safety verdict — solve()'s Decoupled Continuous Gatekeeper
-// (section 1.9) re-derives that independently from the returned control
+// re-derives that independently from the returned control
 // points, on purpose, because this field is built from the same
 // per-iteration candidate-pair snapshot the QP rows come from and can
 // under-report the true continuous-time worst case for a pair that drifts
@@ -984,7 +983,7 @@ struct SingleStageResult {
     double min_separation = std::numeric_limits<double>::infinity();
 };
 
-// docs/5-studio_gui.md B2: the caller's progress callback plus the attempt /
+// The caller's progress callback plus the attempt /
 // sub-stage fields of the ScpIteration events solve_single_stage() emits.
 // Passed as a pointer that is null when no callback is set, so the no-callback
 // path builds no event at all.
@@ -1010,7 +1009,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     FreeIndexMap map(n);
     const double enforced_min_distance = config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
 
-    // Rev 2.8 section 1.2/3.2: one joint N-body APF simulation across every
+    // one joint N-body APF simulation across every
     // drone in this stage (not per-drone independent like the retired
     // parity-bow seeder), so a locally dense region balloons outward as a
     // whole instead of relying on a two-group parity split.
@@ -1027,7 +1026,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     for (int i = 0; i < num_drones; ++i) {
         workspaces[i].drone_id = problems[i].drone_id;
         workspaces[i].keep_out = problems[i].keep_out;
-        // Section 1.28: a prescribed (held) drone is fixed like a parked one,
+        // A prescribed (held) drone is fixed like a parked one,
         // with the control points it was given for this window.
         const bool held = problems[i].held_control_points.rows() > 0;
         if (held && problems[i].held_control_points.rows() != n) {
@@ -1075,7 +1074,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         compute_time_bucket_s(duration, config.solver.adaptive_time_bucketing, config.solver.target_time_windows);
     const int num_windows = std::max(1, static_cast<int>(std::ceil(duration / time_bucket_s)));
 
-    // Section 1.19: every iterate is judged by what the gatekeeper will
+    // Every iterate is judged by what the gatekeeper will
     // measure, not by one midpoint sample per broad-phase window. Before, the
     // collision rows, the "best iterate" choice and the reported separation
     // all used those midpoints (~0.6 s apart, 2-4 m of relative motion), and
@@ -1092,25 +1091,25 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         DynamicCollocationMap dips;  // pair -> times of dips under enforced_min_distance
         double min_separation = std::numeric_limits<double>::infinity();  // dense scan, gatekeeper rate
         double separation_deficit = 0.0;  // sum over pairs of max(0, enforced - pair minimum)
-        double intrusion = 0.0;           // section 1.14
+        double intrusion = 0.0;
         double smoothness = 0.0;          // the QPs' own objective, summed over drones
         double broad_phase_sec = 0.0;     // progress-event timing only
         double scan_sec = 0.0;
     };
 
-    // Section 1.25 (tight broad phase): the farthest box gap at which a pair
+    // Tight broad phase: the farthest box gap at which a pair
     // still needs a collision row in a step with trust-region radius
     // `radius`. The radius bounds each free control point per axis, so a
     // control point (and, by the convex hull property, every point of the
     // spline) would move at most sqrt(3) * radius; both drones of a pair can
     // move in the same Gauss-Seidel sweep, so a pair farther apart than
     // enforced + 2 sqrt(3) radius gets no row. This is not a guarantee: OSQP's
-    // loose solutions overshoot the radius (section 1.19; measured 2026-10-02:
+    // loose solutions overshoot the radius (measured 2026-10-02:
     // ~0.2 m median and over 0.7 m in 5 % of steps at radii under 0.1 m) and
     // the fallback tiers have none. A step that overshoots into a pair without
     // a row is rejected by the evaluation below, which rebuilds the pairs from
     // scratch. An extra 0.75 m per drone for the overshoot was tried and kept
-    // nothing better (2-phase_2.md section 1.25). Each box is built from 5
+    // nothing better. Each box is built from 5
     // samples per window, so each side also gets curve_margin for the spline
     // bulging between samples.
     const bool tight_broad_phase = config.solver.tight_broad_phase;
@@ -1128,7 +1127,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         IterateEvaluation ev;
         const Clock::time_point broad_phase_start = Clock::now();
         // Rebuild the 4D spatio-temporal conflict graph from the *current*
-        // trajectories (docs/2-phase_2.md Rev 2.3 section 3.3's pseudocode
+        // trajectories (pseudocode
         // calls find_conflict_clusters() inside the loop).
         collision::SpatioTemporalHash hash(enforced_min_distance, time_bucket_s);
         std::vector<Eigen::Vector3d> box_lo(static_cast<size_t>(num_drones) * num_windows);
@@ -1260,7 +1259,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         return ev;
     };
 
-    // Merit, lexicographic: keep-out intrusion (section 1.14), then the total
+    // Merit, lexicographic: keep-out intrusion, then the total
     // separation deficit, then smoothness. `a` must be strictly better.
     const auto better_than = [](const IterateEvaluation& a, const IterateEvaluation& b) {
         constexpr double kTieM = 1e-6;
@@ -1271,7 +1270,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         return a.smoothness < b.smoothness - 1e-9 * std::max(1.0, std::abs(b.smoothness));
     };
 
-    // Adaptive trust region (section 1.19): a step that doesn't make the
+    // Adaptive trust region: a step that doesn't make the
     // iterate better by the merit above is rejected (back to the best
     // iterate, radius halved), and an accepted step lets the radius grow back
     // up to trust_region_delta_m. With a fixed radius and no rejection the
@@ -1279,7 +1278,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     // later in the same sweep) never settled: every step on real shows sat
     // at the radius (1.1-1.7 m), 0 of 1 875 iterations converged, and the
     // result was one frame of an oscillation.
-    // Section 1.21: start from flyable paths (see repair_to_flyable()).
+    // Start from flyable paths (see repair_to_flyable()).
     int seed_repair_counts[3] = {0, 0, 0};  // already flyable, repaired, unrepairable
     if (config.solver.repair_seed) {
 #pragma omp parallel for schedule(dynamic)
@@ -1310,7 +1309,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         // The iteration starts from the best iterate (the last accepted one),
         // with its own pairs and dips.
         const DynamicCollocationMap& dynamic_collocations = best.dips;
-        // Section 1.25: keep the pairs this step's trust region can reach.
+        // Keep the pairs this step's trust region can reach.
         // best was evaluated for a radius >= this one (the radius only grows
         // after an accepted step, and that step's candidate was evaluated for
         // the grown radius), so this is a subset of best.pairs. The coloring
@@ -1334,7 +1333,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         const std::vector<collision::ConflictEdge>& conflict_edges =
             tight_broad_phase ? step_edges : best.conflict_edges;
 
-        // Section 1.15: a fixed (parked) drone is never solved, so it can't
+        // A fixed (parked) drone is never solved, so it can't
         // race anyone and needs no cluster or color. Its pairs stay in
         // `pairs`, so the drones moving past it still get collision rows
         // against it. max_cluster_size is deliberately NOT passed to
@@ -1364,7 +1363,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
             std::vector<LinearRow> collision_rows =
                 collect_collision_rows(map, self_ws, pairs, workspaces, drone_index, duration, time_bucket_s,
                                         enforced_min_distance, dynamic_collocations);
-            // Section 1.14: keep-out rows join the soft collision rows.
+            // Keep-out rows join the soft collision rows.
             for (LinearRow& r : collect_keep_out_rows(map, self_ws, duration, config)) collision_rows.push_back(std::move(r));
             const double rows_sec = seconds_since(rows_start);
             const int row_count = static_cast<int>(collision_rows.size());
@@ -1389,7 +1388,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
 #pragma omp atomic
             collision_row_count += row_count;
             if (const std::optional<double> floor = drone_floor(self_ws.floor_m, config)) {
-                // Section 1.13: whatever the QP tier returned (an inaccurate
+                // Whatever the QP tier returned (an inaccurate
                 // OSQP solution, or the unoptimized jittered iterate when all
                 // tiers failed), lift any free control point still under the
                 // floor onto it, so the floor holds by the convex hull property.
@@ -1403,7 +1402,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
 
         const Clock::time_point sweep_start = Clock::now();
         if (config.solver.enable_graph_coloring) {
-            // Rev 2.7 section 1.8: greedy graph coloring within each cluster;
+            // greedy graph coloring within each cluster;
             // same-color batches have no conflict edge between any two
             // members and are solved together via OpenMP. Batches are merged
             // across clusters by color index, so independent single-drone
@@ -1474,7 +1473,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
         const double candidate_broad_phase_sec = candidate.broad_phase_sec;  // candidate is moved below
         const double candidate_scan_sec = candidate.scan_sec;
         const bool accepted = better_than(candidate, best);
-        // Stall stop (section 1.16): progress means meaningfully less zone
+        // Stall stop: progress means meaningfully less zone
         // intrusion or separation deficit; smoothness alone doesn't count.
         const double stall_tol = config.solver.scp_stall_tol_m;
         const bool progressed =
@@ -1540,8 +1539,8 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     return result;
 }
 
-// Mega-Cluster Decomposition threshold (docs/2-phase_2.md Rev 2.6 section
-// 1.7): transitions longer than this are split into sub-stages instead of
+// Mega-Cluster Decomposition threshold: transitions longer than this are
+// split into sub-stages instead of
 // solved as one problem spanning the whole duration.
 constexpr double kMegaClusterThresholdS = 15.0;
 
@@ -1551,7 +1550,7 @@ constexpr double kMegaClusterThresholdS = 15.0;
 // a sub-stage boundary, refined pairwise across the whole fleet by
 // declash_waypoints() below before it becomes a hard pinned constraint.
 //
-// Rev 2.8 section 1.2 retires drone_id-parity bow seeding project-wide (see
+// Drone_id-parity bow seeding is retired project-wide (see
 // trajectory/apf_seeder.hpp's incident writeup): a parity split only ever
 // pushes two groups apart, which does not scale to a real N-way squeeze of
 // waypoints converging on the same region, and this function's own prior
@@ -1575,7 +1574,7 @@ Eigen::Vector3d bowed_waypoint_position(const Eigen::Vector3d& start, const Eige
 // pass (standard Gauss-Seidel constraint relaxation) directly on the batch
 // of one sub-stage boundary's positions across the whole fleet, splitting
 // the deficit between whichever two drones actually end up too close. A
-// `fixed` (parked, section 1.15) drone never moves: the other one takes the
+// `fixed` (parked) drone never moves: the other one takes the
 // whole deficit, and two fixed drones are left as they are.
 void declash_waypoints(std::vector<Eigen::Vector3d>& positions, const std::vector<char>& fixed,
                        double enforced_min_distance) {
@@ -1641,7 +1640,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     // sub-stage gets the same control-point budget an undecomposed solve
     // over the full duration would have used (see solve_single_stage()'s
     // forced_num_control_points doc comment). A single stage computes the
-    // same count itself; it is passed so prescribed paths (section 1.28) are
+    // same count itself; it is passed so prescribed paths are
     // built with it.
     const int whole_transition_num_control_points = transition_num_control_points(problems, config);
 
@@ -1666,7 +1665,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
         return result;
     }
 
-    // Mega-Cluster Decomposition (docs/2-phase_2.md Rev 2.6 section 1.7):
+    // Mega-Cluster Decomposition:
     // solving one drone's-worth-of-conflicts QP thousands of times
     // sequentially in a single fleet-spanning Gauss-Seidel cluster is what
     // took a real 300-drone/~50s transition from a projected 15s budget to
@@ -1679,7 +1678,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     const int num_substages = substage_count(duration, config);
     const double substage_duration = duration / static_cast<double>(num_substages);
 
-    // Section 1.28: a prescribed drone's control points per window. Its
+    // A prescribed drone's control points per window. Its
     // windows meet at rest, so its waypoint at boundary k is the first
     // control point of window k.
     std::vector<std::vector<Eigen::MatrixXd>> held(num_drones);
@@ -1739,7 +1738,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             if (config.safety.keep_out && problems[i].keep_out) {
                 // A pinned boundary inside the zone could never be fixed by
                 // either sub-stage: move it onto the zone's surface plus a
-                // small margin, the shortest way out (section 1.14).
+                // small margin, the shortest way out.
                 constexpr double kWaypointMarginM = 0.5;
                 const KeepOutZone& zone = *config.safety.keep_out;
                 const double d = distance_to_keep_out_region(wp.position, zone);
@@ -1759,13 +1758,13 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             wp.acceleration = Eigen::Vector3d::Zero();
             waypoints[i][k] = wp;
         }
-        // Section 1.22: one shared velocity at the boundary. With each drone
+        // One shared velocity at the boundary. With each drone
         // heading straight for its own end point, two drones passing each
         // other at a boundary were exactly at the planning distance there
         // (declash_waypoints() only fixes that instant) but closer just
         // before or after, inside the part of both sub-stages that the pinned
-        // boundary state fixes (200_cube: 1.418 m, 0.46 s before a boundary,
-        // bug-report P2-15). With one shared velocity the pinned pieces around
+        // boundary state fixes (200_cube: 1.418 m, 0.46 s before a boundary).
+        // With one shared velocity the pinned pieces around
         // the boundary move as a rigid copy of the de-clashed positions.
         if (config.solver.shared_substage_velocity) {
             Eigen::Vector3d shared = Eigen::Vector3d::Zero();
@@ -1780,7 +1779,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
                 if (!fixed[i]) waypoints[i][k].velocity = shared;
             }
         }
-        // Near the floor, a boundary is passed level (section 1.13); this
+        // Near the floor, a boundary is passed level; this
         // is per drone, so a drone close to the ground may differ from the
         // shared velocity.
         for (int i = 0; i < num_drones; ++i) {
@@ -1812,8 +1811,8 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
     return result;
 }
 
-// Decoupled Continuous Gatekeeper (docs/2-phase_2.md Rev 2.9 section 1.9):
-// replaces Rev 2.8's Slack Rejection Gatekeeper. That mechanism derived its
+// Decoupled Continuous Gatekeeper:
+// replaces the earlier Slack Rejection Gatekeeper. That mechanism derived its
 // safety verdict from SingleStageResult::min_separation — solve_single_stage's
 // own best-iterate worst-case tracking — which is built from the *same*
 // per-iteration candidate-pair snapshot the QP rows come from, so it could
@@ -1826,7 +1825,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
 // a brand-new spline per drone directly from the final converged control
 // points and re-detects candidate pairs from scratch via its own
 // SpatioTemporalHash, at a fixed (not solver-adaptive) time bucket of
-// 1/verification_frequency_hz — >= 100 Hz per the doc's own Δt <= 10ms
+// 1/verification_frequency_hz — >= 100 Hz, i.e. Δt <= 10ms
 // requirement, deliberately finer than the SCP loop's own
 // adaptive_time_bucketing.
 struct ContinuousSafetyResult {
@@ -1834,7 +1833,7 @@ struct ContinuousSafetyResult {
 };
 
 // Per unordered drone pair, the single worst sample below the gatekeeper
-// floor (docs/5-studio_gui.md B1). Bounded by the number of distinct
+// floor. Bounded by the number of distinct
 // violating pairs, not by duration * frequency, so it keeps
 // evaluate_continuous_clearance()'s O(num_drones)-per-instant memory story.
 using ViolationsByPair = std::map<std::pair<int, int>, SeparationViolation>;
@@ -2006,7 +2005,7 @@ double evaluate_worst_case_separation_over_stages(
 // meant to be a rare, severely-congested-passage event, not a routine path.
 //
 // PERFORMANCE SHORTFALL (found 2026-09-17, substantially fixed 2026-09-18):
-// the doc's own N=40 ring-swap benchmark (section 6) requires <= 20s on an
+// the N=40 ring-swap benchmark requires <= 20s on an
 // 8-core CPU; measured ~137s (~7x over budget) on the same synthetic
 // harness that verified this gatekeeper's correctness fix (see
 // stage2_nway_conflict_limitation memory). Ablation had ruled out
@@ -2113,7 +2112,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             worst_continuous_distance = std::min(worst_continuous_distance, report.min_distance);
             stage_offset += stage_duration;
         }
-        // Altitude floor safety net (section 1.13): the QP rows (planned
+        // Altitude floor safety net: the QP rows (planned
         // kFloorPlanningMarginM above the floor), the post-QP clamp and the
         // floor-safe boundaries make this hold by construction; a result
         // that still dips below is not accepted. Checked on the control points: by the
@@ -2128,7 +2127,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
         const bool floor_ok = !config.safety.altitude_floor_m ||
                               lowest_control_point_z >= *config.safety.altitude_floor_m - kFloorToleranceM;
 
-        // Keep-out zone (section 1.14), verified like separation: every show
+        // Keep-out zone, verified like separation: every show
         // drone sampled at verification_frequency_hz, exact distance to the
         // holding region (the planner's rows are only sampled every 0.25 s).
         KeepOutViolation closest_to_zone;

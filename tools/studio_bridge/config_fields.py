@@ -1,4 +1,4 @@
-"""Stage 2 planner settings for the overrides editor (docs/5-studio_gui.md §6.2).
+"""Stage 2 planner settings for the overrides editor.
 
 Mirrors what drone_core reads (stage2_core_engine/include/config.hpp, apply_json_overrides) and how it
 resolves them: core_config.json, then the Phase 1 file's kinematic_constraints (kinematics only), then
@@ -229,7 +229,7 @@ def safety_warnings(base: dict[str, Any], overrides: dict[str, Any]) -> list[dic
             warnings.append({"path": field["path"], "label": field["label"],
                              "message": f"{field['label']} {change}."})
 
-    # The check only finds pairs whose planning-distance boxes touch (2-phase_2.md §5, known limit).
+    # The check only finds pairs whose planning-distance boxes touch (known limit).
     floor = get(effective, "solver.continuous_gatekeeper.min_allowable_distance_m")
     enforced = get(effective, "safety.min_distance_m") * (1 + get(effective, "solver.collision_margin_fraction"))
     if floor is not None and floor > 2 * enforced:

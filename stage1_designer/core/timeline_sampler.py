@@ -1,4 +1,4 @@
-"""Keyframe / timeline sampling and ENU coordinate mapping (spec section 3.3-3.4).
+"""Keyframe / timeline sampling and ENU coordinate mapping.
 
 `enu_transform` is pure numpy/math and unit-testable. The scene/keyframe
 readers are `bpy`-dependent and import it locally.
@@ -21,7 +21,7 @@ def enu_transform(points: np.ndarray, heading_offset_deg: float) -> np.ndarray:
     """Rotate Blender-space points into the ENU frame per the heading offset.
 
     theta = heading_offset_deg (clockwise from +Y_blender to True North, looking
-    down); rotation matrix as defined in `.claude/docs/1-phase_1.md` section 3.3:
+    down); rotation matrix:
 
         [X_enu]   [ cos(t)  sin(t)  0] [X_blender]
         [Y_enu] = [-sin(t)  cos(t)  0] [Y_blender]
@@ -137,8 +137,7 @@ def evaluate_object_at_time(obj, scene, time_sec: float):
 def shift_keyframes_to_frames(obj, frame_mapping: dict) -> int:
     """Move every keyframe point at an `old_frame` in `frame_mapping` (int ->
     int) to its `new_frame`, translating Bezier handles by the same delta so
-    handle shape (hence in/out tangent) is preserved (spec section 3.5's
-    Auto-Fix Timeline Timing operator).
+    handle shape (hence in/out tangent) is preserved (Auto-Fix Timeline Timing operator).
 
     Processes old frames in descending `new_frame` order: since Auto-Fix only
     ever stretches (each new_frame >= its old_frame) and preserves relative

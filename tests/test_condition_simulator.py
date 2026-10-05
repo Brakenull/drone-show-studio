@@ -1,7 +1,7 @@
-"""Condition simulator, milestone C1 (docs/4-condition_simulator.md §3, B6, B8, §9).
+"""Condition simulator: weather scenarios.
 
-Weather timeline interpolation (§9.1), compatibility of a constant timeline with the Monte Carlo
-path (§9.2), recording for playback, and determinism (§9.8).
+Weather timeline interpolation, compatibility of a constant timeline with the Monte Carlo
+path, recording for playback, and determinism.
 """
 
 import copy
@@ -30,7 +30,7 @@ def scenario(**overrides) -> Scenario:
 
 
 # --------------------------------------------------------------------------- #
-# §9.1 interpolation
+# Interpolation
 # --------------------------------------------------------------------------- #
 
 def test_wind_interpolates_linearly_and_turns_the_short_way_round():
@@ -117,7 +117,7 @@ def test_gust_reaches_the_field_centre_at_its_time():
 
 
 # --------------------------------------------------------------------------- #
-# §9.2 compatibility: a constant timeline reproduces the Monte Carlo path
+# Compatibility: a constant timeline reproduces the Monte Carlo path
 # --------------------------------------------------------------------------- #
 
 @needs_opencl
@@ -191,7 +191,7 @@ def test_wind_and_rtk_changes_take_effect_at_their_time():
 
 
 # --------------------------------------------------------------------------- #
-# B8 recording and §9.8 determinism
+# Recording and determinism
 # --------------------------------------------------------------------------- #
 
 @needs_opencl

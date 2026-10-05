@@ -2,7 +2,7 @@
 
 #include <Eigen/Dense>
 
-// Quintic B-spline Parametrization (docs/2-phase_2.md section 3.2): every
+// Quintic B-spline Parametrization: every
 // drone transition is a clamped degree-5 B-spline p_i(t) = sum C_k B_k5(t),
 // C^4-continuous, whose control points are the SCP decision variables.
 
@@ -43,8 +43,8 @@ struct BoundaryConditions {
 
 // A drone at rest on the same point at both ends of a transition (a parked
 // drone that a formation smaller than the fleet leaves in the holding area):
-// the planners hold it there as a fixed obstacle instead of optimizing it
-// (docs/2-phase_2.md section 1.15). seed_control_points() of such a pair is
+// the planners hold it there as a fixed obstacle instead of optimizing it.
+// seed_control_points() of such a pair is
 // already the constant path.
 inline bool is_stationary_hold(const BoundaryConditions& start, const BoundaryConditions& end) {
     constexpr double kTolM = 1e-6;

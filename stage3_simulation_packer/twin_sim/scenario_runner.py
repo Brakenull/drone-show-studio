@@ -1,17 +1,17 @@
-"""Fly one condition-simulator scenario through the digital twin (docs/4-condition_simulator.md B6-B8).
+"""Fly one condition-simulator scenario through the digital twin.
 
 The whole show is flown once under the scenario's weather timeline (`weather.py`) and recorded at
 20 fps for playback: each drone's simulated position, its planned (reference) position at the same
 moment, and its LED color. The flight is judged with the Monte Carlo pass criteria (no pair closer
 than 0.5 m, every drone lands with SOC >= 15 %).
 
-Rain rule (section 3.1, B7): when the rain reaches the alert level, the return is commanded `reaction_s`
+Rain rule: when the rain reaches the alert level, the return is commanded `reaction_s`
 later; the fleet finishes its transition and flies that formation's return path (`rain_return.py`), so
 the flight follows the composed reference instead of the rest of the show. Every drone must then be
 landed, and before the rain reaches the limit level when it does: a third pass criterion. Return paths
-come from Stage 2 (B4): `returns` maps a formation index to its return contract; a formation without
+come from Stage 2: `returns` maps a formation index to its return contract; a formation without
 one makes the fleet fly the rest of the show to its own return leg. `points` maps an abort point's id
-(`rain_return.point_id()`) to the return planned from inside a transition (section 5.3).
+(`rain_return.point_id()`) to the return planned from inside a transition.
 
 Usage:
     python -m stage3_simulation_packer.twin_sim.scenario_runner trajectory_splines.json scenario.json
@@ -45,7 +45,7 @@ RECORD_HZ = 20.0
 TAIL_SEC = 2.0
 REFERENCE_CHUNK = 400
 ABORT_TAIL_SEC = 10.0    # settling after an abort flight's planned landing, to see late arrivals
-SLOT_TOLERANCE_M = 0.3   # section 9.5: an abort flight should end within this of every slot (reported)
+SLOT_TOLERANCE_M = 0.3   # an abort flight should end within this of every slot (reported)
 
 
 @dataclass
@@ -163,8 +163,8 @@ def fly_scenario(source: Any, scenario: Scenario, profile_path: str | None = Non
                  on_progress: Callable[[float, float], None] | None = None,
                  returns: dict[int, dict[str, Any]] | None = None,
                  points: dict[str, dict[str, Any]] | None = None) -> ScenarioFlight:
-    """`returns`: formation index -> return-path contract (B4); `points`: abort point id -> its return
-    contract (section 5.3). The rain rule needs the show as a contract
+    """`returns`: formation index -> return-path contract; `points`: abort point id -> its return
+    contract. The rain rule needs the show as a contract
     dict or a .json file (for its transition timing); otherwise it is reported as not applied.
     `on_progress(simulated_sec, total_sec)` about once per simulated second."""
     from .simulator import DigitalTwin, SimConfig
@@ -268,7 +268,7 @@ def fly_scenario(source: Any, scenario: Scenario, profile_path: str | None = Non
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("input", help="trajectory_splines.json, an Arrow IPC file, or shm://<name>")
-    parser.add_argument("scenario", help="scenario.json (docs/4-condition_simulator.md §3.1)")
+    parser.add_argument("scenario", help="scenario.json")
     parser.add_argument("--returns", default=None,
                         help="Folder of return paths (return_<k>.json, as `stage2-returns` writes them)")
     parser.add_argument("--profile", default=None, help="Project drone_profile.json (tier 1 override)")

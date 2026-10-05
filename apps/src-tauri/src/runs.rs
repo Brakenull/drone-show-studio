@@ -1,4 +1,4 @@
-//! Run folders (docs/5-studio_gui.md §3): list them, read their files, repair stale "running" records.
+//! Run folders: list them, read their files, repair stale "running" records.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};

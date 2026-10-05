@@ -1,6 +1,5 @@
 """Drone Show Studio - Phase 1: Blender Add-on (Design & Voxelization).
 
-See `.claude/docs/1-phase_1.md` for the full technical specification.
 
 This top-level package guards its `bpy` import so the pure algorithm
 submodules (`core.holding_area`, `core.sampler`'s geometry functions,
@@ -81,8 +80,7 @@ if _HAS_BPY:
         return points, colors
 
     def _padding_positions(settings, n_park, spare_needed, first_keyframe=False):
-        """Slots for the drones a formation leaves spare (spec sections 3.2,
-        3.10): the first waiting slots when the design has waiting areas
+        """Slots for the drones a formation leaves spare: the first waiting slots when the design has waiting areas
         (`spare_needed`, the most spare drones at any later keyframe, sizes
         the last area), else the first holding-area slots. The first
         formation's spare drones always stay on their pads: every drone takes
@@ -145,8 +143,8 @@ if _HAS_BPY:
 
         Also refreshes the panel's formation cache (each keyframe's sampled
         ENU points, parked drones excluded) for the holding-area clearance
-        check (spec section 3.2.2), and the first / last keyframe's full
-        positions for the takeoff / return estimates (spec section 3.8)."""
+        check, and the first / last keyframe's full
+        positions for the takeoff / return estimates."""
         original_frame = scene.frame_current
         try:
             sampled = []
@@ -158,7 +156,7 @@ if _HAS_BPY:
             scene.frame_set(original_frame)
 
         # Padding needs the whole show: the most spare drones at any keyframe
-        # after the first sizes the waiting areas (spec section 3.10); the
+        # after the first sizes the waiting areas; the
         # first formation's spare drones stay on their pads.
         spare = waiting_area.padding_needed(settings.fleet_size, [len(s[2]) for s in sampled[1:]])
         waiting_area_scene.set_spare_needed(spare)
@@ -380,7 +378,7 @@ if _HAS_BPY:
             panel.set_kinematic_cache(transitions)
             _redraw_all_view3d()
 
-            # Kinematic Gatekeeping (spec section 3.5): re-checked here
+            # Kinematic Gatekeeping: re-checked here
             # regardless of whether the user ran Check Kinematics first —
             # the panel's Export button being enabled is only a UI hint, this
             # is the actual, unconditional gate.
@@ -394,7 +392,7 @@ if _HAS_BPY:
                         )
                 return {"CANCELLED"}
 
-            # Holding-area clearance gate (spec section 3.2.2): same rule as
+            # Holding-area clearance gate: same rule as
             # above - _sample_all_keyframes_for_validation just refreshed the
             # formation cache, so this checks the show being exported now.
             cautions = panel.clearance_cautions(settings)
@@ -408,7 +406,7 @@ if _HAS_BPY:
                 )
                 return {"CANCELLED"}
 
-            # Waiting area gate (spec section 3.10): formations too close
+            # Waiting area gate: formations too close
             # (freshly sampled above), too close to the holding area,
             # overlapping areas, too low.
             waiting_lines = panel.waiting_messages(settings)
@@ -418,13 +416,13 @@ if _HAS_BPY:
                 self.report({"ERROR"}, f"Export blocked: {len(waiting_lines)} waiting area problem(s)")
                 return {"CANCELLED"}
 
-            # Holding-area layer gap gate (spec section 3.2).
+            # Holding-area layer gap gate.
             gap_message = panel.layer_gap_message(settings)
             if gap_message:
                 self.report({"ERROR"}, f"Export blocked: {gap_message}")
                 return {"CANCELLED"}
 
-            # Ground gate (spec section 3.9): formation points (freshly
+            # Ground gate: formation points (freshly
             # sampled above) and parked drones below the ground.
             below_ground = panel.ground_warnings(settings)
             if below_ground:
@@ -495,7 +493,7 @@ if _HAS_BPY:
             else:
                 intermediate_exporter.export_msgpack(data, filepath)
 
-            # Leg targets below the estimated minimum (spec section 3.8): a
+            # Leg targets below the estimated minimum: a
             # warning only - the estimate is rough and Stage 2 stretches the
             # leg to its real minimum anyway.
             short_legs = panel.short_leg_messages(settings)

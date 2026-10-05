@@ -1,4 +1,4 @@
-// Loads a run's replay files and hands them to the reusable player (docs/5-studio_gui.md §6.4). The
+// Loads a run's replay files and hands them to the reusable player. The
 // Replay tab plays the planned show, a return path, or a weather scenario flown through the digital twin.
 
 import { useEffect, useState } from "react";
@@ -8,10 +8,10 @@ import { ReplayPlayer } from "../replay/ReplayPlayer";
 import type { ReplayData, ReplayFocus, ReplayHeader, Separation } from "../replay/types";
 
 /** What the Replay tab plays: the show, a return path (the show up to formation k, then the flight home),
- *  or a weather scenario's simulated flight (docs/4-condition_simulator.md §6). */
+ *  or a weather scenario's simulated flight. */
 export type ReplaySource =
   | { kind: "show" }
-  /** `keyframe`: a formation index, or an abort point's id (e.g. "1-66637", §5.3). */
+  /** `keyframe`: a formation index, or an abort point's id (e.g. "1-66637"). */
   | { kind: "return"; keyframe: number | string; from: string }
   | { kind: "scenario"; id: string; name: string };
 

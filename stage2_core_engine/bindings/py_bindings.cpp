@@ -58,7 +58,7 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
     metadata["total_duration_sec"] = meta.total_duration_sec;
     metadata["coordinate_system"] = meta.coordinate_system;
     metadata["min_distance_enforced_m"] = meta.min_distance_enforced_m;
-    // Planned vs flown time per transition (bug-report P2-03).
+    // Planned vs flown time per transition.
     py::list transitions;
     for (const auto& t : meta.transitions) {
         py::dict d;
@@ -70,7 +70,7 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
         d["planned_duration_sec"] = t.planned_duration_sec;
         d["flown_duration_sec"] = t.flown_duration_sec;
         d["attempts"] = t.attempts;
-        py::dict pad;  // section 1.28
+        py::dict pad;
         pad["parked"] = t.pad_moves.parked;
         pad["landed"] = t.pad_moves.landed;
         pad["climbed"] = t.pad_moves.climbed;
@@ -80,13 +80,13 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
         transitions.append(d);
     }
     metadata["transitions"] = transitions;
-    // The design's ground as enforced (docs/2-phase_2.md section 1.13); None = no floor.
+    // The design's ground as enforced; None = no floor.
     metadata["altitude_floor_m"] =
         meta.altitude_floor_m ? py::object(py::float_(*meta.altitude_floor_m)) : py::object(py::none());
-    // The holding-area safe distance as enforced (section 1.14); None = no zone.
+    // The holding-area safe distance as enforced; None = no zone.
     metadata["holding_clearance_m"] =
         meta.holding_clearance_m ? py::object(py::float_(*meta.holding_clearance_m)) : py::object(py::none());
-    // Only for Phase 1 files with `legs` (schema 1.6.0, 1-phase_1.md section 3.8).
+    // Only for Phase 1 files with `legs` (schema 1.6.0).
     if (meta.takeoff_leg || meta.return_leg) {
         auto leg_to_py = [](const std::optional<drone_core::io::LegTiming>& leg) -> py::object {
             if (!leg) return py::none();  // e.g. a rejection before the return leg was flown
@@ -129,8 +129,8 @@ py::list trajectories_to_py(const std::vector<drone_core::DroneTrajectory>& traj
     return out;
 }
 
-// SafetyViolationError.report (docs/5-studio_gui.md section 5.1, B1). All
-// times are show time. "rejected" and "completed" are each a full section 5
+// SafetyViolationError.report. All
+// times are show time. "rejected" and "completed" are each a full
 // output dict (metadata + trajectories) so any contract consumer
 // (arrow_loader.py, the Studio replay) can load them unchanged.
 py::dict safety_failure_to_py(const drone_core::io::TransitionSafetyFailure& f) {
@@ -193,8 +193,7 @@ py::dict safety_failure_to_py(const drone_core::io::TransitionSafetyFailure& f) 
     return report;
 }
 
-// progress_callback's argument (docs/5-studio_gui.md B2; the key list per
-// "event" is in docs/2-phase_2.md section 5, "Progress events"). Only the keys
+// progress_callback's argument. Only the keys
 // that mean something for the event's kind are set; +infinity becomes None.
 py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
     using Kind = drone_core::ProgressEvent::Kind;
@@ -260,7 +259,7 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
     return d;
 }
 
-// Output schema (docs/2-phase_2.md Rev 2.3 section 5): matches Phase 3's
+// Output schema: matches Phase 3's
 // arrow_loader.py / spline_evaluator.py contract.
 //
 // {
@@ -313,7 +312,7 @@ py::dict optimize_trajectories(const py::dict& phase1_intermediate_json, const p
     return out;
 }
 
-// A saved section 5 output (trajectory_splines.json) back into C++ types:
+// A saved output (trajectory_splines.json) back into C++ types:
 // the trajectories and metadata.transitions, which plan_return_path() reads.
 std::vector<drone_core::DroneTrajectory> contract_trajectories(const nlohmann::json& contract) {
     std::vector<drone_core::DroneTrajectory> out;
@@ -372,10 +371,10 @@ std::vector<drone_core::io::TransitionTiming> contract_transitions(const nlohman
     return out;
 }
 
-// docs/4-condition_simulator.md B4, docs/2-phase_2.md section 1.24. Same
+// Return paths after the show passed. Same
 // output format as optimize_trajectories(), timed from 0, plus
 // metadata["return_path"].
-// docs/4-condition_simulator.md section 5.3: the Auto duration of many
+// the Auto duration of many
 // candidate returns (formations and abort points), without solving any.
 py::list estimate_return_paths(const py::dict& phase1_intermediate_json, const py::dict& show_result,
                                const py::list& starts, const py::dict& optional_config_overrides) {
@@ -526,7 +525,7 @@ PYBIND11_MODULE(drone_core, m) {
     py::object safety_error = py::reinterpret_steal<py::object>(PyErr_NewExceptionWithDoc(
         "drone_core.SafetyViolationError",
         "Raised when the continuous gatekeeper rejects a transition after its retry budget. "
-        "`report` holds the structured diagnostics (docs/5-studio_gui.md B1).",
+        "`report` holds the structured diagnostics.",
         PyExc_RuntimeError, nullptr));
     if (!safety_error) throw py::error_already_set();
     m.attr("SafetyViolationError") = safety_error;

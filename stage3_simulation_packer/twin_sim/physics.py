@@ -1,20 +1,20 @@
-"""Physical model constants and host-side helpers (docs/3-phase-3.md §3.1-§3.3).
+"""Physical model constants and host-side helpers.
 
 The kernels in `kernels/*.cl` implement the models below; every constant they
 use is defined here once and injected into the OpenCL program as a #define
 (`kernel_defines()`), so Python and the device code cannot drift apart.
 
-6-DOF dynamics + onboard tracking controller (§3.1), `multi_agent_dynamics.cl`
+6-DOF dynamics + onboard tracking controller, `multi_agent_dynamics.cl`
 -----------------------------------------------------------------------------
 One work-item per drone. Frame conventions: world ENU (z up), body FLU, unit
-quaternion `q` rotates body -> world. §3.1 writes the translational equation
+quaternion `q` rotates body -> world. The translational equation is usually written
 in the NED sign convention; in ENU it reads
 
     m p'' = -m g e3 + f R e3 + F_aero
     J w'  = -w x (J w) + tau
 
 with F_aero = -1/2 rho Cd A |v - v_air| (v - v_air); v_air = wind + downwash,
-i.e. §3.1's F_drag and F_wind are the same aerodynamic term evaluated on
+i.e. F_drag and F_wind are the same aerodynamic term evaluated on
 relative airspeed, and F_downwash enters twice: as air velocity here and as
 per-motor lift loss (below).
 
@@ -33,7 +33,7 @@ Uses *nominal* profile values for the controller model and the per-drone
 Monte Carlo *actual* values for the plant, so tolerances show up as tracking
 error exactly as they would in the field.
 
-Wind field + fast downwash proxy (§3.2), `aerodynamics.cl`
+Wind field + fast downwash proxy, `aerodynamics.cl`
 ----------------------------------------------------------
 Downwash below drone j (semi-analytic wake cone):
 
@@ -47,7 +47,7 @@ Downwash below drone j (semi-analytic wake cone):
 
 Effect on a drone i underneath, evaluated separately at each of i's four motor
 positions (so a wake edge crossing one side of i produces the asymmetric
-tipping torque §3.2 describes, with no extra torque model):
+tipping torque of a real wake, with no extra torque model):
 
 * lift loss per motor: T_eff = T * v_h / (v_h + w), v_h = i's own hover
   induced velocity -- the extra axial inflow w eats into the prop's angle of
@@ -59,15 +59,15 @@ and temporally correlated, so neighbours feel similar gusts) + one discrete
 (1 - cos) gust front that sweeps across the formation at the mean-wind speed.
 
 The same neighbour pass records each drone's nearest-neighbour distance for
-the §3.4 safety check (d_crash / buffer warning).
+the safety check (d_crash / buffer warning).
 
-Electrochemical battery model (§3.3), `battery_discharge.cl`
+Electrochemical battery model, `battery_discharge.cl`
 ------------------------------------------------------------
 Load current:
 
     I = sum_k(Q_k * w_k) / (eta * V) + P_LED / V + I_avionics
 
-where Q_k * w_k is motor k's shaft power, written in the §3.3 form T_k * w_k
+where Q_k * w_k is motor k's shaft power, written form T_k * w_k
 scaled by the rotor torque/thrust ratio c_q (Q_k = c_q * T_k), and the prop
 speed follows the quadratic thrust law w_k = w_max * sqrt(T_k / T_max).
 
@@ -82,7 +82,7 @@ SOC is accumulated with Kahan compensation in float32: a plain float32 sum
 loses about 20 % of a small constant draw to rounding at 200 Hz, and the
 target GPUs (Intel Iris Xe) have no float64.
 
-Brownout Risk (§3.3): V <= cutoff for more than 2.0 s continuously; latched.
+Brownout Risk: V <= cutoff for more than 2.0 s continuously; latched.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ ARM_HEIGHT_M = 0.05             # reference this far above ground -> arm
 ARM_SPEED_MPS = 0.05
 
 # ---- downwash ----
-K_WAKE = 0.12                   # §3.2 wake-cone expansion rate
+K_WAKE = 0.12                   # wake-cone expansion rate
 WAKE_CUTOFF_FRACTION = 0.05     # ignore wake once centre-line speed < 5 % of v0
 WAKE_RADIAL_CUTOFF = 2.5        # exp(-2.5^2) < 0.2 %: ignore wake beyond 2.5 R(z) off-axis
 

@@ -6,7 +6,7 @@
 
 #include <Eigen/Dense>
 
-// 4D Spatio-Temporal Collision Engine (docs/2-phase_2.md section 4): reduces
+// 4D Spatio-Temporal Collision Engine: reduces
 // the O(N^2) all-pairs collision check to O(N log N) by hashing each drone's
 // per-window bounding box into a voxel grid of size
 // (d_min x d_min x d_min x delta_T) and only generating collision candidates
@@ -113,8 +113,8 @@ private:
 // distance. The caller (scp_solver, which owns the actual splines) currently
 // builds one ConflictEdge for *every* unique pair appearing in its
 // CandidatePair list, with no distance-based filtering: this struct's
-// `distance` field once doubled as a filter threshold (docs/2-phase_2.md Rev
-// 2.7 section 4's cluster_distance_threshold_m, dropping edges for pairs
+// `distance` field once doubled as a filter threshold (an earlier
+// cluster_distance_threshold_m, dropping edges for pairs
 // whose bounding boxes merely brushed past each other at long range), but
 // that filtering was found to be unsafe in this codebase's graph-coloring
 // setup — see build_conflict_edges()'s comment in scp_solver.cpp for the
@@ -147,7 +147,7 @@ std::vector<std::vector<int>> connected_components(const std::vector<int>& drone
 
 // Greedy graph coloring (Welsh-Powell: descending degree order, each vertex
 // takes the smallest color not already used by an already-colored neighbor)
-// over one cluster's internal edges (docs/2-phase_2.md Rev 2.7 section 1.8),
+// over one cluster's internal edges,
 // used to replace a pure ascending-drone-id Gauss-Seidel sweep with
 // same-color batches that have no edge between any two members and can
 // therefore be solved in parallel via OpenMP. Returns each color's member

@@ -1,4 +1,4 @@
-"""Point-cloud sampling algorithms (spec section 3.1).
+"""Point-cloud sampling algorithms.
 
 The geometry-only algorithms (`poisson_disk_surface_sample`, `volumetric_sample`)
 take plain NumPy arrays / callables and have no `bpy` dependency, so they are
@@ -113,7 +113,7 @@ def volumetric_sample(
     seed: Optional[int] = None,
     jitter_factor: float = 0.2,
 ) -> np.ndarray:
-    """Jittered-grid + ray-cast parity volumetric sampling (spec section 3.1).
+    """Jittered-grid + ray-cast parity volumetric sampling.
 
     1. Lay a 3D grid over the bounding box with cell size s = min_dist / sqrt(3).
     2. Jitter each cell center by delta in [-jitter_factor*s, jitter_factor*s].

@@ -1,4 +1,4 @@
-"""Real-time viewport safety overlay (spec section 3.5).
+"""Real-time viewport safety overlay.
 
 Draws a wireframe sphere (three orthogonal great-circles) around every cached
 sample point, colored green when its nearest-neighbour distance satisfies

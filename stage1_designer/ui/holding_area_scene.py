@@ -1,9 +1,8 @@
-"""Holding area as real scene objects (spec section 3.2, "Create in Scene").
+"""Holding area as real scene objects ("Create in Scene").
 
 The GPU overlay (`viewport_drawer`) only previews the leftover parked drones.
 This module builds editable geometry instead, so a designer can see the
-takeoff volume next to the formations and keep them out of it (bug-report
-P1-01):
+takeoff volume next to the formations and keep them out of it:
 
   DSS Holding Area (collection)
   ├── DSS_HoldingArea_Volume     wire box: the holding region the clearance
@@ -13,7 +12,7 @@ P1-01):
   │                              whole fleet (Stage 2 launches every drone
   │                              from here), parented to the box
   └── DSS_HoldingArea_Clearance  yellow wire box: the region grown by the safe
-                                 distance to the show (section 3.2.2); formation
+                                 distance to the show; formation
                                  points should stay outside it
 
 The holding area is declared in ENU, so the box sits at

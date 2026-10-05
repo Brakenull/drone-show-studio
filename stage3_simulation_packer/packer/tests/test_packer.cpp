@@ -93,7 +93,7 @@ void test_layout_and_file_image() {
     CHECK(sizeof(FlightFileHeader) == 24);
     CHECK(sizeof(FlightTrackEntry) == 16 && sizeof(FlightReturnEntry) == 12);
     CHECK(sizeof(TrajectoryRecord) == 19);
-    // §4.3 worked example: 10 min at 20 Hz; the packer adds the closing sample.
+    // Worked example: 10 min at 20 Hz; the packer adds the closing sample.
     CHECK(record_count_for_duration(600.0, 50) == 12001u);
     CHECK(FLIGHT_FILE_SIZE(1, 0, 12000) == 228044u);
     CHECK(record_count_for_duration(0.0, 50) == 1u);

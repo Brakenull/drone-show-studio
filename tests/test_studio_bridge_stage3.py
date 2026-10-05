@@ -1,7 +1,7 @@
-"""Studio bridge Stage 3 commands (docs/5-studio_gui.md §4, §6.3): `monte_carlo` and `pack`.
+"""Studio bridge Stage 3 commands: `monte_carlo` and `pack`.
 
 Driven as subprocesses like the Tauri shell does, on a run whose Stage 2 passed (the 4-drone demo), and
-compared with the command-line tools on the same input (acceptance criterion §9.6).
+compared with the command-line tools on the same input.
 """
 
 import json

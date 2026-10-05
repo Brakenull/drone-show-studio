@@ -43,7 +43,7 @@ export class ReplayScene {
   private color = new THREE.Color();
   private p: V3 = [0, 0, 0];
   private rightInset = 0; // px covered by an overlay panel; the view centres on the rest
-  // Simulated flights (docs/4-condition_simulator.md §6): planned positions, gaps to them, weather.
+  // Simulated flights: planned positions, gaps to them, weather.
   private planned: THREE.Points | null = null;
   private gaps: THREE.LineSegments | null = null;
   private weather: WeatherLayer | null = null;
@@ -166,7 +166,7 @@ export class ReplayScene {
     );
   }
 
-  /** Waiting areas (1-phase_1.md section 3.10): each area's slots and the outline of its layer. */
+  /** Waiting areas: each area's slots and the outline of its layer. */
   private addWaitingAreas() {
     for (const area of this.data.header.overlays.waiting_areas ?? []) {
       if (area.slots.length === 0) continue;

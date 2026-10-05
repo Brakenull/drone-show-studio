@@ -1,4 +1,4 @@
-// Verdict card (docs/5-studio_gui.md §6.6): the headline of a result, tinted by its status.
+// Verdict card: the headline of a result, tinted by its status.
 
 /** A verdict card: a tinted panel with a glowing status light, its headline, and what follows. */
 export function VerdictCard({

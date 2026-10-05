@@ -1,6 +1,6 @@
 #pragma once
 
-// Tier 3 of the drone_profile.json fallback chain (docs/3-phase-3.md §1.3):
+// Tier 3 of the drone_profile.json fallback chain:
 //   --profile <path>  ->  config/drone_profile.json  ->  these constants.
 //
 // Every profile-backed constant carries a trailing `// profile: <json.key.path>`
@@ -50,7 +50,7 @@ inline constexpr std::array<double, 3> kAttP{6.5, 6.5, 4.0};                    
 inline constexpr std::array<double, 3> kRateP{18.0, 18.0, 10.0};                     // profile: controller_gains.rate_p
 inline constexpr double kMaxTiltDeg = 35.0;                                          // profile: controller_gains.max_tilt_deg
 
-// tolerances (Monte Carlo spread, docs/3-phase-3.md §3.4)
+// tolerances (Monte Carlo spread)
 inline constexpr double kTolMassPct = 3.0;                                           // profile: tolerances.mass_pct
 inline constexpr double kTolMaxThrustPct = 5.0;                                      // profile: tolerances.max_thrust_pct
 inline constexpr double kTolMotorTimeConstantPct = 20.0;                             // profile: tolerances.motor_time_constant_pct
@@ -62,17 +62,17 @@ inline constexpr double kTolGnssRtkNoiseM = 0.02;                               
 inline constexpr double kTolGnssDriftRateMPerSqrtS = 0.01;                           // profile: tolerances.gnss_drift_rate_m_per_sqrt_s
 inline constexpr double kTolInitialPositionErrorM = 0.05;                            // profile: tolerances.initial_position_error_m
 
-// environment: the rain rule (docs/4-condition_simulator.md §4.3). Placeholders until the drone
-// model's water protection rating is known (§10).
+// environment: the rain rule. Placeholders until the drone
+// model's water protection rating is known.
 inline constexpr double kRainAlertMmH = 0.5;                                         // profile: environment.rain_alert_mm_h
 inline constexpr double kRainLimitMmH = 2.5;                                         // profile: environment.rain_limit_mm_h
 inline constexpr double kReturnReactionS = 5.0;                                      // profile: environment.return_reaction_s
 
 // Not profile-backed: fixed by the flight file format / safety standard.
-inline constexpr std::uint16_t kSamplingDtMs = 50;   // 20 Hz waypoint rate (§4)
-inline constexpr double kNominalSeparationM = 1.5;   // d_min, planned by Phase 2 (§3.4)
-inline constexpr double kCrashFloorM = 0.5;          // d_crash, propeller contact (§3.4)
-inline constexpr double kBufferWarningM = 1.0;       // [d_crash, 1.0) -> Warning (§3.4)
-inline constexpr double kMinLandingSoc = 0.15;       // §3.4 battery criterion
+inline constexpr std::uint16_t kSamplingDtMs = 50;   // 20 Hz waypoint rate
+inline constexpr double kNominalSeparationM = 1.5;   // d_min, planned by Phase 2
+inline constexpr double kCrashFloorM = 0.5;          // d_crash, propeller contact
+inline constexpr double kBufferWarningM = 1.0;       // [d_crash, 1.0) -> Warning
+inline constexpr double kMinLandingSoc = 0.15;       // battery pass criterion
 
 }  // namespace drone_constants

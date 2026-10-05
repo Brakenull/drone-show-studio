@@ -1,4 +1,4 @@
-"""Studio bridge (docs/5-studio_gui.md §4): driven as a subprocess, exactly like the Tauri shell does."""
+"""Studio bridge: driven as a subprocess, exactly like the Tauri shell does."""
 
 import copy
 import json
@@ -161,7 +161,7 @@ def test_stage2_success_writes_contract_and_replay(tmp_path):
     assert code == 0
     assert [e["name"] for e in events if e["type"] == "phase"] == ["loading", "solving", "replay"]
     result = first(events, "stage2_result")
-    # B2: the solver's progress events arrive between "solving" and the result.
+    # The solver's progress events arrive between "solving" and the result.
     types = [e["type"] for e in events]
     progress = [e for e in events if e["type"] == "solve_progress"]
     assert progress and types.index("stage2_result") > types.index("solve_progress")

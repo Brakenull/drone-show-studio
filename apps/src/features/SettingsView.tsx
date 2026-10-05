@@ -1,4 +1,4 @@
-// Where Studio finds the repo, its Python and the run folders (docs/5-studio_gui.md §2.1), in a modal
+// Where Studio finds the repo, its Python and the run folders, in a modal
 // dialog over the current page.
 
 import { useEffect, useRef, useState } from "react";

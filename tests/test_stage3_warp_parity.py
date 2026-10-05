@@ -1,4 +1,4 @@
-"""The OpenCL twin reproduces the retired Warp twin (docs/3-phase-3.md §3).
+"""The OpenCL twin reproduces the retired Warp twin.
 
 tests/data/stage3_warp_reference.npz was recorded on 2026-09-29 with the Warp
 implementation (warp-lang 1.17.0, CPU device) just before it was removed: a
@@ -46,7 +46,7 @@ def test_matches_the_warp_reference():
     assert np.array_equal(got.brownout, ref["warp_brownout"])
 
     # Warp reported nearest neighbours a little beyond PROXIMITY_RADIUS_M (whatever its hash
-    # cells returned); the OpenCL twin reports only those inside it, as §3.4 specifies.
+    # cells returned); the OpenCL twin reports only those inside it, as intended.
     warp_sep = np.where(ref["warp_min_separation_m"] < 3.0, ref["warp_min_separation_m"], np.inf)
     assert np.array_equal(np.isfinite(got.min_separation_m), np.isfinite(warp_sep))
     close = np.isfinite(warp_sep)

@@ -1,4 +1,4 @@
-"""drone_core.SafetyViolationError and its structured report (docs/5-studio_gui.md B1).
+"""drone_core.SafetyViolationError and its structured report.
 
 Forces the continuous gatekeeper to reject the 4-drone smoke-test show by raising
 its floor with retries disabled, then checks the report against an independent

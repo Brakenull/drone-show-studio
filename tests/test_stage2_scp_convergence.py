@@ -1,4 +1,4 @@
-"""Stage 2 SCP judged by the gatekeeper's own measure, with an adaptive trust region (2-phase_2.md 1.19).
+"""Stage 2 SCP judged by the gatekeeper's own measure, with an adaptive trust region.
 
 Runs the smoke-test show and the 8-drone ring show of test_stage2_retry_timing.py. The solver
 scans every close pair at the gatekeeper's rate and keeps the best iterate by that measure, so
@@ -125,7 +125,7 @@ def first_steps(drone_core, repair):
 
 
 def test_starting_paths_are_repaired_so_the_first_step_keeps_its_trust_region(drone_core):
-    # 2-phase_2.md section 1.21 / bug-report P2-10: the seed is over the speed/acceleration/jerk
+    # The seed is over the speed/acceleration/jerk
     # box; the repair QP moves it to the closest flyable path, so the first step's QPs no longer
     # need the tier without a trust region.
     repaired = first_steps(drone_core, True)

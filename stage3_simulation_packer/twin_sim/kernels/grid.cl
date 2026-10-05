@@ -1,4 +1,4 @@
-// Neighbour grid, rebuilt every step for each run (docs/3-phase-3.md §3.2, §3.4).
+// Neighbour grid, rebuilt every step for each run.
 //
 // Cubic cells of 1 / INV_CELL metres, wrapped modulo GRID_G per axis so each
 // run owns a fixed table of T_CELLS cells. simulator.py checks that a query

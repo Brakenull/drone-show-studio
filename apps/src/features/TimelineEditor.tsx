@@ -1,4 +1,4 @@
-// Weather timeline editor of the Conditions tab (docs/4-condition_simulator.md §6): one lane per
+// Weather timeline editor of the Conditions tab: one lane per
 // channel over show time, aligned with the show's formations. Click a lane to add a key, drag a key
 // to move it (wind and rain also up and down to change the value), arrow keys nudge the focused key.
 

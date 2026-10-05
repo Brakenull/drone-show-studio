@@ -1,15 +1,15 @@
-"""A transition that passes only after a gatekeeper retry is timed by what is flown (bug-report P2-03).
+"""A transition that passes only after a gatekeeper retry is timed by what is flown.
 
 8 drones: holding area -> ring -> swap -> hold, with T_min auto-scaling off so
 the takeoff is planned for exactly 30 s. A gatekeeper floor of 1.60 m makes the
 takeoff pass only on a retry, flown for 30 s x 1.25 per retry; with `legs` the
 return leg too (2026-09-30: takeoff 1.577 m then 1.611 m, return 1.593 m then
-1.745 m). The seed repair (2-phase_2.md section 1.21) is off: with it every
+1.745 m). The seed repair is off: with it every
 attempt of this show lands near 2.0 m, so no floor makes a retry pass where the
 first attempt failed; this test is about retry timing, not the solver. The tight
-broad phase (section 1.25) is off for the same reason: with it the first takeoff
+broad phase is off for the same reason: with it the first takeoff
 attempt reaches 1.602 m and the return 2.0 m (2026-10-02), so neither retries. The landing
-hover point (section 1.26) is off too: with it the return passes on its first attempt. The tests
+hover point is off too: with it the return passes on its first attempt. The tests
 accept any retry and check the timing against the attempt actually flown. The show
 timeline, LED fades, leg times and `metadata.transitions` must all follow the
 flown durations. Skips if drone_core is not built for this Python.

@@ -1,4 +1,4 @@
-"""Studio M3 bridge pieces (docs/5-studio_gui.md §6.1, §6.2): planner settings, copying a run, capacity hint."""
+"""Studio M3 bridge pieces: planner settings, copying a run, capacity hint."""
 
 import json
 from pathlib import Path

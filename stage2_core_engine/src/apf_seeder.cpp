@@ -8,13 +8,12 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// Discrete 4-Sector Z-Stratification (docs/2-phase_2.md Rev 2.9 sections
-// 1.2/3.2): replaces the Rev 2.8 continuous H*sin(theta) modulation, which
+// Discrete 4-Sector Z-Stratification: replaces the earlier continuous H*sin(theta) modulation, which
 // cancels to ~0 exactly at due-East/West headings (theta ~= 0, pi) and left
 // those head-on flows with no altitude separation at all. Splits the full
 // horizontal heading circle into 4 orthogonal 90-degree sectors and assigns
 // each an independent, fixed altitude band (in units of `step_m`, so the
-// default 0.75m step reproduces the doc's +-0.75m/+-2.25m bands) — any two
+// default 0.75m step gives +-0.75m/+-2.25m bands) — any two
 // drones whose headings fall in different sectors (in particular any
 // head-on or 90-degree-crossing pair) are separated by at least one full
 // step before the SCP solver ever starts.
@@ -54,7 +53,7 @@ std::vector<Eigen::MatrixXd> seed_control_points_with_apf(const std::vector<Boun
     const int m = num_control_points - 1;
 
     // r[i][k] is drone i's warm-start position for the free control point at
-    // index (free_begin + k), k in [0, num_free) -- doc section 3.2 step 1's
+    // index (free_begin + k), k in [0, num_free) -- step 1's
     // r_i^(0)(t_k), sampled at that control point's own nominal parametric
     // fraction rather than a fixed K_sample=8 grid (see header comment).
     std::vector<double> tau(num_free);

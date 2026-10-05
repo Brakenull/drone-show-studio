@@ -1,5 +1,5 @@
 // Conditions (Stage 3 › Weather scenarios): weather scenarios for a show, flown through the digital twin,
-// and the rain return readiness of the show (docs/4-condition_simulator.md §5, §6; milestones C1, C2).
+// and the rain return readiness of the show.
 // When a scenario's rain reaches the alert level, the simulation flies the fleet home on its return
 // paths. This page holds the inputs and the results; the playback is in the Replay tab.
 
@@ -199,7 +199,7 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
     }).catch((e) => setProblem({ message: String(e), errors: [] }));
   }
 
-  /** §5.4 "Fly this": a copy of the scenario whose rain reaches the alert level at `alert` and the limit
+  /** "Fly this": a copy of the scenario whose rain reaches the alert level at `alert` and the limit
    *  level `window` seconds later, simulated straight away. */
   async function flyThis(alert: number, window: number) {
     if (!draft) return;

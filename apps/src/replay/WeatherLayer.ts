@@ -1,4 +1,4 @@
-// Weather of a simulated flight drawn in the replay scene (docs/4-condition_simulator.md §6):
+// Weather of a simulated flight drawn in the replay scene:
 // wind as streaks drifting with the air, denser with more turbulence; rain as falling streaks,
 // denser with intensity; each gust front as a translucent band sweeping across the field.
 // Everything is a function of playback time, so scrubbing shows the same picture as playing.

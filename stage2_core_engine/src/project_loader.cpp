@@ -39,7 +39,7 @@ ProjectData parse_project(const nlohmann::json& root) {
     data.metadata.holding_area.size = Eigen::Vector2d(size[0], size[1]);
     data.metadata.holding_area.max_height = holding_json.at("max_height").get<double>();
     data.metadata.holding_area.layer_spacing_m = holding_json.at("layer_spacing_m").get<double>();
-    // grid_spacing_m is new in Phase 1 Rev 1.5; older exports don't have it,
+    // grid_spacing_m is newer; older exports don't have it,
     // so fall back to layer_spacing_m (which was itself just min_distance_m
     // before that revision separated the two).
     data.metadata.holding_area.grid_spacing_m = holding_json.contains("grid_spacing_m")
@@ -133,7 +133,7 @@ struct LayerGrid {
 // Shared by compute_holding_positions(), compute_holding_row_indices() and
 // compute_holding_region() so they can never disagree on the layer grids /
 // how many layers / whether the footprint had to widen. A port of Phase 1's
-// HoldingLayout (stage1_designer/core/holding_area.py, spec section 3.2).
+// HoldingLayout (stage1_designer/core/holding_area.py).
 struct HoldingLayout {
     int cols = 0;  // columns / rows of the even (unshifted) layers
     int rows = 0;

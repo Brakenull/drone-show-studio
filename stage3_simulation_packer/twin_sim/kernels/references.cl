@@ -1,4 +1,4 @@
-// Phase 2 references on the device (docs/3-phase-3.md §1.2, §3.1, §4):
+// Phase 2 references on the device:
 // piecewise power-basis polynomials from loaders/spline_evaluator.py, same
 // timeline and color rules as its NumPy path (see that module's docstring).
 // Times are seconds since the show start, so float32 keeps sub-millisecond

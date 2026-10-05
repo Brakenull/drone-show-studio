@@ -1,4 +1,4 @@
-"""B-spline trajectory + LED color evaluation (docs/3-phase-3.md §1.2, §3.1, §4).
+"""B-spline trajectory + LED color evaluation.
 
 Every clamped B-spline segment is converted once, on the host, into its exact
 piecewise-polynomial (power basis) form: one polynomial per non-degenerate
@@ -13,7 +13,7 @@ Timeline rules (identical in the NumPy and OpenCL paths):
 * in a gap between segments, or after the last span: last reached span's end
   position, v = a = 0 (the drone holds position)
 
-Color rule (§1.2): per-channel linear interpolation between adjacent
+Color rule: per-channel linear interpolation between adjacent
 `time_sec` keyframes, rounded to uint8 as ``floor(x + 0.5)``; two keyframes at
 the same instant make a step (the later one wins from that instant on);
 clamp-to-edge outside the keyframe range. Keyframes from all of a drone's
@@ -210,7 +210,7 @@ def evaluate_numpy(pw: PiecewiseTrajectories, times: np.ndarray,
 
 def evaluate_colors_numpy(pw: PiecewiseTrajectories, times: np.ndarray,
                           drone_ids: np.ndarray | None = None) -> np.ndarray:
-    """Return (len(drone_ids), len(times), 3) uint8 LED colors (§1.2 rule)."""
+    """Return (len(drone_ids), len(times), 3) uint8 LED colors."""
     times = np.asarray(times, dtype=np.float64).reshape(-1)
     ids = np.arange(pw.fleet_size) if drone_ids is None else np.asarray(drone_ids).reshape(-1)
     out = np.zeros((ids.size, times.size, 3), dtype=np.uint8)

@@ -9,8 +9,7 @@
 
 // Glue between the Phase 1 intermediate JSON contract
 // (schemas/project_intermediate.schema.json) and the Core Engine's
-// algorithmic modules. Not one of the 4 modules enumerated in
-// docs/2-phase_2.md section 5 — this is the integration layer the pybind11
+// algorithmic modules. Not one of the 4 algorithm modules — this is the integration layer the pybind11
 // entry point (bindings/py_bindings.cpp) needs to turn that JSON into the
 // per-transition assignment/trajectory problems those modules consume.
 
@@ -32,26 +31,26 @@ struct HoldingArea {
     Eigen::Vector3d center = Eigen::Vector3d::Zero();
     Eigen::Vector2d size = Eigen::Vector2d::Zero();
     double max_height = 0.0;
-    // Rev 1.5 (Phase 1) / Rev 2.6 (Phase 2): the launch-grid pitch d_launch,
+    // The launch-grid pitch d_launch,
     // deliberately larger than the in-flight min_distance_m — see Phase 1's
     // config.py DEFAULT_GRID_SPACING_M docstring. Falls back to
-    // layer_spacing_m for exports from before Phase 1 Rev 1.5 added this
+    // layer_spacing_m for older exports without this
     // field (see parse_project()).
     double grid_spacing_m = 0.0;
     // The vertical gap between stacked layers. Honoured since Phase 1 schema
-    // 1.7.0 (1-phase_1.md section 3.2.3); older files carry grid_spacing_m
+    // 1.7.0; older files carry grid_spacing_m
     // here, which is the straight stacking they were laid out with.
     double layer_spacing_m = 0.0;
     // Phase 1 schema 1.7.0 (optional, false when absent): odd layers shifted
     // half a slot in x and y, one column and one row fewer.
     bool staggered_layers = false;
-    // Phase 1 schema 1.6.0 (optional): the designer's "Safe Distance to Show"
-    // (1-phase_1.md section 3.2.2). When set, show drones keep at least this
-    // far from the holding region (docs/2-phase_2.md section 1.14).
+    // Phase 1 schema 1.6.0 (optional): the designer's "Safe Distance to Show".
+    // When set, show drones keep at least this
+    // far from the holding region.
     std::optional<double> show_clearance_m;
 };
 
-// The holding region (1-phase_1.md section 3.2, a port of Phase 1's
+// The holding region (a port of Phase 1's
 // holding_region_bounds()): the declared volume (footprint, widened if the
 // fleet needed it, from center z up to max_height) together with the parked
 // slot grid padded by half a grid step on every side. ENU, axis-aligned.
@@ -60,8 +59,8 @@ struct HoldingRegion {
     Eigen::Vector3d hi = Eigen::Vector3d::Zero();
 };
 
-// Phase 1 schema 1.7.0's optional project_metadata.waiting_areas
-// (1-phase_1.md section 3.10, 2-phase_2.md section 1.29): places in the air
+// Phase 1 schema 1.7.0's optional project_metadata.waiting_areas:
+// places in the air
 // where spare drones wait instead of flying home. One flat layer of
 // `slot_count` slots at center z (the declared grid, grown compactly on its
 // shorter side when slot_count needs it); a port of
@@ -74,8 +73,8 @@ struct WaitingArea {
     int slot_count = 0;
 };
 
-// Phase 1 schema 1.6.0's optional project_metadata.legs (1-phase_1.md
-// section 3.8): the takeoff (holding area -> keyframes[0]) and return (last
+// Phase 1 schema 1.6.0's optional project_metadata.legs:
+// the takeoff (holding area -> keyframes[0]) and return (last
 // keyframe -> holding area) legs. A duration of nullopt means Auto (fly the
 // leg in its minimum time); a target is flown as max(target, T_min).
 struct ShowLegs {
@@ -93,8 +92,8 @@ struct ProjectMetadata {
     double heading_offset_deg = 0.0;
     HoldingArea holding_area;
     ShowLegs legs;
-    // Phase 1 schema 1.6.0 (optional): ENU height of the ground (1-phase_1.md
-    // section 3.9). nullopt for files that don't declare one.
+    // Phase 1 schema 1.6.0 (optional): ENU height of the ground.
+    // nullopt for files that don't declare one.
     std::optional<double> ground_z_m;
     // Phase 1 schema 1.7.0 (optional): empty for files without waiting areas.
     std::vector<WaitingArea> waiting_areas;
@@ -116,7 +115,7 @@ ProjectData parse_project(const nlohmann::json& phase1_intermediate_json);
 // same physical launch-grid positions the Blender add-on lays out.
 Eigen::MatrixXd compute_holding_positions(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
 
-// Rev 2.6 section 1.7's Staggered Wave Takeoff needs each parked drone's
+// Staggered Wave Takeoff needs each parked drone's
 // "Launch Row Index" (its row within its layer of the same grid
 // compute_holding_positions() lays out) — returned in the same slot order
 // as compute_holding_positions()'s rows.

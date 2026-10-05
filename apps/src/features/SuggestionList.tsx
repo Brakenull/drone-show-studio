@@ -1,4 +1,4 @@
-// Suggestions for the moments a rain window doesn't cover (docs/4-condition_simulator.md §5.3, §6): each
+// Suggestions for the moments a rain window doesn't cover: each
 // option with its numbers and how much of the uncovered time it closes on its own, ranked by that. The app
 // never applies one by itself; each leads to an explicit action.
 

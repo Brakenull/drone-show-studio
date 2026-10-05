@@ -1,4 +1,4 @@
-"""Stage 2 holding-area keep-out zone from the design's safe distance (2-phase_2.md section 1.14).
+"""Stage 2 holding-area keep-out zone from the design's safe distance.
 
 4 drones fly from a line at y = -30 to a line at y = +30, 12 m up; the straight
 way passes 2 m over the holding region (which reaches z = 10 m). With

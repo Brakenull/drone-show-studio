@@ -1,8 +1,7 @@
 """End-to-end smoke test for the stage2_core_engine Python extension.
 
 Builds a tiny synthetic show (holding area -> square -> diamond, 4 drones,
-a symmetric crossing similar to docs/2-phase_2.md Rev 2.3 section 6's
-"Symmetric Crossing Test"), calls `drone_core.optimize_trajectories()`, then
+a symmetric crossing, a "Symmetric Crossing Test"), calls `drone_core.optimize_trajectories()`, then
 independently re-evaluates the returned quintic B-spline control points (a
 small pure-Python Cox-de Boor implementation, not the C++ code under test,
 using each segment's own exported `knot_vector`) to check the acceptance
@@ -112,7 +111,7 @@ def build_phase1_json() -> dict:
                 "size": [5.0, 5.0],
                 "max_height": 10.0,
                 "layer_spacing_m": 2.0,
-                # Rev 1.5 (Phase 1): launch-grid pitch, deliberately wider
+                # Phase 1: launch-grid pitch, deliberately wider
                 # than min_distance_m so liftoff has real separation headroom
                 # instead of departing from exactly the in-flight minimum.
                 "grid_spacing_m": 2.0,
@@ -121,7 +120,7 @@ def build_phase1_json() -> dict:
         },
         "keyframes": [
             {
-                # Scale matches docs/2-phase_2.md Rev 2.5 section 6's named
+                # Scale matches named
                 # "Holding Area -> Square Formation Test" (D_max ~= 39 m),
                 # the scale at which adaptive control points / T_min
                 # auto-scaling are actually meant to engage — the previous
@@ -159,7 +158,7 @@ def main() -> int:
     parser.add_argument("--max-scp-iterations", type=int, default=None)
     parser.add_argument("--trust-region-delta-m", type=float, default=None)
     parser.add_argument("--collision-margin-fraction", type=float, default=None)
-    parser.add_argument("--no-auto-scale-time", action="store_true", help="Disable Rev 2.5 T_min auto-scaling")
+    parser.add_argument("--no-auto-scale-time", action="store_true", help="Disable T_min auto-scaling")
     parser.add_argument("--sample-hz", type=float, default=20.0, help="Independent re-check sampling rate")
     args = parser.parse_args()
 

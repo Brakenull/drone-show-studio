@@ -1,4 +1,4 @@
-"""Python side of the Studio desktop app (docs/5-studio_gui.md §2, §4).
+"""Python side of the Studio desktop app.
 
 The Tauri shell starts `python -m tools.studio_bridge <command> ...` from the
 repo root and reads NDJSON events from stdout. All pipeline work goes through

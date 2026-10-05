@@ -1,4 +1,4 @@
-// Rain return readiness (docs/4-condition_simulator.md §5, §6): for every moment of the show, can the
+// Rain return readiness: for every moment of the show, can the
 // fleet be home before the rain gets too heavy, and if not, what would close the gap? The chart shares
 // the timeline's time axis.
 
@@ -87,7 +87,7 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
     startReturns(run.run_id, run.run_dir, formations, () => onPlanned(), points).catch((e) => setPlanError(String(e)));
   }
 
-  // Suggestions (§5.3) come from the bridge for one window and rule; they go out of date when either, or the
+  // Suggestions come from the bridge for one window and rule; they go out of date when either, or the
   // planned return paths, change.
   const rule = scenario.rain_rule;
   const suggestKey = [rainWindow, reaction, margin, rule.alert_mm_h, rule.limit_mm_h, JSON.stringify(readiness.pieces)].join("|");

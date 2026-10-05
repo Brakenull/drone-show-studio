@@ -4,7 +4,7 @@
 
 #include <Eigen/Dense>
 
-// Point Assignment Module (docs/2-phase_2.md section 3.1): matches N drones
+// Point Assignment Module: matches N drones
 // at scene P to N target points at scene Q, minimizing the augmented cost
 // C_ij = w_d*||Pi-Qj|| + w_z*max(0, Qjz-Piz) + w_heading*delta_theta_ij,
 // solved with the Auction Algorithm (Bertsekas).
@@ -26,11 +26,10 @@ struct AssignmentResult {
 };
 
 // v_in = [sin(heading_offset_rad), cos(heading_offset_rad)], used for every
-// drone at the very first transition (holding area -> first keyframe), per
-// docs/2-phase_2.md section 3.1.
+// drone at the very first transition (holding area -> first keyframe).
 Eigen::Vector2d initial_heading_velocity(double heading_offset_rad);
 
-// Builds the NxN augmented cost matrix exactly as specified in section 3.1.
+// Builds the NxN augmented cost matrix exactly as specified.
 Eigen::MatrixXd build_cost_matrix(const AssignmentInput& input);
 
 // Solves the resulting minimum-cost bipartite assignment with the forward

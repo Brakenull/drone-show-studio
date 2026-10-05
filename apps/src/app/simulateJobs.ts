@@ -1,4 +1,4 @@
-// Live "Simulate this scenario" jobs (bridge `simulate`, docs/4-condition_simulator.md §6) keyed by run id.
+// Live "Simulate this scenario" jobs (bridge `simulate`) keyed by run id.
 // Lives outside React, like stage3Jobs, so a simulation keeps streaming while the user looks elsewhere.
 
 import { useSyncExternalStore } from "react";

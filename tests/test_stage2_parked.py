@@ -1,9 +1,9 @@
-"""Stage 2 holds parked drones still (2-phase_2.md section 1.15).
+"""Stage 2 holds parked drones still.
 
 9 drones on a 3 x 3 holding grid at ground level. The formations use only the 3
 drones of the front (north) row; the 6 behind them are parked: their own pads
 are points of every keyframe, as Phase 1 exports them. The movers take off 2 m
-from the parked row. Before section 1.15 the planner optimized the
+from the parked row. Before parked drones were fixed, the planner optimized the
 parked drones like any other (the APF seed even lifted them into an altitude
 band), so they hopped several meters and landed again. A 30 s takeoff target
 also runs the mega-cluster sub-stages and their de-clashed boundary waypoints.
@@ -27,7 +27,7 @@ from stage1_designer.core.holding_area import compute_holding_positions  # noqa:
 
 AIR_A = [[-2.0, 20.0, 12.0], [0.0, 20.0, 12.0], [2.0, 20.0, 12.0]]
 AIR_B = [[-2.0, 24.0, 14.0], [0.0, 24.0, 14.0], [2.0, 24.0, 14.0]]
-HOVER_HEIGHT_M = 2.0  # core_config.json's landing_approach_height_m (2-phase_2.md section 1.28)
+HOVER_HEIGHT_M = 2.0  # core_config.json's landing_approach_height_m
 
 
 @pytest.fixture(scope="module")
@@ -117,7 +117,7 @@ def test_a_drone_parking_mid_show_lands_at_rest_and_stays(drone_core):
     # line (3 flying) -> park_one (one of them lands on a free front-row pad) -> line_2
     # (it stays parked). Before 2026-09-29 it reached the pad at the fly-through speed
     # (~3 m/s sideways) and skidded into the neighbouring pad in the next transition.
-    # Since section 1.28 (2026-10-02) it reaches the hover point 2 m above the pad at rest,
+    # Since 2026-10-02 it reaches the hover point 2 m above the pad at rest,
     # then descends straight onto the pad at the start of the next transition and stays.
     phase1, pads = parked_show()
     meta = phase1["project_metadata"]

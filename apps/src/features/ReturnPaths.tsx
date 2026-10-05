@@ -1,4 +1,4 @@
-// "Return paths" on a passed Stage 2 run (docs/4-condition_simulator.md B4, §6): plan, after the show
+// "Return paths" on a passed Stage 2 run: plan, after the show
 // passed, a checked flight from each formation straight back to the holding area.
 
 import { useEffect, useRef, useState } from "react";
@@ -371,7 +371,7 @@ export function ReturnsRunning({ job, runId, names }: { job: ReturnsJob; runId: 
   );
 }
 
-/** Returns planned from moments inside a move (docs/4-condition_simulator.md §5.3), from the readiness
+/** Returns planned from moments inside a move, from the readiness
  *  suggestions: the fleet turns for home there instead of finishing the move. */
 function AbortPointTable({
   points,

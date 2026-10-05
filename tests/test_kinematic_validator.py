@@ -30,7 +30,7 @@ def test_required_velocity_zero_delta_t_no_movement_is_zero():
 
 @pytest.mark.parametrize(
     "v_req,expected",
-    # Thresholds are inclusive on the safer side (doc section 3.5: OK is
+    # Thresholds are inclusive on the safer side (OK is
     # v_req <= 0.75*v_max, WARNING is up to and including v_req == v_max).
     [(3.0, STATUS_OK), (4.5, STATUS_OK), (4.501, STATUS_WARNING), (6.0, STATUS_WARNING), (6.001, STATUS_ERROR), (10.0, STATUS_ERROR)],
 )
@@ -39,7 +39,7 @@ def test_classify_status_thresholds(v_req, expected):
 
 
 def test_evaluate_transitions_matches_doc_example():
-    # docs/1-phase_1.md section 3.5's own example: 73 m in 2 s.
+    # own example: 73 m in 2 s.
     times = [0.0, 2.0]
     p0 = np.array([[0.0, 0.0, 0.0]])
     p1 = np.array([[73.0, 0.0, 0.0]])

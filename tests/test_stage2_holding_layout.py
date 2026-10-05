@@ -1,5 +1,5 @@
-"""Phase 1 and Stage 2 lay out the same holding area (1-phase_1.md sections 3.2
-and 3.2.3): slots in the same order, the same launch row
+"""Phase 1 and Stage 2 lay out the same holding area:
+slots in the same order, the same launch row
 indices and the same holding region, for the old straight stacking (schema
 <= 1.6.0) and the staggered layout with a 4 m gap (1.7.0), including a
 widened footprint. Skips if drone_core is not built for this Python.

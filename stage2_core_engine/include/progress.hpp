@@ -4,8 +4,7 @@
 #include <limits>
 #include <string>
 
-// Progress reporting for long Stage 2 solves (docs/5-studio_gui.md section
-// 5.2, B2). An empty ProgressCallback is the default everywhere and costs
+// Progress reporting for long Stage 2 solves. An empty ProgressCallback is the default everywhere and costs
 // one branch per call site: no event is built unless a callback is set.
 //
 // Every callback runs on the calling (main) thread, never inside an OpenMP
@@ -52,7 +51,7 @@ struct ProgressEvent {
     // +infinity when no pair was a candidate.
     double min_separation_m = std::numeric_limits<double>::infinity();
     bool converged = false;
-    // Section 1.19: this step's candidate was accepted (else the sub-stage fell
+    // This step's candidate was accepted (else the sub-stage fell
     // back to its best iterate); the step's trust-region radius; the best
     // iterate's separation (same scan as min_separation_m).
     bool step_accepted = false;
@@ -61,7 +60,7 @@ struct ProgressEvent {
     // This step's drone QPs solved by tier 0 (with trust region), tier 1
     // (without), tier 2 (jittered), or none.
     int qp_tier_counts[4] = {0, 0, 0, 0};
-    // Section 1.21, per sub-stage (same on each of its steps): drones whose
+    // Seed repair, per sub-stage (same on each of its steps): drones whose
     // starting path was already flyable, was repaired, or couldn't be.
     int seed_repair_counts[3] = {0, 0, 0};
     // Where the step's time went (2026-10-02, measurement only). Wall times:

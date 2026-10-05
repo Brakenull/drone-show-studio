@@ -1,4 +1,4 @@
-//! Drone Show Studio desktop shell (docs/5-studio_gui.md §2): no domain logic lives here.
+//! Drone Show Studio desktop shell: no domain logic lives here.
 
 mod bridge;
 mod runs;

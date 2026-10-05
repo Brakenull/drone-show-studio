@@ -1,12 +1,12 @@
 """Python reader/verifier for drone_<id>.bin flight files.
 
-Mirrors packer/include/flight_binary_spec.h (docs/3-phase-3.md §4.2) with
+Mirrors packer/include/flight_binary_spec.h with
 NumPy structured dtypes; the CRC is zlib.crc32, which is exactly
 CRC-32-IEEE. Used by the tests to cross-check the C++ packer and by tooling
 that needs to inspect flight files without the C++ build.
 
 Version 2 (0x0200) files hold tracks -- the show, then return paths to the
-holding area -- and the return table (docs/4-condition_simulator.md §8.4);
+holding area -- and the return table;
 version 1 (0x0101) files, the show alone, are still read.
 """
 

@@ -1,15 +1,15 @@
-"""Rain rule: time to home, coverage and abort flights (docs/4-condition_simulator.md §5.1, §5.2, B7).
+"""Rain rule: time to home, coverage and abort flights.
 
 Rule: when the rain reaches its alert level, the return to the holding area is commanded `reaction`
 seconds later. The drones finish the transition they are in (it is checked and safe) and fly the
 planned return path of the formation it ends at; at a formation they start its return at once. From
 the last formation the return is the show's own return leg. Every drone must be landed before the rain
-reaches its limit level. Abort points (section 5.3, "more abort points") are return paths planned from
+reaches its limit level. Abort points are return paths planned from
 moments inside a transition: the drones keep flying the show to the abort point ahead (or the formation)
 whose return gets them home first, and fly that one from there.
 
 Time to home `H(u)`: if the return is commanded at show time u, the time until every drone is
-landed, from the planned paths alone (Stage 2 timing, B5, and return durations, B4):
+landed, from the planned paths alone (Stage 2 transition timing and return durations):
 
 * in the transition into formation k (takeoff included):  H = (arrival_k - u) + D_k, or, with abort
   points p ahead in that transition, min over them of (time_p - u) + D_p when that is sooner
@@ -25,7 +25,7 @@ With rain window W (alert to limit), reaction R and margin M, the alert at time 
 R + H(t + R) + M <= W: H is taken when the command reaches the drones. `coverage()` gives the
 uncovered intervals exactly; `H` is piecewise of slope 0 or -1.
 
-`abort_plan()` / `compose()` build the reference an abort flight follows (B7): the show until the
+`abort_plan()` / `compose()` build the reference an abort flight follows: the show until the
 drones reach formation k, a hold there until the return starts, the return path shifted to start then,
 and the hold on the slots after it.
 """
@@ -39,10 +39,10 @@ from typing import Any
 import numpy as np
 
 HOLDING = "holding_area"
-RETURN_PATH = "return_path"       # a planned return (B4), or the takeoff flown backwards
+RETURN_PATH = "return_path"       # a planned return, or the takeoff flown backwards
 RETURN_LEG = "return_leg"         # the show's own return leg, from the last formation
 REST_OF_SHOW = "rest_of_show"     # no return path: keep flying the show to its return leg
-ABORT_POINT = "abort_point"       # a return path planned from a moment inside a transition (section 5.3)
+ABORT_POINT = "abort_point"       # a return path planned from a moment inside a transition
 NONE = "none"                     # no way home known
 LANDED = "landed"                 # after the show's return leg: nothing left to do
 
@@ -236,7 +236,7 @@ def coverage(pieces: list[Piece], end: float, reaction: float, margin: float, wi
 
 
 # --------------------------------------------------------------------------- #
-# Abort flights (B7)
+# Abort flights
 # --------------------------------------------------------------------------- #
 
 @dataclass
@@ -368,7 +368,7 @@ def abort_reference(show: dict[str, Any], timing: ShowTiming, returns: dict[int,
 
 
 # --------------------------------------------------------------------------- #
-# Suggestions when a moment is not covered (section 5.3)
+# Suggestions when a moment is not covered
 # --------------------------------------------------------------------------- #
 
 EARLIER_TRIGGER = "earlier_trigger"   # start the return before the rain alert (forecast, or a lower alert level)
@@ -409,10 +409,10 @@ def suggestions(timing: ShowTiming, durations: dict[int, float], points: list[Ab
                 margin: float, window: float, facts: dict[int, ReturnFacts] | None = None,
                 candidates: list[AbortPoint] | None = None,
                 rule: dict[str, float] | None = None) -> dict[str, Any]:
-    """The options of section 5.3 for a rain window, each with its numbers and the uncovered alert time it
+    """The options for a rain window, each with its numbers and the uncovered alert time it
     closes on its own, ranked by that.
 
-    `facts`: per formation, its return's planned and Auto durations (B4, or an estimate when it has none).
+    `facts`: per formation, its return's planned and Auto durations (or an estimate when it has none).
     `candidates`: abort points not planned yet, each with its estimated duration (the Auto duration of a
     return from there); the "more abort points" option picks those that close uncovered time.
     `rule`: the scenario's alert and limit levels, to express the earlier trigger as a lower alert level.

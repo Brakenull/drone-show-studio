@@ -1,4 +1,4 @@
-"""Holding Area layout & overflow handling (spec section 3.2, Rev 1.7).
+"""Holding Area layout & overflow handling.
 
 Pure geometry module: no `bpy` dependency, fully unit-testable.
 
@@ -7,7 +7,7 @@ Rule recap:
   - When N_park exceeds a layer: stack new layers upward,
     Z_layer(m) = Zc + m*layer_spacing_m (schema <= 1.6.0 files carry
     layer_spacing_m = d_launch: the old straight stacking)
-  - Staggered layers (schema 1.7.0, spec section 3.2.3): odd layers are
+  - Staggered layers (schema 1.7.0): odd layers are
     shifted half a slot in X and in Y and have one column and one row fewer,
     so they stay inside the footprint and no slot sits straight above a slot
     of the layer below (126 / 100 slots per layer at 40 x 10 m, 2 m)
@@ -71,7 +71,7 @@ class LayerGrid(NamedTuple):
 
 
 class HoldingLayout(NamedTuple):
-    """Resolved grid for a fleet: after any footprint widening (spec 3.2)."""
+    """Resolved grid for a fleet: after any footprint widening."""
 
     cols: int  # columns / rows of the even (unshifted) layers
     rows: int
@@ -200,8 +200,8 @@ def compute_padding_positions(
     layer_spacing_m: Optional[float] = None,
     staggered_layers: bool = False,
 ) -> np.ndarray:
-    """Slots for the `n_park` drones a short formation leaves unused (spec
-    section 3.2.2, the padding): the first `n_park` slots of the whole
+    """Slots for the `n_park` drones a short formation leaves unused (the
+    padding): the first `n_park` slots of the whole
     fleet's layout, i.e. real pads. A layout computed for `n_park` drones
     alone would differ whenever the fleet's layout is widened and the
     smaller one is not; otherwise the two are the same slots."""
@@ -225,8 +225,8 @@ def compute_holding_row_indices(
     staggered_layers: bool = False,
 ) -> np.ndarray:
     """Each slot's row within its layer, in `compute_holding_positions`' slot
-    order: the Launch Row Index of Stage 2's staggered takeoff (2-phase_2.md
-    section 1.7; Stage 2's `compute_holding_row_indices` is the port)."""
+    order: the Launch Row Index of Stage 2's staggered takeoff (Stage 2's
+    `compute_holding_row_indices` is the port)."""
     if n_park <= 0:
         return np.zeros(0, dtype=int)
     layout = compute_holding_layout(
@@ -272,7 +272,7 @@ def holding_region_bounds(
 
 def min_layer_spacing(hover_height_m: float, planning_distance_m: float) -> float:
     """Smallest layer gap that keeps a pad's vertical path to its hover point
-    (`hover_height_m` above it, 2-phase_2.md sections 1.26-1.28) at least
+    (`hover_height_m` above it) at least
     `planning_distance_m` below the slot above it, even when that slot is
     straight above (no shift)."""
     return hover_height_m + planning_distance_m

@@ -1,9 +1,9 @@
-"""Add waiting areas to an exported Phase 1 file (1-phase_1.md section 3.10.1:
-real-show validation of Part B without re-exporting from Blender).
+"""Add waiting areas to an exported Phase 1 file (real-show validation of
+Part B without re-exporting from Blender).
 
 Finds each keyframe's holding-area padding (the drones a short formation
 leaves parked, see convert_holding_layout.py), replaces it with the first
-waiting slots (area order, as the add-on pads, 1-phase_1.md section 3.10),
+waiting slots (area order, as the add-on pads),
 LEDs off, and writes `project_metadata.waiting_areas` with each area's
 `slot_count`.
 

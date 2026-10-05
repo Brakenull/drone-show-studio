@@ -1,4 +1,4 @@
-"""Real-time kinematic pre-validator (spec section 3.5).
+"""Real-time kinematic pre-validator.
 
 Pure module: no `bpy` dependency, fully unit-testable. Estimates the average
 speed a keyframe-to-keyframe transition demands from the nominal timeline
@@ -7,7 +7,7 @@ v_max before they ever reach Phase 2, and can compute a stretched timeline
 that brings every transition back under budget.
 
 `D_max` between two keyframes is approximated via same-array-index
-correspondence (spec section 3.5: "hoặc xấp xỉ qua phân bố tâm cụm") since
+correspondence ("hoặc xấp xỉ qua phân bố tâm cụm") since
 Phase 1 has no visibility into Phase 2's Auction point-matching — the actual
 per-drone assignment can only reduce total travel versus this identity
 pairing, so this approximation is conservative (it warns at least as often
@@ -41,7 +41,7 @@ class TransitionKinematics:
 
 
 def required_velocity(d_max: float, delta_t: float) -> float:
-    """v_req = D_max / delta_t (spec section 3.5). `delta_t <= 0` (keyframes
+    """v_req = D_max / delta_t. `delta_t <= 0` (keyframes
     at the same time, or out of order) is treated as an immediate, infinite
     velocity demand rather than raising, so callers can classify it as an
     unconditional ERROR."""
@@ -59,7 +59,7 @@ def classify_status(v_req: float, v_max: float) -> str:
 
 
 def compute_min_safe_duration(d_max: float, v_max: float, slack_fraction: float = KINEMATIC_SLACK_FRACTION) -> float:
-    """Delta_t_safe (spec section 3.5): the minimum keyframe-to-keyframe
+    """Delta_t_safe: the minimum keyframe-to-keyframe
     duration that keeps the rest-to-rest quintic peak velocity within v_max,
     plus `slack_fraction` extra headroom for Phase 2's own collision-avoidance
     bending."""

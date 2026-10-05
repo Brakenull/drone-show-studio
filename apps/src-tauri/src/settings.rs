@@ -1,4 +1,4 @@
-//! App settings (docs/5-studio_gui.md §2.1): where the repo, its Python and the run folders are.
+//! App settings: where the repo, its Python and the run folders are.
 
 use std::fs;
 use std::path::{Path, PathBuf};

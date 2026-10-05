@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 CONTROL_RATE_HZ = 200.0
 GNSS_CORRELATION_TIME_S = 60.0
 # Closest-approach tracking resolves separations below this; anything farther
-# reports as inf. Comfortably above the 1.0 m warning threshold (§3.4).
+# reports as inf. Comfortably above the 1.0 m warning threshold.
 PROXIMITY_RADIUS_M = 3.0
 _NO_NEIGHBOUR = 1.0e9
 
@@ -70,7 +70,7 @@ class Disturbances:
     gnss_noise_m: float
     gnss_drift_m_per_sqrt_s: float
     initial_position_error_m: float
-    # Condition simulator (docs/4-condition_simulator.md B6). `gusts`: (G, 9) gust fronts (peak vector
+    # Condition simulator. `gusts`: (G, 9) gust fronts (peak vector
     # xyz, sweep direction xyz, start, duration, speed) replacing the single gust above. `weather`: a
     # timeline that replaces the constant mean wind and GNSS values and scales the turbulence modes.
     gusts: np.ndarray | None = None

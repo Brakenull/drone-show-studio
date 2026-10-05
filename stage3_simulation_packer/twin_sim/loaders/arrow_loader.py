@@ -1,4 +1,4 @@
-"""Phase 2 -> Phase 3 trajectory contract loader (docs/3-phase-3.md §1.2).
+"""Phase 2 -> Phase 3 trajectory contract loader.
 
 Accepted sources, all normalized into one validated `ShowTrajectories`:
 
@@ -486,7 +486,7 @@ def _finalize(metadata: dict[str, Any], drones: list[DroneTrajectory], degree: i
     if _is_int(fleet_size) and len(drones) != fleet_size:
         errors.append(f"metadata.fleet_size is {fleet_size} but {len(drones)} trajectories were provided")
     if ids and ids != list(range(len(ids))):
-        # The flight binary header stores 0 <= drone_id < N (docs/3-phase-3.md §4.2).
+        # The flight binary header stores 0 <= drone_id < N.
         errors.append("drone_id values must be exactly 0..N-1")
 
     for drone in drones:

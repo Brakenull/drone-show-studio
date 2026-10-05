@@ -48,7 +48,7 @@ Eigen::MatrixXi colors_by_index(const Keyframe& kf, int fleet_size) {
     return colors;
 }
 
-// Rev 2.6 section 1.7's Staggered Wave Takeoff prepends/appends a
+// Staggered Wave Takeoff prepends/appends a
 // constant-velocity "hold" segment around a staggered row's real maneuver
 // (see run_pipeline()'s use). `state`'s acceleration is always zero in this
 // pipeline, so a hold that keeps velocity constant and ends exactly
@@ -65,14 +65,14 @@ Eigen::MatrixXd build_hold_segment_control_points(const trajectory::BoundaryCond
     return trajectory::seed_control_points(state, hold_end, hold_duration, num_control_points);
 }
 
-// Section 1.26 (bug-report P3-03): landing drones first fly to a hover point
+// Landing drones first fly to a hover point
 // `height` straight above their slot and then all descend vertically
 // together. Flown straight onto a ground slot, a drone glided in low and
 // sideways (down to 2-6 cm above the ground for metres) and any downward
 // push (downwash from the stacked slots above, a gust) put it on the ground
 // short of its slot.
 //
-// The descent (and, since section 1.27, the takeoff's climb), rest to rest
+// The descent (and the takeoff's climb), rest to rest
 // and straight up or down by `rise` (negative = down): seed_control_points()
 // pins the first and last three control points to the two rest states and
 // puts the others on the straight line between them. Its duration is the
@@ -126,7 +126,7 @@ double vertical_move_duration(double height, const CoreConfig& config) {
 }
 
 // Drones making the same vertical move together keep the distance between
-// their slots (section 1.28's lockstep groups), so the rule is only used when
+// their slots (lockstep groups), so the rule is only used when
 // the slots keep the gatekeeper's distance.
 bool slots_keep_distance(const Eigen::MatrixXd& slots, double min_distance) {
     for (int a = 0; a < slots.rows(); ++a) {
@@ -137,7 +137,7 @@ bool slots_keep_distance(const Eigen::MatrixXd& slots, double min_distance) {
     return true;
 }
 
-// ---- Section 1.28: every pad visit vertical ----------------------------------
+// ---- Every pad visit vertical ----------------------------------------------
 
 enum class PadKind { kAir, kHover, kOnPad };
 
@@ -147,7 +147,7 @@ struct PadState {
     Eigen::Vector3d pad = Eigen::Vector3d::Zero();  // its slot, when hovering above it or on it
 };
 
-// What a parked drone does in one transition (section 1.28's rule table).
+// What a parked drone does in one transition (rule table).
 enum class PadMove {
     kNone,          // not parked: flown (it may leave or reach a pad, see Leave / Arrive)
     kStay,          // stationary, on its pad or at its hover point
@@ -344,7 +344,7 @@ std::vector<int> pad_conflicts(const std::vector<PadPlan>& plans, double height,
     return conflicted;
 }
 
-// Gives up a drone's vertical move: section 1.28's fallback, the old way.
+// Gives up a drone's vertical move: fallback, the old way.
 // False when it has none left to give up.
 bool downgrade_pad_plan(PadPlan& p, bool last) {
     switch (p.move) {
@@ -380,7 +380,7 @@ bool downgrade_pad_plan(PadPlan& p, bool last) {
     return false;
 }
 
-// Section 1.28's rule table for one transition. `state` and `P` are per slot
+// The pad-visit rule table for one transition. `state` and `P` are per slot
 // (the solver's drone order), `Q`, `target_is_pad` and `next_leaves` per
 // target: next_leaves = 1 when the drone parked there leaves in the next
 // transition. `first`: the show's first transition (a drone leaving its pad
@@ -533,11 +533,11 @@ PadMoves count_pad_moves(const std::vector<PadPlan>& plans) {
 // The design's own safety settings on top of the resolved config, shared by
 // the show and its return paths.
 CoreConfig show_config(const ProjectData& project, const CoreConfig& base_config, const HoldingRegion& holding_region) {
-    // Altitude floor (docs/2-phase_2.md section 1.13, bug-report P2-02): the
+    // Altitude floor: the
     // design's ground, when the file declares one.
     CoreConfig config = base_config;
     config.safety.altitude_floor_m = project.metadata.ground_z_m;
-    // Holding-area keep-out zone (docs/2-phase_2.md section 1.14): the
+    // Holding-area keep-out zone: the
     // designer's safe distance around the holding region, when declared.
     if (project.metadata.holding_area.show_clearance_m) {
         KeepOutZone zone;
@@ -570,10 +570,10 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         return (p.array() >= holding_region.lo.array() - 1e-6).all() &&
                (p.array() <= holding_region.hi.array() + 1e-6).all();
     };
-    // Waiting areas (Phase 1 schema 1.7.0, docs/2-phase_2.md section 1.29):
+    // Waiting areas (Phase 1 schema 1.7.0):
     // a target in a waiting region is a spare drone waiting in the air. It
-    // arrives at rest (and, staying, is a fixed hold, section 1.15), is left
-    // out of the shared formation velocity, and is not a pad (no section 1.28
+    // arrives at rest (and, staying, is a fixed hold), is left
+    // out of the shared formation velocity, and is not a pad (no vertical pad
     // moves). Which waiting slots the spare drones take is chosen per
     // transition among all of them (assign_spec below).
     std::vector<HoldingRegion> waiting_regions;
@@ -597,7 +597,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     std::vector<int> drone_id_by_slot(n);
     for (int i = 0; i < n; ++i) drone_id_by_slot[i] = i;
 
-    // Rev 2.6 section 1.7's Staggered Wave Takeoff applies only to the very
+    // Staggered Wave Takeoff applies only to the very
     // first transition (holding area -> keyframes[0]) — every parked slot's
     // "Launch Row Index" within the launch grid, used to delay farther rows'
     // takeoff by row_index * staggered_wave_delay_s so the whole fleet lifts
@@ -639,7 +639,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     // worth confirming once Phase 1/3 color handling at launch is settled.
     Eigen::MatrixXi actual_color = Eigen::MatrixXi::Zero(n, 3);
 
-    // Cost-function heading vector: the spec initializes this to a unit
+    // Cost-function heading vector: initialized to a unit
     // vector derived from heading_offset_deg only for the very first
     // transition (no prior motion to measure an angle from); every
     // subsequent transition uses the real outgoing velocity computed above.
@@ -649,7 +649,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     for (int i = 0; i < n; ++i) v_in_xy.row(i) = initial_heading.transpose();
 
     double t_cursor = 0.0;
-    // Rev 2.5 section 1.6's T_min auto-scaling can push a transition's end
+    // T_min auto-scaling can push a transition's end
     // time later than the animator's nominal keyframe time_sec; this
     // accumulates that stretch so every later keyframe's nominal timestamp
     // shifts by the same amount, preserving their relative spacing.
@@ -662,7 +662,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     std::map<int, DroneTrajectory> trajectories_by_drone;
     for (int i = 0; i < n; ++i) trajectories_by_drone[i].drone_id = i;
 
-    // Section 1.28: every pad visit vertical, through a hover point
+    // Every pad visit vertical, through a hover point
     // `pad_height` above the pad. Each drone's pad state per slot (every
     // drone starts on its launch pad).
     const double pad_height = std::max(config.solver.landing_approach_height_m, 0.0);
@@ -674,7 +674,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         for (int i = 0; i < n; ++i) pad_state[i] = {PadKind::kOnPad, P.row(i).transpose()};
     }
     // The slot assignment, with a prohibitive cost for a parked drone moving
-    // to another pad (section 1.28; a hop along the ground). With the rule
+    // to another pad (a hop along the ground). With the rule
     // on, transition k+1's assignment is made while setting up k (to know
     // which parked drones leave next) and reused.
     constexpr double kPadChangeCost = 1e4;
@@ -700,8 +700,8 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     std::optional<assignment::AssignmentResult> next_assignment;
 
     // One entry per transition: holding area -> keyframes[0] -> ... ->
-    // keyframes[last], then, when the Phase 1 file has `legs` (schema 1.6.0,
-    // 1-phase_1.md section 3.8), the return leg keyframes[last] -> holding
+    // keyframes[last], then, when the Phase 1 file has `legs` (schema 1.6.0),
+    // the return leg keyframes[last] -> holding
     // area. Without `legs` this is exactly the pre-1.6.0 behavior.
     struct TransitionSpec {
         Eigen::MatrixXd targets;        // row = target slot
@@ -713,7 +713,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         bool is_leg = false;             // timed by a leg target instead of the keyframe timeline
         std::optional<double> target_duration_sec;  // leg target; nullopt = Auto (T_min)
         bool ends_at_rest = false;       // Formation Hold / landing (v = 0) vs fly-through
-        bool lands = false;              // return leg: `targets` are the slots (section 1.26)
+        bool lands = false;              // return leg: `targets` are the slots
     };
     // Every fixed point of the show must already be on or above the floor:
     // the solver can bend paths, not move formation points or launch slots.
@@ -734,7 +734,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         for (const Keyframe& kf : project.keyframes) check_below(points_by_index(kf, n), "keyframe '" + kf.shape_name + "'");
     }
     // Formation points must already keep the safe distance (the add-on
-    // refuses to export otherwise, 1-phase_1.md section 3.2.2): a pinned
+    // refuses to export otherwise): a pinned
     // target inside the zone can't be planned around. Points inside the
     // region itself are parked drones and don't count.
     if (config.safety.keep_out) {
@@ -790,7 +790,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     }
 
     // The assignment for one transition. A keyframe whose spare drones wait
-    // in waiting areas (section 1.29) has `spare` targets inside waiting
+    // in waiting areas has `spare` targets inside waiting
     // regions (Phase 1's padding, the first waiting slots). Which drones are
     // spare, and where each one goes, is chosen here:
     //  * a drone that has flown takes any free waiting slot (all areas), so
@@ -861,7 +861,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         for (int i = 0; i < n; ++i) {
             const int c = full.assignment[i];
             if (cost(i, c) >= kForbiddenCost) {
-                throw std::logic_error("section 1.29: a drone was assigned another drone's pad");
+                throw std::logic_error("a drone was assigned another drone's pad");
             }
             if (c < n_form) {
                 result.assignment[i] = formation_rows[c];
@@ -874,7 +874,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             result.total_cost += cost(i, c);
         }
         if (next_waiting != waiting_rows.size()) {
-            throw std::logic_error("section 1.29: a formation target was left without a drone");
+            throw std::logic_error("a formation target was left without a drone");
         }
         return result;
     };
@@ -884,7 +884,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         const bool is_final_keyframe = spec.ends_at_rest;
         const std::string& from_keyframe = spec.from_name;
 
-        // docs/5-studio_gui.md B2: stamps this transition onto every event,
+        // Stamps this transition onto every event,
         // including the solver's. Empty (no cost) when there is no callback.
         ProgressCallback transition_progress;
         if (progress) {
@@ -906,7 +906,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         const Eigen::MatrixXi& Q_colors = spec.target_colors;
         const bool last_transition = (kf_index + 1 == specs.size());
 
-        // Section 1.28: a target in the holding region is a pad (a drone
+        // A target in the holding region is a pad (a drone
         // parking there, or staying parked).
         std::vector<char> target_is_pad(n, 0);
         for (int j = 0; j < n; ++j) target_is_pad[j] = in_holding_region(Q.row(j).transpose()) ? 1 : 0;
@@ -922,14 +922,14 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         next_assignment.reset();
 
         // The transition and its leg start at t_cursor; the solved part after
-        // the first takeoff's climb (section 1.28), set below.
+        // the first takeoff's climb, set below.
         const double t_leg_start = t_cursor;
         // Staggering only delays departure from the holding area (kf_index
         // 0); every drone's own solved maneuver still takes exactly
         // `duration` — the wave adds a per-row wait before/after it, folded
         // into this transition's total span so later keyframes' timing is
         // unaffected in relative terms (same time_stretch_offset mechanism
-        // Rev 2.5's T_min auto-scaling already relies on). The actual span
+        // the T_min auto-scaling already relies on). The actual span
         // (and the time_stretch_offset update it feeds) is only known once
         // build_slot_outcomes() below has run and, if the staggered
         // configuration turns out unsafe, fallen back to the unstaggered
@@ -940,13 +940,13 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         // show ends. Fly-Through Waypoint (every other keyframe): drones
         // keep moving through at a fraction of cruising speed instead of
         // braking to a full stop, which is what forcing v=0 at *every*
-        // transition boundary was doing before (docs/2-phase_2.md Rev 2.5
-        // section 1.6) — that left near-zero kinematic slack for
+        // transition boundary was doing before — that left near-zero kinematic
+        // slack for
         // collision-avoidance bending, the root cause of the
-        // PRIMAL_INFEASIBLE cases the last two revisions chased.
+        // PRIMAL_INFEASIBLE cases earlier versions chased.
         constexpr double kFlyThroughSpeedFraction = 0.5;
 
-        // Shared formation velocity (docs/2-phase_2.md section 1.18): every
+        // Shared formation velocity: every
         // drone flying through this keyframe's formation passes its point with
         // the *same* velocity: the mean of the flying drones' unit travel
         // directions times the fly-through speed. Its size shrinks towards 0
@@ -979,7 +979,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             if (flying > 0) {
                 formation_velocity = direction_sum / flying * (kFlyThroughSpeedFraction * config.kinematics.v_max_mps);
             }
-            // Section 1.23 (P2-14): the rule above only looks at the incoming
+            // The rule above only looks at the incoming
             // leg. A formation that arrives moving one way and leaves another
             // way was passed at full fly-through speed along the incoming
             // direction, and all its drones had to brake and turn at once at
@@ -1013,7 +1013,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 }
             }
             // Near the floor, pass through level so neither a path's end nor
-            // the next one's start can dip below it (section 1.13). Levelled
+            // the next one's start can dip below it. Levelled
             // for the whole formation, so it stays one shared velocity.
             for (int slot = 0; slot < n; ++slot) {
                 const Eigen::Vector3d target = Q.row(assign_result.assignment[slot]).transpose();
@@ -1025,7 +1025,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             }
         }
 
-        // Section 1.28: look one transition ahead (which parked drones leave
+        // Look one transition ahead (which parked drones leave
         // next), then this transition's pad moves.
         std::vector<int> next_leaves(n, 0);
         if (pad_rule && !last_transition) {
@@ -1073,9 +1073,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         // A keyframe transition ends at its keyframe's time (shifted by any
         // earlier stretch); a leg lasts its target, or just T_min when Auto.
         // Legs always get the T_min floor: "Auto" means the minimum, and a
-        // target is flown as max(target, T_min) (1-phase_1.md section 3.8).
+        // target is flown as max(target, T_min).
         // A leg's target covers its climb before and descent after the solved
-        // part too (section 1.28).
+        // part too.
         const double nominal_t_end =
             spec.is_leg ? t_start + std::max(spec.target_duration_sec.value_or(0.0) - prelude_s - final_s, 0.0)
                         : spec.keyframe_time_sec + time_stretch_offset;
@@ -1102,19 +1102,19 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             // starting the next transition at that speed, skidded ~2 m into
             // the neighbouring pad (2026-09-29, 150_cone: 0.159 m on every
             // attempt). At rest, a drone that stays parked is also held
-            // fixed by the solver (docs/2-phase_2.md section 1.15). Section
+            // fixed by the solver. Section
             // 1.28: a drone reaching or staying at a pad or its hover point.
-            // Section 1.29: a drone reaching or staying in a waiting slot too.
+            // A drone reaching or staying in a waiting slot too.
             const bool at_rest_end =
                 (pad_rule ? (plans[slot].arrive != Arrive::kNone || plans[slot].move != PadMove::kNone)
                           : in_holding_region(problem.end.position)) ||
                 in_waiting_region(problem.end.position);
             problem.end.velocity = is_final_keyframe || at_rest_end ? Eigen::Vector3d::Zero() : formation_velocity;
             problem.end.acceleration = Eigen::Vector3d::Zero();
-            // Section 1.14: only drones flying the show keep out of the zone;
+            // Only drones flying the show keep out of the zone;
             // taking off, landing or parked (start or end in the holding
             // region) are exempt, and so is every pad-related drone (its hover
-            // point may be above the region, section 1.28).
+            // point may be above the region).
             problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
                                !in_holding_region(problem.end.position) &&
                                !(pad_rule && plans[slot].pad_related());
@@ -1122,7 +1122,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 const PadPlan& plan = plans[slot];
                 if (plan.leave == Leave::kFromHover || plan.leave == Leave::kPrelude ||
                     plan.arrive == Arrive::kToHover) {
-                    // Its own floor (section 1.28): half the hover height above
+                    // Its own floor: half the hover height above
                     // its pad, never above its own start or end.
                     problem.floor_m = std::min({plan.pad.z() + 0.5 * pad_height, problem.start.position.z(),
                                                 problem.end.position.z()});
@@ -1135,7 +1135,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                     const CoreConfig& cfg = config;
                     problem.prescribed = [pad, down, up, height, &cfg](double t0, double t1, double total, int count) {
                         Eigen::MatrixXd cp = pad_window_control_points(pad, height, down, up, t0, t1, total, count, cfg);
-                        if (cp.rows() == 0) throw std::logic_error("section 1.28: a prescribed pad move doesn't fit its window");
+                        if (cp.rows() == 0) throw std::logic_error("a prescribed pad move doesn't fit its window");
                         return cp;
                     };
                 }
@@ -1144,7 +1144,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         };
         for (int slot = 0; slot < n; ++slot) build_problem(slot);
 
-        // Section 1.28: a prescribed move must fit every window the solver may
+        // A prescribed move must fit every window the solver may
         // use, for the planned duration and every retry's longer one; a move
         // that doesn't is given up (the drone stays at its hover point or on
         // its pad), then the column check runs again.
@@ -1160,7 +1160,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         try {
             solutions = optimizer::solve(problems, duration, config, transition_progress, &solve_stats);
         } catch (const optimizer::SafetyViolationError& e) {
-            // docs/5-studio_gui.md B1: put the rejection in show context
+            // Put the rejection in show context
             // (which transition, show time, the rejected splines next to the
             // transitions that did pass) so a viewer can replay it.
             const optimizer::SafetyViolationReport& report = e.report();
@@ -1185,7 +1185,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 DroneTrajectory& traj = rejected_by_drone[drone_id];
                 traj.drone_id = drone_id;
                 int segment_index = static_cast<int>(trajectories_by_drone[drone_id].segments.size());
-                if (prelude_s > 0.0) {  // section 1.28: the first takeoff's climb comes first
+                if (prelude_s > 0.0) {  // the first takeoff's climb comes first
                     TrajectorySegment first =
                         plans[slot].leave == Leave::kPrelude
                             ? vertical_segment(plans[slot].pad, pad_height, t_leg_start, prelude_s,
@@ -1233,7 +1233,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 " attempt(s)");
         }
 
-        // bug-report P2-03: `solutions` is the attempt that passed. After a
+        // `solutions` is the attempt that passed. After a
         // gatekeeper retry it is longer than `duration`, and everything below
         // (end time, next transition's start, LED fade, staggered-launch holds
         // and their re-check, leg times) must follow what is actually flown.
@@ -1279,7 +1279,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 SlotOutcome outcome;
                 double stage_t_start = t_start;
 
-                // Rev 2.6 section 1.7: rows farther from the front of the
+                // rows farther from the front of the
                 // launch grid wait `row_index * staggered_wave_delay_s`
                 // before starting their real maneuver.
                 if (use_stagger) {
@@ -1301,7 +1301,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                     }
                 }
 
-                // Rev 2.6 section 1.7: a transition longer than the
+                // a transition longer than the
                 // mega-cluster threshold comes back as multiple chained
                 // sub-stages — emit one TrajectorySegment per sub-stage,
                 // chained start-to-end. `maneuver_t_start` (rather than
@@ -1395,7 +1395,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 outcomes = build_slot_outcomes(false, &t_end);
             }
         }
-        // Section 1.28: after the last transition, every drone that ended it
+        // After the last transition, every drone that ended it
         // at a hover point descends onto its pad, all together (the others
         // stay where they are). Every drone is at rest at t_end (the last
         // transition is held and never staggered).
@@ -1412,7 +1412,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             }
             t_end += final_s;
         }
-        // Section 1.28: before the first transition's solved part (and any
+        // Before the first transition's solved part (and any
         // staggered wait, now at the hover points), the drones leaving their
         // pads climb off them, all together; the others wait. Rigid, so safe
         // where the column check passed; outside the stagger re-check on
@@ -1473,7 +1473,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             next_drone_id_by_slot[target_slot] = drone_id;
         }
 
-        // Where every drone really is now (section 1.28: at a hover point, or
+        // Where every drone really is now (at a hover point, or
         // on its pad after a descent), and its pad state.
         if (pad_rule) {
             std::vector<PadState> next_state(n);
@@ -1604,7 +1604,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
 
     // As the show's return leg: any free holding-area slot (the auction
     // picks), landing at rest, LEDs fading to off; through hover points above
-    // the slots (section 1.28). A drone already parked (on its pad, or at its
+    // the slots. A drone already parked (on its pad, or at its
     // hover point) at the abort time keeps its pad.
     const Eigen::MatrixXd slots = compute_holding_positions(n, project.metadata.holding_area,
                                                             project.metadata.holding_area.grid_spacing_m);
@@ -1665,7 +1665,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     const double vertical_s = pad_rule ? vertical_move_duration(pad_height, config) : 0.0;
     double final_s = any_final() ? vertical_s : 0.0;
     // Timed like a leg: Auto = T_min, a target is flown as max(target, T_min);
-    // a target covers the descent after the solved part too (section 1.28).
+    // a target covers the descent after the solved part too.
     const double t_min = trajectory::compute_min_transition_time(
         d_max, trajectory::inscribed_axis_limit(config.kinematics.v_max_mps),
         trajectory::inscribed_axis_limit(config.kinematics.a_max_mps2),
@@ -1683,8 +1683,8 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         problem.end.velocity = Eigen::Vector3d::Zero();
         problem.end.acceleration = Eigen::Vector3d::Zero();
         // Every drone ends in the holding region, so all are exempt from the
-        // keep-out zone, exactly as on the show's return leg (section 1.14);
-        // a hover point above the region lands too (section 1.28).
+        // keep-out zone, exactly as on the show's return leg;
+        // a hover point above the region lands too.
         problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
                            !in_holding_region(problem.end.position) && !pad_rule;
         if (pad_rule) {
@@ -1700,7 +1700,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
                 const CoreConfig& cfg = config;
                 problem.prescribed = [pad, down, up, pad_height, &cfg](double t0, double t1, double total, int count) {
                     Eigen::MatrixXd cp = pad_window_control_points(pad, pad_height, down, up, t0, t1, total, count, cfg);
-                    if (cp.rows() == 0) throw std::logic_error("section 1.28: a prescribed pad move doesn't fit its window");
+                    if (cp.rows() == 0) throw std::logic_error("a prescribed pad move doesn't fit its window");
                     return cp;
                 };
             }
@@ -1814,7 +1814,7 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
             traj.segments.push_back(std::move(segment));
             stage_t_start = stage_t_end;
         }
-        if (final_s > 0.0) {  // section 1.28: the drones at their hover points land, together
+        if (final_s > 0.0) {  // the drones at their hover points land, together
             TrajectorySegment last =
                 plans[slot].final_descent
                     ? landing_descent_segment(plans[slot].pad, pad_height, flown_duration, final_s,

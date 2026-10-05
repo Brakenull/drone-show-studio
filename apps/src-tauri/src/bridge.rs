@@ -1,4 +1,4 @@
-//! Bridge processes (docs/5-studio_gui.md §2, §4): spawn `python -m tools.studio_bridge`,
+//! Bridge processes: spawn `python -m tools.studio_bridge`,
 //! forward its NDJSON stdout as Tauri events, and cancel by killing the process tree.
 
 use std::collections::HashMap;

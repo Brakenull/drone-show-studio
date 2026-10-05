@@ -1,4 +1,4 @@
-"""Studio bridge condition-simulator commands (docs/4-condition_simulator.md §7, milestone C1):
+"""Studio bridge condition-simulator commands:
 `conditions`, `scenario-save`, `scenario-delete` and `simulate`, driven as subprocesses like the
 Tauri shell does, on a run whose Stage 2 passed (the 4-drone demo)."""
 
@@ -114,7 +114,7 @@ def test_simulate_writes_the_playback_and_is_deterministic(passed_run):
     assert status["simulate"]["status"] in ("succeeded", "failed_safety") and status["simulate"]["pid"] is None
     assert status["scenarios"][sid]["passed"] == result["passed"]
 
-    # Same scenario and seed: the same result file (§9.8) and the same flight.
+    # Same scenario and seed: the same result file and the same flight.
     positions = np.fromfile(folder / "positions.f32", "<f4")
     bridge("simulate", str(passed_run), "--scenario", sid)
     again = json.loads((folder / "result.json").read_text(encoding="utf-8"))
@@ -124,7 +124,7 @@ def test_simulate_writes_the_playback_and_is_deterministic(passed_run):
 
 
 # --------------------------------------------------------------------------- #
-# Milestone C2: readiness and the rain rule (section 5, B7)
+# Readiness and the rain rule
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture(scope="module")
@@ -194,7 +194,7 @@ def test_rain_in_the_takeoff_flies_the_fleet_home(run_with_legs):
 
 
 # --------------------------------------------------------------------------- #
-# Milestone C3: abort points and suggestions (section 5.3)
+# Abort points and suggestions
 # --------------------------------------------------------------------------- #
 
 def test_abort_points_are_planned_read_and_suggested(run_with_legs):
@@ -242,7 +242,7 @@ def test_abort_points_are_planned_read_and_suggested(run_with_legs):
 
 
 def test_pack_carries_the_return_paths_and_the_return_table(run_with_legs):
-    """Flight files version 2 (section 8.4): every return the table uses is a track, and each starts where the show
+    """Flight files version 2: every return the table uses is a track, and each starts where the show
     is at its start time, so a drone switching to it doesn't jump."""
     from test_studio_bridge_stage3 import PACKER
 

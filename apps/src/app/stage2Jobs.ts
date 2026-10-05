@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
 import { cancelJob, startJob } from "../bridge/api";
 import type { BridgeEvent, JobExit, Overrides, SolveProgress } from "../bridge/types";
 
-/** Where the solver is, from drone_core's progress events (docs/5-studio_gui.md §5.2). */
+/** Where the solver is, from drone_core's progress events. */
 export interface SolveState {
   transition: number;
   transitionCount: number;

@@ -1,5 +1,5 @@
-// Shared layout, vector/quaternion math and RNG for the digital-twin kernels
-// (docs/3-phase-3.md §3). simulator.py concatenates, in order:
+// Shared layout, vector/quaternion math and RNG for the digital-twin kernels.
+// simulator.py concatenates, in order:
 //
 //   common.cl, references.cl, grid.cl, aerodynamics.cl, battery_discharge.cl,
 //   multi_agent_dynamics.cl
@@ -30,7 +30,7 @@
 // RP_GUSTS (= RP_MODES + 8 * max modes) is defined by the host: 9 floats per gust front:
 // peak vector xyz, sweep direction xyz, start, duration, sweep speed.
 
-// Weather table (twin_sim/weather.py, docs/4-condition_simulator.md B6): rows of WX_STRIDE
+// Weather table (twin_sim/weather.py): rows of WX_STRIDE
 // floats at WX_HZ over show time. Wind columns are interpolated, RTK columns step.
 #define WX_WIND 0
 #define WX_TURB 3

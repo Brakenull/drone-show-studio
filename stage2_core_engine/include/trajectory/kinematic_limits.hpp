@@ -7,7 +7,7 @@
 
 #include "trajectory/quintic_bspline.hpp"
 
-// Kinematic Limits (docs/2-phase_2.md Rev 2.3 section 1.2/3.2): velocity,
+// Kinematic Limits: velocity,
 // acceleration and jerk are linear combinations of the position control
 // points, so v(t) <= v_max etc. reduce to time-independent linear
 // inequalities on the control points via the convex-hull property (the
@@ -18,14 +18,14 @@
 // OSQP only supports linear constraints l <= Ax <= u (no SOCP norm cones),
 // so the true Euclidean-norm bound ||v||_2 <= v_max is approximated by its
 // L_inf *inscribed* box: |v_x|, |v_y|, |v_z| <= v_max/sqrt(3), which
-// guarantees ||v||_2 <= v_max at every corner of the box (the doc's other
+// guarantees ||v||_2 <= v_max at every corner of the box (the other
 // listed option, the *circumscribed* box |v_axis| <= v_max, does not).
 
 namespace drone_core::trajectory {
 
 inline double inscribed_axis_limit(double euclidean_limit) { return euclidean_limit / std::sqrt(3.0); }
 
-// T_min lower bound (docs/2-phase_2.md Rev 2.5 section 1.6/3.2): the
+// T_min lower bound: the
 // theoretical peak velocity/acceleration/jerk of a rest-to-rest quintic
 // move of distance d_max over duration T are v_peak=1.875*d/T,
 // a_peak=5.77*d/T^2, j_peak=60*d/T^3 respectively; solving each for the T

@@ -5,7 +5,7 @@
 
 #include <Eigen/Dense>
 
-// Shared output types (docs/2-phase_2.md section 5): the final per-drone,
+// Shared output types: the final per-drone,
 // per-segment trajectory representation returned by optimize_trajectories()
 // to Phase 3 (arrow_loader.py / spline_evaluator.py).
 

@@ -1,4 +1,4 @@
-"""Stage 2 altitude floor from the design's ground_z_m (bug-report P2-02, 2-phase_2.md section 1.13).
+"""Stage 2 altitude floor from the design's ground_z_m.
 
 The 4-drone smoke-test show with its formations lowered to z = 1 m (holding
 area on the ground at z = 0): without a declared ground, the optimizer bends
@@ -92,7 +92,7 @@ def min_separation(result, hz=20):
 def test_without_a_ground_there_is_no_floor(drone_core):
     result = drone_core.optimize_trajectories(low_show(), {})
     assert result["metadata"]["altitude_floor_m"] is None
-    assert lowest_sampled(result) < -0.1  # P2-02: paths bend below z = 0 (about -0.46 m here)
+    assert lowest_sampled(result) < -0.1  # paths bend below z = 0 (about -0.46 m here)
 
 
 @pytest.mark.parametrize("legs", [False, True], ids=["keyframes", "with-legs"])

@@ -1,4 +1,4 @@
-"""Waiting areas as real scene objects (spec section 3.10, "Create in Scene").
+"""Waiting areas as real scene objects ("Create in Scene").
 
 One set of objects per waiting area `n` (1-based, in list order):
 

@@ -54,7 +54,7 @@
         "coordinate_system": { "type": "string", "const": "ENU" },
         "heading_offset_deg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
         "ground_z_m": {
-          "description": "ENU height of the ground (added in 1.6.0, optional; absent = 0.0, the ENU origin plane). See 1-phase_1.md section 3.9.",
+          "description": "ENU height of the ground (added in 1.6.0, optional; absent = 0.0, the ENU origin plane).",
           "type": "number"
         },
         "origin_gps": {
@@ -81,15 +81,15 @@
             "max_height": { "type": "number", "exclusiveMinimum": 0 },
             "grid_spacing_m": { "type": "number", "minimum": 1.8 },
             "layer_spacing_m": {
-              "description": "Vertical gap between stacked layers. Honoured since 1.7.0 (default 4.0); older files carry grid_spacing_m here, the straight stacking they were laid out with. See 1-phase_1.md section 3.2.",
+              "description": "Vertical gap between stacked layers. Honoured since 1.7.0 (default 4.0); older files carry grid_spacing_m here, the straight stacking they were laid out with.",
               "type": "number", "exclusiveMinimum": 0
             },
             "staggered_layers": {
-              "description": "Added in 1.7.0, optional (absent = false). Odd layers are shifted half a slot in x and y and have one column and one row fewer, so no slot sits straight above another. See 1-phase_1.md section 3.2.",
+              "description": "Added in 1.7.0, optional (absent = false). Odd layers are shifted half a slot in x and y and have one column and one row fewer, so no slot sits straight above another.",
               "type": "boolean"
             },
             "show_clearance_m": {
-              "description": "The designer's Safe Distance to Show (added in 1.6.0, optional). When present, Stage 2 keeps show drones at least this far from the holding region. See 1-phase_1.md section 3.2.2 and 2-phase_2.md section 1.14.",
+              "description": "The designer's Safe Distance to Show (added in 1.6.0, optional). When present, Stage 2 keeps show drones at least this far from the holding region.",
               "type": "number", "minimum": 0
             }
           }
@@ -110,7 +110,7 @@
           ]
         },
         "legs": {
-          "description": "Takeoff (holding area -> first keyframe) and return (last keyframe -> holding area) legs. Added in 1.6.0 and optional, so older files stay valid. duration_sec: target in seconds, or null for Auto (Stage 2's minimum); Stage 2 flies max(target, minimum). See 1-phase_1.md section 3.8.",
+          "description": "Takeoff (holding area -> first keyframe) and return (last keyframe -> holding area) legs. Added in 1.6.0 and optional, so older files stay valid. duration_sec: target in seconds, or null for Auto (Stage 2's minimum); Stage 2 flies max(target, minimum).",
           "type": "object",
           "required": ["takeoff", "return"],
           "additionalProperties": false,
@@ -120,7 +120,7 @@
           }
         },
         "waiting_areas": {
-          "description": "Added in 1.7.0, optional (absent or empty = none). Places in the air where spare drones wait (LEDs off) instead of flying home mid-show. Each is one flat layer of slots at center z; slot_count slots are laid out (the declared grid, the last area widened along X if needed). See 1-phase_1.md section 3.10.",
+          "description": "Added in 1.7.0, optional (absent or empty = none). Places in the air where spare drones wait (LEDs off) instead of flying home mid-show. Each is one flat layer of slots at center z; slot_count slots are laid out (the declared grid, the last area widened along X if needed).",
           "type": "array",
           "items": {
             "type": "object",

@@ -1,4 +1,4 @@
-// The run's own copy of the Phase 1 file, re-validated on open (docs/5-studio_gui.md §6.1).
+// The run's own copy of the Phase 1 file, re-validated on open.
 
 import { useEffect, useState } from "react";
 import { openRunFolder, runJob } from "../bridge/api";

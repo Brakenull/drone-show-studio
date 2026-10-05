@@ -1,4 +1,4 @@
-"""Stage 2 return paths from abort points (docs/4-condition_simulator.md B4, 2-phase_2.md section 1.24).
+"""Stage 2 return paths from abort points.
 
 Plans the 4-drone smoke-test show (with legs) once, then a return path from each formation
 with `drone_core.plan_return_path`, and checks that a return starts exactly where and how the
@@ -36,7 +36,7 @@ def drone_core():
     except ImportError:
         pytest.skip("drone_core built for a different Python")
     if not hasattr(module, "plan_return_path"):
-        pytest.skip("drone_core built before B4; rebuild stage2_core_engine")
+        pytest.skip("drone_core built before return paths; rebuild stage2_core_engine")
     return module
 
 
@@ -45,7 +45,7 @@ def phase1():
     data = build_phase1_json()
     data["keyframes"][1]["time_sec"] = data["keyframes"][0]["time_sec"] + SHOW_SPACING_SEC
     # A third formation (the square again, 20 m higher) so that the diamond is flown through, not
-    # held: its velocity is the formation centre's from the square to this one (section 1.23).
+    # held: its velocity is the formation centre's from the square to this one.
     again = copy.deepcopy(data["keyframes"][0])
     again["shape_name"] = "square_again"
     for point in again["points"]:

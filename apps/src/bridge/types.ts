@@ -1,4 +1,4 @@
-// Shapes of the bridge's NDJSON events and run files (docs/5-studio_gui.md §3, §4).
+// Shapes of the bridge's NDJSON events and run files.
 
 export type Vec3 = [number, number, number];
 
@@ -54,7 +54,7 @@ export interface PackSummary {
   sampling_dt_ms: number;
   total_bytes: number;
   verify_message: string;
-  /** Version 2 (0x0200) files carry the return paths as tracks and the return table (4-condition_simulator.md §8.4). */
+  /** Version 2 (0x0200) files carry the return paths as tracks and the return table. */
   file_version?: number;
   pack_id?: string;
   return_tracks?: PackedReturn[];
@@ -98,7 +98,7 @@ export interface RunRecord {
   /** Set on a run made with "Copy to a new run": the run it copies. */
   copied_from?: string;
   stage3?: { monte_carlo?: MonteCarloPart; pack?: PackPart };
-  /** Return paths from abort points (tools/studio_bridge/returns_job.py, docs/4-condition_simulator.md B4). */
+  /** Return paths from abort points (tools/studio_bridge/returns_job.py). */
   stage2_returns?: Stage3Part & { formations?: number[]; planned?: number[] };
   /** Condition simulator (tools/studio_bridge/conditions_job.py): the `simulate` job and each scenario's last outcome. */
   conditions?: {
@@ -107,7 +107,7 @@ export interface RunRecord {
   };
 }
 
-// ---- Condition simulator (docs/4-condition_simulator.md §3, §6) ----
+// ---- Condition simulator ----
 
 export type RtkState = "fixed" | "float" | "gps";
 export interface WindKey {
@@ -189,7 +189,7 @@ export interface RainReturn {
   /** The formation the fleet returned from; -1 when the show had already landed. */
   formation: number;
   formation_name: string | null;
-  /** "abort_point": a return planned from a moment inside the move into the formation (§5.3). */
+  /** "abort_point": a return planned from a moment inside the move into the formation. */
   method: "return_path" | "abort_point" | "return_leg" | "rest_of_show" | "none" | "landed";
   start_sec: number;
   planned_home_sec: number | null;
@@ -219,7 +219,7 @@ export interface HomePiece {
   point_sec?: number | null;
 }
 
-/** A return planned from inside the move into `formation` (docs/4-condition_simulator.md §5.3). */
+/** A return planned from inside the move into `formation`. */
 export interface PlannedAbortPoint {
   id: string;
   formation: number;
@@ -335,7 +335,7 @@ export interface ReturnIndex {
   /** Stage 2's ended_at the returns were planned from. */
   stage2_ended_at: string | null;
   returns: ReturnEntry[];
-  /** Returns from abort points inside transitions (§5.3). */
+  /** Returns from abort points inside transitions. */
   points?: ReturnEntry[];
 }
 
@@ -549,7 +549,7 @@ interface SolveTransition {
   return_index?: number;
   return_count?: number;
   keyframe_index?: number;
-  /** An abort point's show time (§5.3); null for a formation's return. */
+  /** An abort point's show time; null for a formation's return. */
   abort_time_sec?: number | null;
 }
 
@@ -559,7 +559,7 @@ interface SolveAttempt extends SolveTransition {
   duration_sec: number;
 }
 
-/** drone_core progress_callback events (docs/5-studio_gui.md §5.2), forwarded as `solve_progress`. */
+/** drone_core progress_callback events, forwarded as `solve_progress`. */
 export type SolveProgress =
   | (SolveTransition & { event: "transition_start" | "transition_end"; show_time_sec: number })
   | (SolveAttempt & { event: "attempt_start" })

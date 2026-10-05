@@ -1,4 +1,4 @@
-// Stage 3: Monte Carlo stress test and flight-file packing (docs/5-studio_gui.md §6.3), one section of
+// Stage 3: Monte Carlo stress test and flight-file packing, one section of
 // the Stage 3 tab at a time (features/Stage3Tab.tsx).
 
 import { useEffect, useMemo, useRef, useState } from "react";

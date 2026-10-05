@@ -1,5 +1,5 @@
 /*
- * Drone flight file layout, drone_<id>.bin (docs/3-phase-3.md §4.2), version 2.
+ * Drone flight file layout, drone_<id>.bin, version 2.
  *
  * Shared by the Phase 3 packer, the drone firmware (STM32 / ESP32) and the
  * Phase 4 gateway, so this header is plain C99/C11 + C++ compatible.
@@ -12,7 +12,7 @@
  *
  *   file size = 24 + 16 * tracks + 12 * entries + 19 * total_records + 4 bytes
  *
- * Tracks (docs/4-condition_simulator.md §8.4): the show, then the planned
+ * Tracks: the show, then the planned
  * return paths to the holding area -- from a formation (or the takeoff flown
  * backwards) or from a moment inside a transition (an abort point). A track's
  * records are timed from its own start: record k is at k * sampling_dt_ms
@@ -68,7 +68,7 @@
 #define FLIGHT_TRACK_NONE 0xFFFFu             /* no planned way home */
 #define FLIGHT_TIME_END 0xFFFFFFFFu           /* to the end of time */
 
-/* Quantization scales (§4.1). */
+/* Quantization scales. */
 #define FLIGHT_POSITION_UNITS_PER_M 100.0     /* 1 cm   */
 #define FLIGHT_VELOCITY_UNITS_PER_MPS 1000.0  /* 1 mm/s */
 

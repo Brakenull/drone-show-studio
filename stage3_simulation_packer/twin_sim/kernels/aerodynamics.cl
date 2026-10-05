@@ -1,4 +1,4 @@
-// Wind field + fast downwash proxy (docs/3-phase-3.md §3.2); model in physics.py.
+// Wind field + fast downwash proxy; model in physics.py.
 
 // Mean wind + turbulence modes + gust fronts. With a weather table the mean wind, the turbulence
 // scale and the distance the modes have been carried come from it; without one (Monte Carlo) they are
@@ -53,7 +53,7 @@ inline float3 motor_offset(int m) {
 }
 
 // Per drone: downwash lift factor per motor + downward air speed at the centre,
-// nearest neighbour inside PROX_R, and the running §3.4 closest approach.
+// nearest neighbour inside PROX_R, and the running closest approach.
 __kernel void interaction(float t, __global const float4* pos, __global const float4* quat,
                           __global const float* total_thrust, __global const float* hover_thrust,
                           __global const int* starts, __global const int* sorted,

@@ -1,5 +1,5 @@
 // One-line state of each part of a run, for the stage cards, the Stage 3 sections and the sidebar's
-// pipeline bar (docs/5-studio_gui.md §6, "Run header").
+// pipeline bar.
 
 import type { RunRecord, Stage3Part as PartRecord } from "../bridge/types";
 import { STATUS, duration, type Tone } from "./format";

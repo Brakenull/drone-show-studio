@@ -1,4 +1,4 @@
-"""Scene property group + N-Panel UI (spec section 2, `ui/panel.py`)."""
+"""Scene property group + N-Panel UI."""
 
 import bpy
 
@@ -21,10 +21,10 @@ def _on_layout_changed(self, context):
 
 
 def _on_waiting_changed(self, context):
-    """`update=` callback for the waiting areas' settings (section 3.10)."""
+    """`update=` callback for the waiting areas' settings."""
     waiting_area_scene.on_settings_changed(self, context)
 
-# Cache of the last kinematic pre-validation pass (spec section 3.5), so the
+# Cache of the last kinematic pre-validation pass, so the
 # panel can render it on every redraw without re-sampling every keyframe each
 # time (that's the same expensive work Export does). Refreshed by
 # DSS_OT_CheckKinematics, DSS_OT_ExportIntermediate and DSS_OT_AutoFixTimeline
@@ -47,8 +47,7 @@ def has_kinematic_error() -> bool:
 
 
 # Each keyframe's formation points (ENU, parked drones excluded) from the last
-# full sampling pass, for the holding-area clearance check (spec section
-# 3.2.2). Results are recomputed from it whenever the holding-area settings
+# full sampling pass, for the holding-area clearance check. Results are recomputed from it whenever the holding-area settings
 # or the safe distance change, without re-sampling.
 _formation_cache = {"formations": None, "key": None, "results": None}
 
@@ -75,7 +74,7 @@ def get_clearance_results(settings):
 
 
 def ground_warnings(settings) -> list:
-    """Warning lines for anything below the ground (spec section 3.9):
+    """Warning lines for anything below the ground:
     parked drones in the holding area (always known) and formation points
     (known after a sampling pass). Any line locks Export."""
     ground_z = settings.ground_z_m
@@ -99,7 +98,7 @@ def get_ground_results(settings):
 
 
 def min_layer_gap(settings) -> float:
-    """Smallest allowed holding-area layer gap (spec section 3.2): a pad's
+    """Smallest allowed holding-area layer gap: a pad's
     vertical path to its hover point (Stage 2's landing approach height)
     keeps Stage 2's planning distance below the slot above, and stacked slots
     stay a grid step apart."""
@@ -120,7 +119,7 @@ def layer_gap_message(settings):
 
 
 def waiting_messages(settings) -> list:
-    """Caution lines for the waiting areas (section 3.10); any line locks
+    """Caution lines for the waiting areas; any line locks
     Export. Formations too close are known after a sampling pass; the
     holding-area gap, overlaps and height always."""
     if not len(settings.waiting_areas):
@@ -136,7 +135,7 @@ def waiting_messages(settings) -> list:
 def waiting_detour_notes(settings) -> list:
     """Notes (they do not lock Export) for short keyframes whose spare drones
     would fly farther to every waiting area and back than to the holding area
-    and back (section 3.10). Known after a sampling pass."""
+    and back. Known after a sampling pass."""
     formations = _formation_cache["formations"]
     if not len(settings.waiting_areas) or not formations:
         return []
@@ -177,7 +176,7 @@ def configured_v_max(settings) -> float:
 
 # First / last keyframe positions (full fleet, parked drones included) and the
 # keyframe span from the last full sampling pass, for the takeoff / return
-# estimates (spec section 3.8). Like the clearance results, the estimates are
+# estimates. Like the clearance results, the estimates are
 # recomputed from these when the holding area or v_max changes.
 _leg_cache = {"first": None, "last": None, "show_span": 0.0, "key": None, "estimates": None}
 
@@ -239,7 +238,7 @@ _STATUS_ICON = {
 
 
 class DSS_PG_WaitingArea(bpy.types.PropertyGroup):
-    """One waiting area (section 3.10): one flat layer of slots at center Z
+    """One waiting area: one flat layer of slots at center Z
     where spare drones wait, LEDs off, instead of flying home mid-show."""
 
     name: bpy.props.StringProperty(name="Name", default="Waiting Area")
@@ -329,7 +328,7 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         description=(
             "Holding-area grid pitch. Deliberately larger than the in-flight "
             "min_distance_m: rest-to-rest launch points can't bend to dodge a "
-            "neighbor, so this needs its own margin (spec section 3.2)"
+            "neighbor, so this needs its own margin"
         ),
         default=config.DEFAULT_GRID_SPACING_M,
         min=config.MIN_GRID_SPACING_M,
@@ -341,8 +340,7 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         description=(
             "Height between stacked layers of parked drones. At least the hover height "
             "(2 m) plus Stage 2's planning distance, so a pad's vertical path stays clear "
-            "of the layer above; more gap means less downwash on the drones below "
-            "(spec section 3.2)"
+            "of the layer above; more gap means less downwash on the drones below"
         ),
         default=config.DEFAULT_LAYER_SPACING_M,
         min=config.MIN_GRID_SPACING_M,
@@ -353,7 +351,7 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         name="Shift Alternate Layers",
         description=(
             "Shift every other layer half a slot in X and Y (one column and one row fewer), "
-            "so no parked drone sits straight above another (spec section 3.2)"
+            "so no parked drone sits straight above another"
         ),
         default=config.DEFAULT_STAGGERED_LAYERS,
         update=_on_layout_changed,
@@ -363,7 +361,7 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         description=(
             "Minimum distance from any formation point to the holding area (the parked grid, "
             "padded by half a grid step). Closer points raise a caution; 0 flags only points "
-            "inside the holding area (spec section 3.2.2)"
+            "inside the holding area"
         ),
         default=config.DEFAULT_SHOW_CLEARANCE_M,
         min=0.0,
@@ -381,7 +379,7 @@ def _leg_mode_items(self, context):
 
 class DSS_PG_ShowLegs(bpy.types.PropertyGroup):
     """Takeoff (holding area -> first keyframe) and return (last keyframe ->
-    holding area) legs, spec section 3.8."""
+    holding area) legs."""
 
     takeoff_mode: bpy.props.EnumProperty(name="Takeoff", items=_leg_mode_items)
     takeoff_duration_sec: bpy.props.FloatProperty(
@@ -486,7 +484,7 @@ class DSS_PG_ProjectSettings(bpy.types.PropertyGroup):
         name="Ground Level (Z)",
         description=(
             "Height of the ground in ENU (also Blender Z; the heading only rotates about Z). "
-            "Formation points and parked drones below it raise a warning (spec section 3.9)"
+            "Formation points and parked drones below it raise a warning"
         ),
         default=config.DEFAULT_GROUND_Z_M,
         unit="LENGTH",

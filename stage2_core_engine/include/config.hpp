@@ -1,11 +1,11 @@
 #pragma once
 
-// Config resolution per docs/2-phase_2.md (Rev 2.9) section 2:
+// Config resolution:
 //   A. Kinematics — 4-tier: optional_config_overrides > Phase1
 //      kinematic_constraints > core_config.json > compile-time defaults.
 //   B. Solver hyperparameters & weights — 3-tier: optional_config_overrides
 //      > core_config.json > compile-time defaults (never read from Phase1).
-// Kept header-only per the file tree in section 5 (no src/config.cpp).
+// Kept header-only per the file tree (no src/config.cpp).
 
 #include <array>
 #include <filesystem>
@@ -26,14 +26,14 @@ struct KinematicConfig {
 struct SolverWeights {
     double w_distance = 1.0;
     double w_vertical_climb = 2.5;
-    // Rev 2.4: lowered from 0.5 so the Auction assignment doesn't create
+    // Lowered from 0.5 so the Auction assignment doesn't create
     // unnecessary topological crossings just to preserve heading.
     double w_heading_change = 0.2;
     double w_smoothness_snap = 1.0;
     double w_smoothness_jerk = 0.1;
 };
 
-// Holding-area keep-out zone (docs/2-phase_2.md section 1.14): drones flying
+// Holding-area keep-out zone: drones flying
 // the show keep at least `clearance_m` from the holding region box [lo, hi]
 // (ENU). Drones taking off, landing or parked in that transition are exempt
 // (DroneTransitionProblem::keep_out = false).
@@ -46,7 +46,7 @@ struct KeepOutZone {
 struct SafetyConfig {
     double safety_radius_m = 0.75;
     double min_distance_m = 1.5;
-    // Altitude floor (bug-report P2-02, docs/2-phase_2.md section 1.13): no
+    // Altitude floor: no
     // point of any planned path may go below this ENU height. Set per run by
     // io::run_pipeline() from the Phase 1 file's project_metadata.ground_z_m;
     // unset (no floor) for files that don't declare a ground. Not a JSON key.
@@ -56,20 +56,20 @@ struct SafetyConfig {
     std::optional<KeepOutZone> keep_out;
 };
 
-// APF Warm-Start Seeding (docs/2-phase_2.md Rev 2.8 sections 1.2/3.2):
-// replaces the Rev 2.4-2.7 drone_id-parity bow heuristic, which only broke
+// APF Warm-Start Seeding:
+// replaces the earlier drone_id-parity bow heuristic, which only broke
 // symmetry for an isolated pairwise 2-drone crossing and, on a real dense
 // show, forced dozens of drones converging on the same region into the same
 // narrow bow surface — see trajectory/apf_seeder.hpp's incident writeup.
 //
-// Rev 2.9 section 1.2 retires the continuous H*sin(theta) Z-stratification
+// This retires the continuous H*sin(theta) Z-stratification
 // (it cancels to ~0 for due-East/West headings, theta ~= 0/pi, leaving
 // exactly those flows with no altitude separation) in favor of a discrete
 // 4-sector assignment: z_stratification_mode selects the mode
 // ("4_sector_discrete" is the only supported non-disabled mode; any other
 // value, e.g. "disabled", turns Z-stratification off), and z_layer_step_m
-// is the unit step multiplied by {1,3} per doc section 1.2/3.2's
-// {+-0.75m, +-2.25m} sector bands.
+// is the unit step multiplied by {1,3}: the {+-0.75m, +-2.25m} sector
+// bands.
 struct ApfSeedingConfig {
     bool enabled = true;
     double k_repulsion = 50.0;
@@ -80,8 +80,7 @@ struct ApfSeedingConfig {
     double z_layer_step_m = 0.75;
 };
 
-// Adaptive Cutting-Plane Collocation (docs/2-phase_2.md Rev 2.9 section
-// 1.10): at the end of each SCP iteration, densely samples every conflict
+// Adaptive Cutting-Plane Collocation: at the end of each SCP iteration, densely samples every conflict
 // pair's real (non-linearized) separation at detection_frequency_hz and
 // inserts up to max_dynamic_collocations_per_pair local-minima timestamps
 // as extra hard collocation rows for the next iteration's QP, so OSQP
@@ -89,13 +88,13 @@ struct ApfSeedingConfig {
 // coarse per-window midpoint sample collect_collision_rows() already uses.
 struct CuttingPlaneConfig {
     bool enabled = true;
-    // <= 0: every dip under the planning distance gets a row (section 1.19).
+    // <= 0: every dip under the planning distance gets a row.
     int max_dynamic_collocations_per_pair = 0;
     double detection_frequency_hz = 100.0;
 };
 
-// Decoupled Continuous Gatekeeper (docs/2-phase_2.md Rev 2.9 section 1.9):
-// replaces Rev 2.8's Slack Rejection Gatekeeper. A converged soft-slack
+// Decoupled Continuous Gatekeeper:
+// replaces the earlier Slack Rejection Gatekeeper. A converged soft-slack
 // solution is only ever OSQP-feasible, never automatically flight-safe —
 // see scp_solver.cpp's evaluate_continuous_clearance() for the independent,
 // slack-variable-free post-solve verification and the retry/expansion loop
@@ -114,9 +113,9 @@ struct ContinuousGatekeeperConfig {
     double min_retry_separation_m = 1.0;
 };
 
-// SCP/OSQP hyperparameters (section 1.1, 1.3, 3.3).
+// SCP/OSQP hyperparameters.
 struct SolverOptions {
-    // Rev 2.5: floor for the adaptive control-point count (section 1.1),
+    // Floor for the adaptive control-point count,
     // not a fixed count anymore — see trajectory::adaptive_num_control_points.
     int num_control_points_min = 10;
     bool adaptive_control_points = true;
@@ -130,18 +129,18 @@ struct SolverOptions {
     // wasted time.
     int scp_stall_iterations = 6;
     double scp_stall_tol_m = 5e-4;
-    // Section 1.21: move each drone's starting path to the closest flyable
+    // Move each drone's starting path to the closest flyable
     // one (kinematic box + floor) before the SCP's first step.
     bool repair_seed = true;
-    // Section 1.22: every moving drone passes a sub-stage boundary with the
+    // Every moving drone passes a sub-stage boundary with the
     // same velocity (the mean of their "straight to the end point" ones).
     bool shared_substage_velocity = true;
-    // Section 1.23: a mid-show formation's shared fly-through velocity is the
+    // A mid-show formation's shared fly-through velocity is the
     // velocity of the formation's centre between the previous and the next
     // formation (false: the mean incoming direction x the fly-through speed).
     bool centered_formation_velocity = true;
     double trust_region_delta_m = 1.0;
-    // Section 1.25 (2026-10-02): each SCP step gets collision rows (and
+    // 2026-10-02: each SCP step gets collision rows (and
     // coloring edges) only for the pairs its trust region can bring within
     // the planning distance, and only pairs that can be under it get the
     // dense scan. false = the old broad phase (pad 0.75 m + planning distance
@@ -150,19 +149,18 @@ struct SolverOptions {
     bool tight_broad_phase = true;
     double broad_phase_curve_margin_m = 0.25;
     double collision_margin_fraction = 0.05;
-    // Rev 2.4's seed_bow_magnitude_m was retired in Rev 2.8 (section 1.2)
+    // The old seed_bow_magnitude_m was retired
     // along with the parity-seeding mechanism it configured — replaced by
     // apf_seeding below. jitter_magnitude_m is unrelated: it still backs the
-    // 2-tier infeasibility self-healing loop's tier-2 fallback (section 1.4,
-    // unchanged since Rev 2.4), so it's kept even though Rev 2.8's own
+    // 2-tier infeasibility self-healing loop's tier-2 fallback, so it's kept even though the
     // core_config.json example omits it (a compile-time default is enough
     // since nothing about tier 2 changed this revision).
     double jitter_magnitude_m = 0.3;
-    // Rev 2.5 T_min auto-scaling (section 1.6/3.2): fraction of kinematic
+    // T_min auto-scaling: fraction of kinematic
     // headroom reserved for collision-avoidance bending.
     double kinematic_slack_fraction = 0.25;
     bool auto_scale_transition_time = true;
-    // Rev 2.6 section 1.7/4: adaptive spatio-temporal hash time-bucket
+    // adaptive spatio-temporal hash time-bucket
     // (keeps window count near target_time_windows instead of a fixed 0.5s
     // bucket exploding once auto-scaling stretches T to 40-50s+), and
     // mega-cluster decomposition of long transitions into Gauss-Seidel
@@ -173,11 +171,11 @@ struct SolverOptions {
     double max_substage_duration_s = 12.0;
     bool enable_staggered_takeoff = true;
     double staggered_wave_delay_s = 1.2;
-    // Section 1.26 (2026-10-02, bug-report P3-03): landing drones first fly
+    // 2026-10-02: landing drones first fly
     // to a hover point this far straight above their slot, then all descend
     // vertically together. 0 = fly straight onto the slot (before).
     double landing_approach_height_m = 2.0;
-    // Rev 2.7 section 1.8: soft-slack collision formulation (a quadratic
+    // soft-slack collision formulation (a quadratic
     // penalty w_slack_collision on a nonnegative slack variable per collision
     // row, instead of a hard separation bound) so OSQP always has a
     // mathematically feasible solution regardless of how contested the local
@@ -185,7 +183,7 @@ struct SolverOptions {
     // solve order.
     double w_slack_collision = 100000.0;
     bool enable_graph_coloring = true;
-    // Rev 2.7 section 4 specifies these for conflict-graph edge filtering
+    // These configure conflict-graph edge filtering
     // (cluster_distance_threshold_m) and weak-edge cluster-size capping
     // (max_cluster_size). Both are parsed from config for doc/schema
     // fidelity, but scp_solver.cpp currently does NOT apply either to its
@@ -230,10 +228,9 @@ inline void read_key(const nlohmann::json& section, const char* key, T& target) 
 // which uses this same shape as its highest-priority tier.
 //
 // The weights section accepts either "solver_weights" (core_config.json's
-// own key, section 2's example) or "weights" (how section 2's fallback
-// diagram names the override-level key: "optional_config_overrides.solver /
-// weights") — the doc uses both spellings for the same thing across the
-// file-tier and override-tier diagrams, so both are accepted here.
+// own key) or "weights" (the override-level key:
+// "optional_config_overrides.solver / weights"); both name the same thing,
+// so both are accepted here.
 inline void apply_json_overrides(CoreConfig& config, const nlohmann::json& root) {
     if (root.contains("kinematics_default")) {
         const auto& k = root.at("kinematics_default");

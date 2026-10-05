@@ -1,4 +1,4 @@
-// 3D replay with the separation timeline as scrubber (docs/5-studio_gui.md §6.4).
+// 3D replay with the separation timeline as scrubber.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReplayScene } from "./ReplayScene";

@@ -1,4 +1,4 @@
-"""python -m tools.studio_bridge <command> ...  (run from the repo root; docs/5-studio_gui.md §4)."""
+"""python -m tools.studio_bridge <command> ...  (run from the repo root)."""
 
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def cmd_stage2_returns(args: argparse.Namespace) -> int:
 
 
 def cmd_config(args: argparse.Namespace) -> int:
-    """The planner settings editor's data for a run (docs/5-studio_gui.md §6.2)."""
+    """The planner settings editor's data for a run."""
     import json
 
     from . import config_fields
@@ -292,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_conditions)
     p = sub.add_parser("scenario-save", help="Create (no --id) or replace a weather scenario")
     p.add_argument("run_dir")
-    p.add_argument("--json", required=True, help="The scenario (docs/4-condition_simulator.md section 3.1)")
+    p.add_argument("--json", required=True, help="The scenario")
     p.add_argument("--id", default=None, help="The scenario to replace")
     p.set_defaults(fn=cmd_scenario_save)
     p = sub.add_parser("scenario-delete")
@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scenario", default=None, help="Take the rain rule and window from this scenario")
     p.add_argument("--window-s", type=float, default=None, help="Seconds from the rain alert to the limit level")
     p.set_defaults(fn=cmd_readiness)
-    p = sub.add_parser("suggest", help="Suggestions for the moments a rain window doesn't cover (section 5.3)")
+    p = sub.add_parser("suggest", help="Suggestions for the moments a rain window doesn't cover")
     p.add_argument("run_dir")
     p.add_argument("--scenario", default=None, help="Take the rain rule and window from this scenario")
     p.add_argument("--window-s", type=float, default=None, help="Seconds from the rain alert to the limit level")

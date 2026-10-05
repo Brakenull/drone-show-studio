@@ -1,4 +1,4 @@
-"""Takeoff and return legs (spec section 3.8).
+"""Takeoff and return legs.
 
 Pure module (NumPy/SciPy only) - no `bpy` dependency, fully unit-testable.
 

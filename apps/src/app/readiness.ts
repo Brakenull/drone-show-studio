@@ -1,4 +1,4 @@
-// Rain return coverage (docs/4-condition_simulator.md §5.2) for any rain window, so the window slider
+// Rain return coverage for any rain window, so the window slider
 // answers at once. Mirrors twin_sim/rain_return.py `coverage()`; the bridge's `readiness` command and
 // tests/test_rain_return.py check the Python side, the Conditions tab shows both on the same pieces.
 

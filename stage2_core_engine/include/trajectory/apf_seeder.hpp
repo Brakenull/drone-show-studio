@@ -7,9 +7,8 @@
 #include "config.hpp"
 #include "trajectory/quintic_bspline.hpp"
 
-// APF Warm-Start Seeding & Directional Z-Stratification (docs/2-phase_2.md
-// Rev 2.9 sections 1.2/3.2): replaces Rev 2.4-2.7's drone_id-parity bow
-// heuristic (trajectory/heuristic_seeder.hpp, retired in Rev 2.8).
+// APF Warm-Start Seeding & Directional Z-Stratification: replaces the earlier
+// drone_id-parity bow heuristic (trajectory/heuristic_seeder.hpp, retired).
 //
 // INCIDENT THIS REPLACES: the parity bow only ever split drones into two
 // groups (even/odd drone_id), which is enough to break a single isolated
@@ -26,20 +25,20 @@
 // ever starts, so a crowded region "balloons" outward into a genuinely
 // separated 3D volume from iteration 0.
 //
-// Rev 2.8's Directional Z-Stratification lifted head-on horizontal flows by
+// The first Directional Z-Stratification lifted head-on horizontal flows by
 // H*sin(theta) -- which cancels to ~0 exactly at due-East/West headings
 // (theta ~= 0, pi), leaving those flows with no altitude separation at all.
-// Rev 2.9 section 1.2 replaces it with a Discrete 4-Sector assignment (see
+// A Discrete 4-Sector assignment replaces it (see
 // get_sector_z_offset() in apf_seeder.cpp): every heading falls into one of
 // 4 orthogonal 90-degree sectors, each with its own fixed, nonzero altitude
 // band, so no heading (including due-East/West) is ever left unstratified.
 //
-// Rev 2.8's own verified impact substantially raised the fleet size that
-// solves safely but did not fully clear the doc's own N=40 acceptance bar,
+// APF seeding's verified impact substantially raised the fleet size that
+// solves safely but did not fully clear the N=40 acceptance bar,
 // and root-caused the residual gap to solve_single_stage()'s best-iterate
 // worst-case tracking under-reporting the true continuous-time minimum
 // between coarse per-window collocation samples (see
-// stage2_nway_conflict_limitation memory). Rev 2.9 sections 1.9/1.10 close
+// stage2_nway_conflict_limitation memory). Two later mechanisms close
 // that gap from two directions: Adaptive Cutting-Plane Collocation
 // (scp_solver.cpp) inserts extra hard collocation rows exactly at detected
 // near-miss extrema so the *optimizer* reacts to them, and the Decoupled
@@ -61,14 +60,14 @@ namespace drone_core::trajectory {
 // points seed_control_points() would produce, with the (num_control_points -
 // 6) free interior points replaced by the APF-settled positions.
 //
-// Sampling deviates from the doc's literal fixed K_sample=8: each drone is
+// Sampling doesn't use a fixed K_sample=8: each drone is
 // sampled at exactly `num_control_points - 6` fractions (one per free
 // interior control point, at that point's own nominal parametric fraction
 // k/(num_control_points-1), matching seed_control_points_with_bow()'s old
 // convention) rather than a fixed 8, so the settled APF positions map
 // directly onto control points with no separate curve-fitting step --
-// reducing to the doc's own K_sample=8 exactly when num_control_points=14
-// (8 free interior points, the doc's own Holding Area -> Square Test scale).
+// reducing to K_sample=8 exactly when num_control_points=14
+// (8 free interior points, the Holding Area -> Square Test scale).
 //
 // If `config.enabled` is false, returns the plain (unseeded, linear-interior)
 // seed_control_points() result for every drone.

@@ -1,4 +1,4 @@
-// Compare two runs' Stage 2 results (docs/5-studio_gui.md §6.5): closest-pair distance over time
+// Compare two runs' Stage 2 results: closest-pair distance over time
 // overlaid, the headline numbers side by side, and the planner settings that differ.
 
 import { useEffect, useMemo, useState } from "react";

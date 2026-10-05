@@ -1,4 +1,4 @@
-"""Intermediate data builder & serializer (spec section 4).
+"""Intermediate data builder & serializer.
 
 Pure module (json/msgpack only) - no `bpy` dependency, fully unit-testable.
 Produces dicts that conform to `schemas/project_intermediate.schema.json`.
@@ -32,10 +32,10 @@ def build_project_metadata(
     waiting_areas: Optional[Sequence[dict]] = None,
 ) -> dict:
     """`takeoff_duration_sec` / `return_duration_sec`: the legs' target
-    durations (spec section 3.8), None meaning Auto (Stage 2's minimum).
-    `ground_z_m`: ENU height of the ground (spec section 3.9).
+    durations, None meaning Auto (Stage 2's minimum).
+    `ground_z_m`: ENU height of the ground.
     `waiting_areas`: dicts with center, size, grid_spacing_m,
-    show_clearance_m and slot_count (spec section 3.10); omitted when empty."""
+    show_clearance_m and slot_count; omitted when empty."""
     lat, lon, alt = origin_gps
     metadata = {
         "version": SCHEMA_VERSION,
@@ -136,14 +136,13 @@ def validate_intermediate_data(data: dict) -> List[str]:
     """Lightweight structural + invariant validation.
 
     Returns a list of human-readable error strings (empty list == valid).
-    Checks the acceptance-criteria invariants from spec section 5:
+    Checks the acceptance-criteria invariants:
       - every keyframe has exactly fleet_size points
       - point indices are 0..fleet_size-1 with no duplicates
       - no pair of points in a keyframe violates min_distance_m
-      - a leg's target duration, when set, is positive (section 3.8)
-      - holding-area layers are at least a grid step apart (section 3.2)
+      - a leg's target duration, when set, is positive
+      - holding-area layers are at least a grid step apart
       - the waiting areas have room for every keyframe's spare drones
-        (section 3.10)
     """
     errors: List[str] = []
     metadata = data.get("project_metadata", {})

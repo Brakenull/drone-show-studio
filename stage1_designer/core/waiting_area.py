@@ -1,4 +1,4 @@
-"""Waiting areas (spec section 3.10).
+"""Waiting areas.
 
 Pure geometry module: no `bpy` dependency, fully unit-testable.
 
@@ -28,7 +28,7 @@ import numpy as np
 from .holding_area import ClearanceResult, check_show_clearance, distance_to_region, layer_grid_dims
 
 # A waiting layer this close to the ground (or lower) locks Export: drones
-# wait in the air, with room under them (spec section 3.10).
+# wait in the air, with room under them.
 MIN_HEIGHT_ABOVE_GROUND_M = 2.0
 
 
@@ -169,8 +169,7 @@ def check_detours(
 ) -> List[Detour]:
     """Keyframes after the first (whose spare drones wait in the air) where
     every waiting area is a longer trip than the holding area. Not a safety
-    problem; it stretches the show and costs battery (spec section
-    3.10.1)."""
+    problem; it stretches the show and costs battery."""
     if not areas:
         return []
     regions = [waiting_region_bounds(n, a) for a, n in zip(areas, slot_counts)]
@@ -208,7 +207,7 @@ def box_distance(lo_a, hi_a, lo_b, hi_b) -> float:
 
 
 class WaitingCheck(NamedTuple):
-    """Everything the add-on checks about the waiting areas (section 3.10)."""
+    """Everything the add-on checks about the waiting areas."""
 
     clearance: List[List[ClearanceResult]]  # per area: formations too close
     holding_gaps: List[float]  # per area: distance to the holding region
@@ -247,7 +246,7 @@ def check_waiting_areas(
     ground_z_m: float,
 ) -> WaitingCheck:
     """`formations`: each keyframe's sampled points (padding excluded), as for
-    the holding area's clearance check (section 3.2.2)."""
+    the holding area's clearance check."""
     regions = [waiting_region_bounds(n, a) for a, n in zip(areas, slot_counts)]
     clearance = [check_show_clearance(formations, lo, hi, a.show_clearance_m) for a, (lo, hi) in zip(areas, regions)]
     holding_gaps = [box_distance(lo, hi, holding_lo, holding_hi) for lo, hi in regions]

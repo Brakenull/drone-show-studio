@@ -1,4 +1,4 @@
-"""`stage2` and `replay` commands (docs/5-studio_gui.md §4, §5.1, §5.2)."""
+"""`stage2` and `replay` commands."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def gatekeeper_floor(run_dir: Path) -> float | None:
 
 
 def _waiting_overlay(meta: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each waiting area (schema 1.7.0) with its slots, for the 3D views (docs/5-studio_gui.md)."""
+    """Each waiting area (schema 1.7.0) with its slots, for the 3D views."""
     from stage1_designer.core.waiting_area import areas_from_metadata, compute_waiting_positions
 
     areas, counts = areas_from_metadata(meta)
@@ -78,9 +78,9 @@ def _build_replay(run_dir: Path, contract: dict[str, Any], failure: dict[str, An
 
 
 def _solve_kwargs(drone_core: Any) -> dict[str, Any]:
-    """Forward drone_core's progress events (B2) as `solve_progress`; older builds have no callback."""
+    """Forward drone_core's progress events as `solve_progress`; older builds have no callback."""
     if "progress_callback" not in (drone_core.optimize_trajectories.__doc__ or ""):
-        log("drone_core has no progress_callback (built before B2); rebuild it for live solve progress")
+        log("drone_core has no progress_callback (an old build); rebuild it for live solve progress")
         return {}
     return {"progress_callback": lambda event: emit("solve_progress", **event)}
 

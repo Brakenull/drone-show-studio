@@ -1,4 +1,4 @@
-// Heads-up display of a simulated flight's weather (docs/4-condition_simulator.md §6): wind speed and
+// Heads-up display of a simulated flight's weather: wind speed and
 // direction, gusts passing, rain against the alert and limit levels, RTK state.
 
 import type { SimWeather } from "./types";

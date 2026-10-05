@@ -1,4 +1,4 @@
-// Formation marks (docs/5-studio_gui.md §6.4): where each Phase 1 formation falls in the planned show,
+// Formation marks: where each Phase 1 formation falls in the planned show,
 // against its time in the Blender export.
 
 import { formatTime } from "./sampling";
