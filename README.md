@@ -67,7 +67,29 @@ npm run tauri dev
 
 The app finds the repository, `.venv` and the built engines by itself when it runs from this folder. Runs are saved in `runs\`.
 
-`npm run tauri build` makes a Windows installer (`apps\src-tauri\target\release\bundle\`). The installed app still uses this repository for all computation: set the repository folder once on its **Settings** page.
+#### Or install it
+
+```powershell
+cd apps
+npm run tauri build
+```
+
+This builds two installers. Either one works:
+
+- `apps\src-tauri\target\release\bundle\msi\Drone Show Studio_<version>_x64_en-US.msi`
+- `apps\src-tauri\target\release\bundle\nsis\Drone Show Studio_<version>_x64-setup.exe` (per-user, no admin rights needed)
+
+The installed app contains only the window and its pages. All computation still runs from this repository, so keep the repository folder and its `.venv` on the machine. The installed app is outside the repository, so it cannot find it by itself. On first launch, open **Settings** and set:
+
+| Setting | Value |
+|---|---|
+| Repository folder | this repository, e.g. `C:\...\drone-show-studio` |
+| Python | `<repository>\.venv\Scripts\python.exe` |
+| Run folders | `<repository>\runs` |
+
+The app saves these settings in `%APPDATA%\com.brake.studio-desktop\settings.json` and reuses them on every launch. If you move the repository, set the paths again.
+
+After a `git pull`, Python changes take effect right away and engine changes only need `setup.ps1`. Changes under `apps\` need a new `npm run tauri build` and a reinstall.
 
 ### 4. Install the Blender add-on (optional)
 
