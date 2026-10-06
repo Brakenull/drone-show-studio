@@ -120,7 +120,7 @@
           }
         },
         "waiting_areas": {
-          "description": "Added in 1.7.0, optional (absent or empty = none). Places in the air where spare drones wait (LEDs off) instead of flying home mid-show. Each is one flat layer of slots at center z; slot_count slots are laid out (the declared grid, the last area widened along X if needed).",
+          "description": "Added in 1.7.0, optional (absent or empty = none). Places in the air where spare drones wait (LEDs off) instead of flying home mid-show. Each is one flat layer of slots at center z; slot_count slots are laid out (the declared grid; when the declared slots are too few, every area grows by the same number of slots).",
           "type": "array",
           "items": {
             "type": "object",

@@ -18,7 +18,7 @@ import numpy as np
 
 from ..config import LEG_MODE_AUTO
 from .holding_area import compute_holding_row_indices
-from .kinematic_validator import compute_min_safe_duration
+from .kinematic_validator import compute_min_safe_duration, longest_assigned_flight
 
 
 class LegEstimate(NamedTuple):
@@ -35,18 +35,11 @@ def estimate_max_travel(from_points: np.ndarray, to_points: np.ndarray) -> float
     """Longest distance any drone flies when every start point is matched to
     one end point by a minimum-total-distance assignment (a stand-in for
     Stage 2's Auction). Both arrays are (N, 3) with the same N."""
-    from scipy.optimize import linear_sum_assignment
-    from scipy.spatial.distance import cdist
-
     a = np.asarray(from_points, dtype=float)
     b = np.asarray(to_points, dtype=float)
     if a.shape != b.shape:
         raise ValueError(f"point sets differ in shape: {a.shape} vs {b.shape}")
-    if len(a) == 0:
-        return 0.0
-    cost = cdist(a, b)
-    rows, cols = linear_sum_assignment(cost)
-    return float(cost[rows, cols].max())
+    return longest_assigned_flight(a, b)
 
 
 def launch_wave_span(

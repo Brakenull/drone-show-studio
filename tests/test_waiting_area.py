@@ -86,10 +86,13 @@ def test_region_contains_slots_and_footprint():
     assert not in_waiting_region(np.array([[0.0, 0.0, 10.0]]), [EAST], [18]).any()
 
 
-def test_allocation_fills_areas_in_order_and_widens_the_last():
+def test_allocation_shares_the_shortfall_evenly():
     assert allocate_slot_counts([EAST, WEST], 10) == [18, 16]
     assert allocate_slot_counts([EAST, WEST], 34) == [18, 16]
-    assert allocate_slot_counts([EAST, WEST], 50) == [18, 32]
+    assert allocate_slot_counts([EAST, WEST], 50) == [26, 24]  # 16 short: 8 each
+    assert allocate_slot_counts([EAST, WEST], 51) == [27, 24]  # odd: the first gets one more
+    assert allocate_slot_counts([EAST, WEST, EAST], 60) == [21, 19, 20]  # 8 short over 3 areas: 3, 3, 2
+    assert sum(allocate_slot_counts([EAST, WEST], 51)) == 51
     assert allocate_slot_counts([], 5) == []
 
 

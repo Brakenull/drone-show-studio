@@ -115,12 +115,15 @@ def waiting_region_bounds(n_slots: int, area: WaitingArea) -> Tuple[np.ndarray, 
 
 def allocate_slot_counts(areas: Sequence[WaitingArea], needed: int) -> List[int]:
     """How many slots each area lays out so that, together, they hold
-    `needed` waiting drones: every area its declared capacity, and the last
-    one widened to take whatever the others can't (exported as each area's
-    `slot_count`, so Stage 2 lays out the same slots)."""
+    `needed` waiting drones: every area its declared capacity, and the
+    shortfall shared evenly, every area growing by the same number of slots
+    (the first ones one more when it doesn't divide). Exported as each area's
+    `slot_count`, so Stage 2 lays out the same slots."""
     counts = [a.capacity for a in areas]
-    if counts:
-        counts[-1] = max(counts[-1], needed - sum(counts[:-1]))
+    shortfall = needed - sum(counts)
+    if counts and shortfall > 0:
+        share, extra = divmod(shortfall, len(counts))
+        counts = [n + share + (i < extra) for i, n in enumerate(counts)]
     return counts
 
 

@@ -11,6 +11,7 @@ from stage1_designer.core.kinematic_validator import (
     evaluate_transitions,
     has_error,
     required_velocity,
+    transition_d_max,
 )
 
 V_MAX = 6.0
@@ -79,7 +80,7 @@ def test_auto_fix_times_stretches_unsafe_transition():
     times = [0.0, 2.0]
     p0 = np.array([[0.0, 0.0, 0.0]])
     p1 = np.array([[73.0, 0.0, 0.0]])
-    fixed = auto_fix_times(times, [p0, p1], V_MAX)
+    fixed = auto_fix_times(times, evaluate_transitions(times, [p0, p1], V_MAX), V_MAX)
     assert fixed[0] == 0.0
     safe_delta = compute_min_safe_duration(73.0, V_MAX)
     assert fixed[1] == pytest.approx(safe_delta)
@@ -91,7 +92,7 @@ def test_auto_fix_times_never_compresses_already_safe_transitions():
     times = [0.0, 100.0]  # already generously slow
     p0 = np.array([[0.0, 0.0, 0.0]])
     p1 = np.array([[1.0, 0.0, 0.0]])
-    fixed = auto_fix_times(times, [p0, p1], V_MAX)
+    fixed = auto_fix_times(times, evaluate_transitions(times, [p0, p1], V_MAX), V_MAX)
     assert fixed[1] == pytest.approx(100.0)
 
 
@@ -103,9 +104,53 @@ def test_auto_fix_times_cascades_offset_to_later_keyframes():
     p0 = np.array([[0.0, 0.0, 0.0]])
     p1 = np.array([[73.0, 0.0, 0.0]])
     p2 = np.array([[74.0, 0.0, 0.0]])  # second transition is trivially safe
-    fixed = auto_fix_times(times, [p0, p1, p2], V_MAX)
+    fixed = auto_fix_times(times, evaluate_transitions(times, [p0, p1, p2], V_MAX), V_MAX)
     assert fixed[2] == pytest.approx(fixed[1] + 5.0)
 
 
 def test_auto_fix_times_empty_input():
     assert auto_fix_times([], [], V_MAX) == []
+
+
+# Formation rows first, then padding slots (the exported keyframe layout).
+SLOTS = np.array([[x, -30.0, 0.0] for x in range(0, 10, 2)], dtype=float)
+
+
+def _keyframe(formation):
+    formation = np.asarray(formation, dtype=float)
+    return np.vstack([formation, SLOTS[: len(SLOTS) - len(formation) + 2]])
+
+
+def test_d_max_count_change_does_not_pair_a_slot_with_the_shape():
+    # 2 -> 3 formation points 10 m apart: index pairing alone matched slot 0
+    # with the third point (~37 m); the joining drone flies from its nearest slot.
+    a = _keyframe([[0, 0, 20], [1, 0, 20]])
+    b = _keyframe([[10, 0, 20], [11, 0, 20], [12, 0, 20]])
+    assert len(a) == len(b)
+    d = transition_d_max(a, b, 2, 3)
+    nearest_slot = np.linalg.norm(SLOTS - [12, 0, 20], axis=1).min()
+    assert d == pytest.approx(max(10.0, nearest_slot))
+    assert d < float(np.linalg.norm(b - a, axis=1).max())
+
+
+def test_d_max_leaving_drone_flies_to_a_slot():
+    a = _keyframe([[0, 0, 20], [1, 0, 20], [2, 0, 20]])
+    b = _keyframe([[0, 0, 20], [1, 0, 20]])
+    d = transition_d_max(a, b, 3, 2)
+    assert d == pytest.approx(np.linalg.norm(SLOTS - [2, 0, 20], axis=1).min())
+
+
+def test_d_max_parked_drones_dont_count():
+    # Padding moved to other slots between keyframes: drones parked at both stay put.
+    a = np.vstack([[[0, 0, 20]], SLOTS[:3]])
+    b = np.vstack([[[1, 0, 20]], SLOTS[2:5] + [0, 50, 0]])
+    assert transition_d_max(a, b, 1, 1) == pytest.approx(1.0)
+
+
+def test_evaluate_transitions_uses_formation_counts():
+    a = _keyframe([[0, 0, 20], [1, 0, 20]])
+    b = _keyframe([[10, 0, 20], [11, 0, 20], [12, 0, 20]])
+    plain = evaluate_transitions([0.0, 10.0], [a, b], V_MAX)[0]
+    split = evaluate_transitions([0.0, 10.0], [a, b], V_MAX, [2, 3])[0]
+    assert split.d_max == pytest.approx(transition_d_max(a, b, 2, 3))
+    assert split.d_max < plain.d_max

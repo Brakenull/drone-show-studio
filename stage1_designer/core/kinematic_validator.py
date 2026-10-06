@@ -6,18 +6,17 @@ timing an animator authored, flags transitions that exceed the drone fleet's
 v_max before they ever reach Phase 2, and can compute a stretched timeline
 that brings every transition back under budget.
 
-`D_max` between two keyframes is approximated via same-array-index
-correspondence ("hoặc xấp xỉ qua phân bố tâm cụm") since
-Phase 1 has no visibility into Phase 2's Auction point-matching — the actual
-per-drone assignment can only reduce total travel versus this identity
-pairing, so this approximation is conservative (it warns at least as often
-as the real assignment would, never less).
+`D_max` between two keyframes treats the two kinds of drone separately
+(`transition_d_max`), the way Phase 2 flies them: formation points pair by
+index, drones joining or leaving the formation fly between their formation
+points and the padding slots, and drones parked at both keyframes stay where
+they are.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
 
@@ -68,14 +67,48 @@ def compute_min_safe_duration(d_max: float, v_max: float, slack_fraction: float 
     return QUINTIC_PEAK_VELOCITY_FACTOR * d_max / v_max * (1.0 + slack_fraction)
 
 
+def longest_assigned_flight(from_points: np.ndarray, to_points: np.ndarray) -> float:
+    """Longest flight when every point of the smaller set gets its own point
+    of the other set by a minimum-total-distance assignment (a stand-in for
+    Phase 2's Auction)."""
+    from scipy.optimize import linear_sum_assignment
+    from scipy.spatial.distance import cdist
+
+    if len(from_points) == 0 or len(to_points) == 0:
+        return 0.0
+    cost = cdist(from_points, to_points)
+    rows, cols = linear_sum_assignment(cost)
+    return float(cost[rows, cols].max())
+
+
+def transition_d_max(p_from: np.ndarray, p_to: np.ndarray, n_from: int, n_to: int) -> float:
+    """Longest flight between two keyframes whose first `n_from` / `n_to`
+    rows are the formation and the rest padding slots:
+    * formation to formation: by index (exact for a shape that only moves or
+      rotates, same seed; an over-estimate up to the shape's size when it
+      deforms),
+    * drones joining the formation: from the padding slots they are parked on,
+    * drones leaving it: to the padding slots,
+    * drones parked at both keyframes: none (they keep their pad or slot)."""
+    shared = min(n_from, n_to)
+    d_max = float(np.linalg.norm(p_to[:shared] - p_from[:shared], axis=1).max(initial=0.0))
+    if n_to > n_from:
+        d_max = max(d_max, longest_assigned_flight(p_from[n_from:], p_to[n_from:n_to]))
+    elif n_from > n_to:
+        d_max = max(d_max, longest_assigned_flight(p_from[n_to:n_from], p_to[n_to:]))
+    return d_max
+
+
 def evaluate_transitions(
     times: Sequence[float],
     positions_per_keyframe: Sequence[np.ndarray],
     v_max: float,
+    formation_counts: Optional[Sequence[int]] = None,
 ) -> List[TransitionKinematics]:
     """One `TransitionKinematics` per consecutive keyframe pair. `times` and
     `positions_per_keyframe` must be the same length and already in timeline
-    order; each array in `positions_per_keyframe` is (N, 3)."""
+    order; each array in `positions_per_keyframe` is (N, 3), its first
+    `formation_counts[k]` rows the formation (default: all of them)."""
     if len(times) != len(positions_per_keyframe):
         raise ValueError("times and positions_per_keyframe must have the same length")
 
@@ -88,7 +121,10 @@ def evaluate_transitions(
                 f"keyframe {k} has {p_from.shape[0]} points but keyframe {k + 1} has {p_to.shape[0]}"
             )
 
-        d_max = float(np.linalg.norm(p_to - p_from, axis=1).max()) if len(p_from) else 0.0
+        if formation_counts is None:
+            d_max = transition_d_max(p_from, p_to, len(p_from), len(p_to))
+        else:
+            d_max = transition_d_max(p_from, p_to, formation_counts[k], formation_counts[k + 1])
         delta_t = times[k + 1] - times[k]
         v_req = required_velocity(d_max, delta_t)
         results.append(
@@ -112,12 +148,13 @@ def has_error(transitions: Sequence[TransitionKinematics]) -> bool:
 
 def auto_fix_times(
     times: Sequence[float],
-    positions_per_keyframe: Sequence[np.ndarray],
+    transitions: Sequence[TransitionKinematics],
     v_max: float,
     slack_fraction: float = KINEMATIC_SLACK_FRACTION,
 ) -> List[float]:
     """Returns a new timeline where every transition's allocated duration is
-    at least its `compute_min_safe_duration`, cascading any inserted extra
+    at least its `compute_min_safe_duration` (from the `d_max` that
+    `evaluate_transitions` measured), cascading any inserted extra
     time forward so later keyframes keep their relative spacing (never
     compresses an already-safe transition, only stretches unsafe ones) —
     the same forward-cascading approach Phase 2's T_min auto-scaling uses,
@@ -127,10 +164,7 @@ def auto_fix_times(
 
     fixed = [float(times[0])]
     for k in range(len(times) - 1):
-        p_from = np.asarray(positions_per_keyframe[k], dtype=float)
-        p_to = np.asarray(positions_per_keyframe[k + 1], dtype=float)
-        d_max = float(np.linalg.norm(p_to - p_from, axis=1).max()) if len(p_from) else 0.0
         nominal_delta = times[k + 1] - times[k]
-        safe_delta = compute_min_safe_duration(d_max, v_max, slack_fraction)
+        safe_delta = compute_min_safe_duration(transitions[k].d_max, v_max, slack_fraction)
         fixed.append(fixed[-1] + max(nominal_delta, safe_delta))
     return fixed

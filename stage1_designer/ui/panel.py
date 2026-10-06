@@ -46,6 +46,61 @@ def has_kinematic_error() -> bool:
     return bool(transitions) and any(t.status == STATUS_ERROR for t in transitions)
 
 
+# The keyframes of the last Check Kinematics that passed, kept while nothing
+# changed: Check Kinematics is disabled and Export writes exactly these.
+# Cleared by any data update (`__init__._on_depsgraph_update`); settings and
+# timeline markers don't always send one, so `_show_key` is compared too.
+_passed_check = {"key": None, "entries": None, "transitions": None}
+
+# Settings that don't change the exported keyframes.
+_UNTRACKED_SETTINGS = {
+    "export_path", "export_format", "show_viewport_overlay", "live_update_on_frame_change",
+    "show_holding_area_preview", "show_compass_gizmo", "show_ground_object", "waiting_area_index",
+}
+
+
+def _props_key(group, skip=()):
+    values = []
+    for prop in group.bl_rna.properties:
+        name = prop.identifier
+        if name == "rna_type" or name in skip:
+            continue
+        value = getattr(group, name)
+        if prop.type == "POINTER":
+            value = _props_key(value) if isinstance(value, bpy.types.PropertyGroup) else getattr(value, "name", None)
+        elif prop.type == "COLLECTION":
+            value = tuple(_props_key(item) for item in value)
+        elif prop.type in {"FLOAT", "INT", "BOOLEAN"} and prop.array_length:
+            value = tuple(value)
+        values.append((name, value))
+    return tuple(values)
+
+
+def _show_key(scene):
+    return (
+        scene.name,
+        scene.render.fps,
+        scene.render.fps_base,
+        tuple((m.name, m.frame) for m in scene.timeline_markers),
+        _props_key(scene.drone_show_settings, _UNTRACKED_SETTINGS),
+    )
+
+
+def record_passed_check(scene, entries, transitions) -> None:
+    _passed_check.update(key=_show_key(scene), entries=entries, transitions=transitions)
+
+
+def clear_passed_check() -> None:
+    _passed_check.update(key=None, entries=None, transitions=None)
+
+
+def passed_check(scene):
+    """(entries, transitions) of the last passed check if nothing changed since, else None."""
+    if _passed_check["key"] is None or _passed_check["key"] != _show_key(scene):
+        return None
+    return _passed_check["entries"], _passed_check["transitions"]
+
+
 # Each keyframe's formation points (ENU, parked drones excluded) from the last
 # full sampling pass, for the holding-area clearance check. Results are recomputed from it whenever the holding-area settings
 # or the safe distance change, without re-sampling.
@@ -248,7 +303,7 @@ class DSS_PG_WaitingArea(bpy.types.PropertyGroup):
     )
     size: bpy.props.FloatVectorProperty(
         name="Size (W, L)", size=2, default=config.DEFAULT_WAITING_AREA["size"], min=0.0,
-        description="Footprint; the last area widens along X if the spare drones don't fit",
+        description="Footprint; if the spare drones don't fit, every area grows by the same number of places",
         update=_on_waiting_changed,
     )
     grid_spacing_m: bpy.props.FloatProperty(
@@ -436,6 +491,13 @@ class DSS_PG_ProjectSettings(bpy.types.PropertyGroup):
     sample_method: bpy.props.EnumProperty(
         name="Sample Method", items=_sample_method_items,
     )
+    sample_seed: bpy.props.IntProperty(
+        name="Sample Seed", default=0, min=0,
+        description=(
+            "Random seed of the point sampling. Every keyframe, Check Kinematics and Export use it, "
+            "so the export is the sampling you previewed. Preview Sample picks a new one"
+        ),
+    )
     fleet_size: bpy.props.IntProperty(
         name="Fleet Size", default=config.DEFAULT_FLEET_SIZE, min=1,
         update=_on_layout_changed,
@@ -552,6 +614,7 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.label(text="Source & Fleet")
         box.prop(settings, "target_object")
         box.prop(settings, "sample_method")
+        box.prop(settings, "sample_seed")
         box.prop(settings, "fleet_size")
 
         box = layout.box()
@@ -658,6 +721,8 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box = layout.box()
         box.label(text="Kinematic Pre-Validation")
         box.operator("dss.check_kinematics", icon="FILE_REFRESH")
+        if passed_check(context.scene) is not None:
+            box.label(text="Passed, nothing changed since: Export writes this result", icon="LOCKED")
         transitions = get_kinematic_cache()
         if transitions is None:
             box.label(text="Not checked yet")

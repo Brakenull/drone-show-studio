@@ -30,6 +30,9 @@ except ImportError:  # pragma: no cover - outside Blender
 
 
 if _HAS_BPY:
+    import contextlib
+    import random
+
     import numpy as np
 
     from . import config
@@ -46,6 +49,31 @@ if _HAS_BPY:
     from .ui import compass_gizmo, ground_scene, holding_area_scene, panel, viewport_drawer, waiting_area_scene
 
     _redraw_timer_running = False
+    _own_update = False
+
+    @contextlib.contextmanager
+    def _ignoring_own_updates(context):
+        """Run a sampling pass without its own scene edits (frame steps, the
+        holding / waiting area objects) clearing the passed check: they are
+        flushed here, while still ignored."""
+        global _own_update
+        _own_update = True
+        try:
+            yield
+            context.view_layer.update()
+        finally:
+            _own_update = False
+
+    @bpy.app.handlers.persistent
+    def _on_depsgraph_update(_scene, depsgraph):
+        # Any object, mesh, animation... edit may change the show. Scene-only
+        # updates (selection, settings) are left to the settings key.
+        if not _own_update and any(not isinstance(u.id, bpy.types.Scene) for u in depsgraph.updates):
+            panel.clear_passed_check()
+
+    @bpy.app.handlers.persistent
+    def _on_file_or_undo(*_args):
+        panel.clear_passed_check()
 
     def _redraw_all_view3d():
         for window in bpy.context.window_manager.windows:
@@ -68,10 +96,10 @@ if _HAS_BPY:
         return (positions_world, colors_rgb8) with matching length."""
         if settings.sample_method == "SURFACE":
             points = sampler.sample_object_surface(
-                obj, settings.min_distance_m, max_points=settings.fleet_size
+                obj, settings.min_distance_m, max_points=settings.fleet_size, seed=settings.sample_seed
             )
         else:
-            points = sampler.sample_object_volume(obj, settings.min_distance_m)
+            points = sampler.sample_object_volume(obj, settings.min_distance_m, seed=settings.sample_seed)
             if len(points) > settings.fleet_size:
                 points = points[: settings.fleet_size]
 
@@ -82,7 +110,7 @@ if _HAS_BPY:
     def _padding_positions(settings, n_park, spare_needed, first_keyframe=False):
         """Slots for the drones a formation leaves spare: the first waiting slots when the design has waiting areas
         (`spare_needed`, the most spare drones at any later keyframe, sizes
-        the last area), else the first holding-area slots. The first
+        the areas), else the first holding-area slots. The first
         formation's spare drones always stay on their pads: every drone takes
         off from the holding area when a formation first needs it."""
         if len(settings.waiting_areas) and not first_keyframe:
@@ -172,7 +200,9 @@ if _HAS_BPY:
         panel.set_leg_cache(positions[0], positions[-1], float(times[-1] - times[0]))
         ground_scene.set_show_extent([pts for _name, pts in formations])
         ground_scene.sync(scene)
-        transitions = kinematic_validator.evaluate_transitions(list(times), positions, _configured_v_max(settings))
+        transitions = kinematic_validator.evaluate_transitions(
+            list(times), positions, _configured_v_max(settings), [len(pts) for _name, pts in formations]
+        )
         return entries, transitions
 
     def _at_or_before_first_keyframe(scene, settings) -> bool:
@@ -257,6 +287,13 @@ if _HAS_BPY:
         bl_label = "Check Kinematics"
         bl_description = "Sample all keyframes and re-check required transition speeds against v_max"
 
+        @classmethod
+        def poll(cls, context):
+            if panel.passed_check(context.scene) is not None:
+                cls.poll_message_set("Already passed and nothing changed since")
+                return False
+            return True
+
         def execute(self, context):
             setup = _get_target_and_times(self, context)
             if setup is None:
@@ -264,9 +301,12 @@ if _HAS_BPY:
             scene, settings, obj, times = setup
 
             try:
-                _entries, transitions = _sample_all_keyframes_for_validation(
-                    settings, obj, scene, times, _shape_name_for_frame
-                )
+                with _ignoring_own_updates(context):
+                    entries, transitions = _sample_all_keyframes_for_validation(
+                        settings, obj, scene, times, _shape_name_for_frame
+                    )
+                    if not kinematic_validator.has_error(transitions):
+                        panel.record_passed_check(scene, entries, transitions)
             except ImportError as exc:
                 self.report({"ERROR"}, str(exc))
                 return {"CANCELLED"}
@@ -294,7 +334,7 @@ if _HAS_BPY:
             scene, settings, obj, times = setup
 
             try:
-                entries, transitions = _sample_all_keyframes_for_validation(
+                _entries, transitions = _sample_all_keyframes_for_validation(
                     settings, obj, scene, times, _shape_name_for_frame
                 )
             except ImportError as exc:
@@ -306,22 +346,22 @@ if _HAS_BPY:
                 self.report({"INFO"}, "Nothing to fix — every transition is already within v_max")
                 return {"FINISHED"}
 
-            positions = [np.array([p["pos"] for p in kf["points"]]) for kf in entries]
-            v_max = _configured_v_max(settings)
-            fixed_times = kinematic_validator.auto_fix_times(times, positions, v_max)
+            fixed_times = kinematic_validator.auto_fix_times(times, transitions, _configured_v_max(settings))
 
             scene_fps = scene.render.fps / scene.render.fps_base
             frame_mapping = {
                 int(round(old_t * scene_fps)): int(round(new_t * scene_fps))
                 for old_t, new_t in zip(times, fixed_times)
             }
-            moved_keyframes = timeline_sampler.shift_keyframes_to_frames(obj, frame_mapping)
-            timeline_sampler.shift_timeline_markers_to_frames(scene, frame_mapping)
-
             try:
-                _entries2, transitions2 = _sample_all_keyframes_for_validation(
-                    settings, obj, scene, fixed_times, _shape_name_for_frame
-                )
+                with _ignoring_own_updates(context):
+                    moved_keyframes = timeline_sampler.shift_keyframes_to_frames(obj, frame_mapping)
+                    timeline_sampler.shift_timeline_markers_to_frames(scene, frame_mapping)
+                    entries2, transitions2 = _sample_all_keyframes_for_validation(
+                        settings, obj, scene, fixed_times, _shape_name_for_frame
+                    )
+                    if not kinematic_validator.has_error(transitions2):
+                        panel.record_passed_check(scene, entries2, transitions2)
             except ImportError as exc:
                 self.report({"ERROR"}, str(exc))
                 return {"CANCELLED"}
@@ -346,6 +386,7 @@ if _HAS_BPY:
                 self.report({"ERROR"}, "No target object set")
                 return {"CANCELLED"}
 
+            settings.sample_seed = random.randrange(2**31 - 1)
             try:
                 points = _refresh_overlay_for_scene(context.scene)
             except ImportError as exc:
@@ -367,13 +408,20 @@ if _HAS_BPY:
                 return {"CANCELLED"}
             scene, settings, obj, times = setup
 
-            try:
-                keyframe_entries, transitions = _sample_all_keyframes_for_validation(
-                    settings, obj, scene, times, _shape_name_for_frame
-                )
-            except ImportError as exc:
-                self.report({"ERROR"}, str(exc))
-                return {"CANCELLED"}
+            # The passed check's keyframes when nothing changed since, else a
+            # new sampling pass (the same result, same seed).
+            passed = panel.passed_check(scene)
+            if passed is not None:
+                keyframe_entries, transitions = passed
+            else:
+                try:
+                    with _ignoring_own_updates(context):
+                        keyframe_entries, transitions = _sample_all_keyframes_for_validation(
+                            settings, obj, scene, times, _shape_name_for_frame
+                        )
+                except ImportError as exc:
+                    self.report({"ERROR"}, str(exc))
+                    return {"CANCELLED"}
 
             panel.set_kinematic_cache(transitions)
             _redraw_all_view3d()
@@ -512,6 +560,8 @@ if _HAS_BPY:
         DSS_OT_ExportIntermediate,
     )
 
+    _CLEAR_HANDLERS = (bpy.app.handlers.load_post, bpy.app.handlers.undo_post, bpy.app.handlers.redo_post)
+
     def register():
         global _redraw_timer_running
         panel.register()
@@ -525,11 +575,22 @@ if _HAS_BPY:
             _redraw_timer_running = True
         if _on_frame_change_post not in bpy.app.handlers.frame_change_post:
             bpy.app.handlers.frame_change_post.append(_on_frame_change_post)
+        if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
+        for handlers in _CLEAR_HANDLERS:
+            if _on_file_or_undo not in handlers:
+                handlers.append(_on_file_or_undo)
 
     def unregister():
         global _redraw_timer_running
         if _on_frame_change_post in bpy.app.handlers.frame_change_post:
             bpy.app.handlers.frame_change_post.remove(_on_frame_change_post)
+        if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
+        for handlers in _CLEAR_HANDLERS:
+            if _on_file_or_undo in handlers:
+                handlers.remove(_on_file_or_undo)
+        panel.clear_passed_check()
         if _redraw_timer_running and bpy.app.timers.is_registered(_blink_timer):
             bpy.app.timers.unregister(_blink_timer)
             _redraw_timer_running = False
