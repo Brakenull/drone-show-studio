@@ -88,3 +88,38 @@ def test_waiting_areas_agree(drone_core):
         lo, hi = waiting_region_bounds(count, area)
         np.testing.assert_allclose(s2["region_lo"], lo, atol=1e-9)
         np.testing.assert_allclose(s2["region_hi"], hi, atol=1e-9)
+
+
+def test_two_holding_areas_agree(drone_core):
+    from stage1_designer.core.holding_area import (
+        areas_from_metadata,
+        compute_all_holding_positions,
+        compute_all_row_indices,
+        home_areas,
+        holding_regions,
+    )
+
+    data = build_phase1_json()
+    meta = data["project_metadata"]
+    meta["fleet_size"] = 500
+    west = {"center": [0.0, -30.0, 0.0], "size": [40.0, 10.0], "max_height": 15.0, "grid_spacing_m": 2.0,
+            "layer_spacing_m": 4.0, "staggered_layers": True, "show_clearance_m": 5.0, "slot_count": 452}
+    # A different grid in area 2, and widened: 48 drones in a 4 x 4 m, 4 m high area.
+    east = {"center": [60.0, -30.0, 1.0], "size": [4.0, 4.0], "max_height": 5.0, "grid_spacing_m": 2.5,
+            "layer_spacing_m": 4.0, "staggered_layers": False, "slot_count": 48}
+    meta["holding_areas"] = [west, east]
+    del meta["holding_area"]
+    areas, counts = areas_from_metadata(meta)
+
+    stage2 = drone_core.holding_layout(data)
+    np.testing.assert_allclose(np.asarray(stage2["slots"]), compute_all_holding_positions(areas, counts), atol=1e-9)
+    assert list(stage2["row_indices"]) == compute_all_row_indices(areas, counts).tolist()
+    assert list(stage2["home_area"]) == home_areas(counts).tolist()
+    for s2, (lo, hi) in zip(stage2["holding_regions"], holding_regions(areas, counts)):
+        np.testing.assert_allclose(s2["region_lo"], lo, atol=1e-9)
+        np.testing.assert_allclose(s2["region_hi"], hi, atol=1e-9)
+    assert len(stage2["holding_regions"]) == 2
+
+    meta["holding_areas"][1]["slot_count"] = 47
+    with pytest.raises(RuntimeError, match="add up to fleet_size"):
+        drone_core.holding_layout(data)

@@ -89,9 +89,11 @@ struct DroneTransitionProblem {
     int drone_id = 0;
     trajectory::BoundaryConditions start;
     trajectory::BoundaryConditions end;
-    // Flies the show in this transition: keep out of config.safety.keep_out.
-    // False for drones taking off, landing or parked.
+    // Keeps out of config.safety.keep_out's zones in this transition, except
+    // the zone of `keep_out_exempt_area` (the holding area it takes off
+    // from, lands in or is parked in; -1 = none).
     bool keep_out = false;
+    int keep_out_exempt_area = -1;
     // A parked drone's prescribed path in this transition
     // (e.g. descend onto its pad, wait, climb again). Never solved: held like
     // a stationary parked drone, an obstacle the others avoid.
@@ -184,6 +186,8 @@ struct KeepOutViolation {
     double time_sec = 0.0;
     double distance_m = 0.0;  // to the holding region
     Eigen::Vector3d position = Eigen::Vector3d::Zero();
+    int area = 0;              // the holding area it came too close to
+    double clearance_m = 0.0;  // that area's safe distance
 };
 class KeepOutViolationError : public std::runtime_error {
 public:

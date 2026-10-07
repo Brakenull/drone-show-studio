@@ -108,7 +108,8 @@ Eigen::VectorXd dense_basis_row(int num_control_points, int degree, const Eigen:
 // shared by every drone in a transition).
 struct DroneWorkspace {
     int drone_id = 0;
-    bool keep_out = false;  // this drone flies the show here
+    bool keep_out = false;  // this drone keeps out of the zones here
+    int keep_out_exempt_area = -1;  // ...except this holding area's
     bool fixed = false;     // parked, held as an obstacle and never solved
     std::optional<double> floor_m;  // this drone's own floor, see drone_floor()
     Eigen::MatrixXd control_points;  // current iterate, num_control_points x 3
@@ -215,6 +216,11 @@ LinearRow build_trust_region_row(int flat_index, int dim, double anchor, double 
 
 // ---- Holding-area keep-out zone ----------
 
+// Whether a drone keeps out of `zone` (every zone but its exempt area's).
+bool zone_applies(bool keep_out, int exempt_area, const KeepOutZone& zone) {
+    return keep_out && zone.area != exempt_area;
+}
+
 Eigen::Vector3d zone_lo(const KeepOutZone& z) { return Eigen::Vector3d(z.lo[0], z.lo[1], z.lo[2]); }
 Eigen::Vector3d zone_hi(const KeepOutZone& z) { return Eigen::Vector3d(z.hi[0], z.hi[1], z.hi[2]); }
 
@@ -269,6 +275,10 @@ KeepOutPlane keep_out_plane(const Eigen::Vector3d& p, const KeepOutZone& zone, c
     return best;
 }
 
+// A sub-stage boundary pushed out of a zone and still this close to it
+// (beyond its clearance) is passed along the zone, not into it.
+constexpr double kZoneTangentBandM = 3.0;
+
 // Sampled keep-out rows for one show drone, like the collision rows (soft,
 // verified afterwards by the 100 Hz gatekeeper): at every 0.25 s sample
 // where the current iterate is within the clearance plus an activation
@@ -276,28 +286,38 @@ KeepOutPlane keep_out_plane(const Eigen::Vector3d& p, const KeepOutZone& zone, c
 // half-space.
 constexpr double kKeepOutSampleDtS = 0.25;
 constexpr double kKeepOutActivationM = 3.0;
+// The rows ask for this much more than the clearance the gatekeeper checks,
+// as the collision rows plan to more than the gatekeeper's minimum: between
+// two samples a path rounding a zone's edge dipped 7.5 cm into it (a takeoff
+// drone passing another holding area's top edge).
+constexpr double kKeepOutPlanMarginM = 0.25;
 
 std::vector<LinearRow> collect_keep_out_rows(const FreeIndexMap& map, const DroneWorkspace& ws, double duration,
                                              const CoreConfig& config) {
     std::vector<LinearRow> rows;
-    if (!config.safety.keep_out || !ws.keep_out || map.num_free() == 0) return rows;
-    const KeepOutZone& zone = *config.safety.keep_out;
+    if (!ws.keep_out || map.num_free() == 0) return rows;
     const int samples = std::max(2, static_cast<int>(std::ceil(duration / kKeepOutSampleDtS)) + 1);
-    for (int s = 0; s < samples; ++s) {
-        const double t = duration * s / (samples - 1);
-        const Eigen::Vector3d p = ws.spline->position(t);
-        if (distance_to_keep_out_region(p, zone) >= zone.clearance_m + kKeepOutActivationM) continue;
-        const KeepOutPlane plane = keep_out_plane(p, zone, config);
-        const Eigen::VectorXd basis_row = dense_basis_row(map.num_control_points, trajectory::kDegree, ws.spline->knots(), t);
-        const SplitRow split = split_row(basis_row, map, ws.control_points);
-        LinearRow row;
-        row.coeffs = Eigen::RowVectorXd::Zero(3 * map.num_free());
-        for (int axis = 0; axis < 3; ++axis) {
-            row.coeffs.segment(axis * map.num_free(), map.num_free()) = plane.normal(axis) * split.free_coeffs;
+    for (const KeepOutZone& zone : config.safety.keep_out) {
+        if (!zone_applies(ws.keep_out, ws.keep_out_exempt_area, zone)) continue;
+        for (int s = 0; s < samples; ++s) {
+            const double t = duration * s / (samples - 1);
+            const Eigen::Vector3d p = ws.spline->position(t);
+            if (distance_to_keep_out_region(p, zone) >= zone.clearance_m + kKeepOutPlanMarginM + kKeepOutActivationM) {
+                continue;
+            }
+            const KeepOutPlane plane = keep_out_plane(p, zone, config);
+            const Eigen::VectorXd basis_row = dense_basis_row(map.num_control_points, trajectory::kDegree, ws.spline->knots(), t);
+            const SplitRow split = split_row(basis_row, map, ws.control_points);
+            LinearRow row;
+            row.coeffs = Eigen::RowVectorXd::Zero(3 * map.num_free());
+            for (int axis = 0; axis < 3; ++axis) {
+                row.coeffs.segment(axis * map.num_free(), map.num_free()) = plane.normal(axis) * split.free_coeffs;
+            }
+            row.lower = zone.clearance_m + kKeepOutPlanMarginM + plane.normal.dot(plane.anchor) -
+                        plane.normal.dot(split.fixed_contribution);
+            row.upper = OSQP_INFTY;
+            if (row.coeffs.cwiseAbs().sum() > 1e-12) rows.push_back(std::move(row));
         }
-        row.lower = zone.clearance_m + plane.normal.dot(plane.anchor) - plane.normal.dot(split.fixed_contribution);
-        row.upper = OSQP_INFTY;
-        if (row.coeffs.cwiseAbs().sum() > 1e-12) rows.push_back(std::move(row));
     }
     return rows;
 }
@@ -305,15 +325,15 @@ std::vector<LinearRow> collect_keep_out_rows(const FreeIndexMap& map, const Dron
 // How far the show drones' current iterates reach into the zone (0 = clear),
 // sampled like the rows above. Used to rank SCP iterates.
 double keep_out_intrusion(const std::vector<DroneWorkspace>& workspaces, double duration, const CoreConfig& config) {
-    if (!config.safety.keep_out) return 0.0;
-    const KeepOutZone& zone = *config.safety.keep_out;
     const int samples = std::max(2, static_cast<int>(std::ceil(duration / kKeepOutSampleDtS)) + 1);
     double worst = 0.0;
-    for (const auto& ws : workspaces) {
-        if (!ws.keep_out) continue;
-        for (int s = 0; s < samples; ++s) {
-            const double d = distance_to_keep_out_region(ws.spline->position(duration * s / (samples - 1)), zone);
-            worst = std::max(worst, zone.clearance_m - d);
+    for (const KeepOutZone& zone : config.safety.keep_out) {
+        for (const auto& ws : workspaces) {
+            if (!zone_applies(ws.keep_out, ws.keep_out_exempt_area, zone)) continue;
+            for (int s = 0; s < samples; ++s) {
+                const double d = distance_to_keep_out_region(ws.spline->position(duration * s / (samples - 1)), zone);
+                worst = std::max(worst, zone.clearance_m - d);
+            }
         }
     }
     return worst;
@@ -1026,6 +1046,7 @@ SingleStageResult solve_single_stage(const std::vector<DroneTransitionProblem>& 
     for (int i = 0; i < num_drones; ++i) {
         workspaces[i].drone_id = problems[i].drone_id;
         workspaces[i].keep_out = problems[i].keep_out;
+        workspaces[i].keep_out_exempt_area = problems[i].keep_out_exempt_area;
         // A prescribed (held) drone is fixed like a parked one,
         // with the control points it was given for this window.
         const bool held = problems[i].held_control_points.rows() > 0;
@@ -1718,6 +1739,27 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
         waypoints[i].front() = problems[i].start;
         waypoints[i].back() = problems[i].end;
     }
+    // A pinned boundary inside a keep-out zone could never be fixed by
+    // either sub-stage: move it onto the zone's surface plus a small margin,
+    // the shortest way out.
+    // Returns whether it moved the position.
+    const auto push_out_of_zones = [&](int i, Eigen::Vector3d& position) {
+        constexpr double kWaypointMarginM = 0.5;
+        bool pushed = false;
+        for (const KeepOutZone& zone : config.safety.keep_out) {
+            if (!zone_applies(problems[i].keep_out, problems[i].keep_out_exempt_area, zone)) continue;
+            const double d = distance_to_keep_out_region(position, zone);
+            if (d < zone.clearance_m + kWaypointMarginM) {
+                const KeepOutPlane plane = keep_out_plane(position, zone, config);
+                const double deficit = zone.clearance_m + kWaypointMarginM - plane.normal.dot(position - plane.anchor);
+                if (deficit > 0.0) {
+                    position += deficit * plane.normal;
+                    pushed = true;
+                }
+            }
+        }
+        return pushed;
+    };
     for (int k = 1; k < num_substages; ++k) {
         const double waypoint_time = k * substage_duration;
         const double frac = duration > 1e-9 ? waypoint_time / duration : 0.0;
@@ -1726,7 +1768,21 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             positions[i] = fixed[i] ? fixed_waypoint(i, k).position
                                     : bowed_waypoint_position(problems[i].start.position, problems[i].end.position, frac);
         }
-        declash_waypoints(positions, fixed, enforced_min_distance);
+        // Out of the keep-out zones and de-clashed, in turns: drones whose
+        // straight lines cross a zone side by side are pushed onto the same
+        // face, at the same spot (two takeoff drones of one holding area
+        // passing another area: 0.29 m apart), and de-clashing them along the
+        // face's normal puts one back in. The drone pushed outward stays
+        // there, so every turn halves what is left.
+        constexpr int kZoneDeclashTurns = 8;
+        const int turns = config.safety.keep_out.empty() ? 1 : kZoneDeclashTurns;
+        std::vector<char> pushed(num_drones, 0);
+        for (int turn = 0; turn < turns; ++turn) {
+            for (int i = 0; i < num_drones; ++i) {
+                if (!fixed[i] && push_out_of_zones(i, positions[i])) pushed[i] = 1;
+            }
+            declash_waypoints(positions, fixed, enforced_min_distance);
+        }
         const double remaining_time = duration - waypoint_time;
         for (int i = 0; i < num_drones; ++i) {
             if (fixed[i]) {
@@ -1735,20 +1791,7 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             }
             trajectory::BoundaryConditions wp;
             wp.position = positions[i];
-            if (config.safety.keep_out && problems[i].keep_out) {
-                // A pinned boundary inside the zone could never be fixed by
-                // either sub-stage: move it onto the zone's surface plus a
-                // small margin, the shortest way out.
-                constexpr double kWaypointMarginM = 0.5;
-                const KeepOutZone& zone = *config.safety.keep_out;
-                const double d = distance_to_keep_out_region(wp.position, zone);
-                if (d < zone.clearance_m + kWaypointMarginM) {
-                    const KeepOutPlane plane = keep_out_plane(wp.position, zone, config);
-                    const double deficit =
-                        zone.clearance_m + kWaypointMarginM - plane.normal.dot(wp.position - plane.anchor);
-                    if (deficit > 0.0) wp.position += deficit * plane.normal;
-                }
-            }
+            if (push_out_of_zones(i, wp.position)) pushed[i] = 1;
             if (const std::optional<double> floor = drone_floor(problems[i].floor_m, config)) {
                 wp.position.z() = std::max(wp.position.z(), *floor);
             }
@@ -1786,13 +1829,31 @@ TransitionSolveResult solve_transition_once(const std::vector<DroneTransitionPro
             if (fixed[i]) continue;
             waypoints[i][k].velocity = floor_safe_velocity(waypoints[i][k].position, waypoints[i][k].velocity, config);
         }
+        // Likewise at a keep-out zone: a boundary pushed out of it is passed
+        // along it. Heading for its end point, it pointed into the zone, and
+        // the next sub-stage's start, pinned by that velocity, entered it
+        // where no row could help (a returning drone crossing another holding
+        // area, inside its region). Every pushed drone, not only the ones at
+        // the surface: drones pushed onto one face keep one velocity, the
+        // rigid copy the shared velocity is for.
+        for (int i = 0; i < num_drones; ++i) {
+            if (fixed[i] || !pushed[i]) continue;
+            trajectory::BoundaryConditions& wp = waypoints[i][k];
+            for (const KeepOutZone& zone : config.safety.keep_out) {
+                if (!zone_applies(problems[i].keep_out, problems[i].keep_out_exempt_area, zone)) continue;
+                if (distance_to_keep_out_region(wp.position, zone) >= zone.clearance_m + kZoneTangentBandM) continue;
+                const Eigen::Vector3d normal = keep_out_plane(wp.position, zone, config).normal;
+                wp.velocity -= std::min(0.0, wp.velocity.dot(normal)) * normal;
+            }
+        }
     }
 
     for (int stage = 0; stage < num_substages; ++stage) {
         std::vector<DroneTransitionProblem> substage_problems(num_drones);
         for (int i = 0; i < num_drones; ++i) {
             substage_problems[i] = DroneTransitionProblem{problems[i].drone_id, waypoints[i][stage],
-                                                            waypoints[i][stage + 1], problems[i].keep_out};
+                                                            waypoints[i][stage + 1], problems[i].keep_out,
+                                                            problems[i].keep_out_exempt_area};
             substage_problems[i].floor_m = problems[i].floor_m;
             if (!held[i].empty()) substage_problems[i].held_control_points = held[i][stage];
         }
@@ -2130,12 +2191,14 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
         // Keep-out zone, verified like separation: every show
         // drone sampled at verification_frequency_hz, exact distance to the
         // holding region (the planner's rows are only sampled every 0.25 s).
+        // The closest approach is ranked by the deficit (clearance - distance),
+        // so zones with different safe distances compare.
         KeepOutViolation closest_to_zone;
         closest_to_zone.distance_m = std::numeric_limits<double>::infinity();
-        if (config.safety.keep_out) {
-            const KeepOutZone& zone = *config.safety.keep_out;
+        double worst_deficit = -std::numeric_limits<double>::infinity();
+        for (const KeepOutZone& zone : config.safety.keep_out) {
             for (size_t i = 0; i < result.trajectories.size(); ++i) {
-                if (!problems[i].keep_out) continue;
+                if (!zone_applies(problems[i].keep_out, problems[i].keep_out_exempt_area, zone)) continue;
                 double stage_start = 0.0;
                 for (const auto& st : result.trajectories[i].stages) {
                     const trajectory::QuinticBSpline spline(st.control_points, st.duration);
@@ -2145,8 +2208,10 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
                         const double t = st.duration * s / (samples - 1);
                         const Eigen::Vector3d p = spline.position(t);
                         const double d = distance_to_keep_out_region(p, zone);
-                        if (d < closest_to_zone.distance_m) {
-                            closest_to_zone = KeepOutViolation{result.trajectories[i].drone_id, stage_start + t, d, p};
+                        if (zone.clearance_m - d > worst_deficit) {
+                            worst_deficit = zone.clearance_m - d;
+                            closest_to_zone = KeepOutViolation{result.trajectories[i].drone_id, stage_start + t, d, p,
+                                                               zone.area, zone.clearance_m};
                         }
                     }
                     stage_start += st.duration;
@@ -2154,8 +2219,7 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             }
         }
         constexpr double kKeepOutToleranceM = 1e-3;
-        const bool zone_ok = !config.safety.keep_out ||
-                             closest_to_zone.distance_m >= config.safety.keep_out->clearance_m - kKeepOutToleranceM;
+        const bool zone_ok = worst_deficit <= kKeepOutToleranceM;
         const bool separation_ok = worst_continuous_distance >= gatekeeper.min_allowable_distance_m;
         const double reported_lowest_z =
             config.safety.altitude_floor_m ? lowest_control_point_z : std::numeric_limits<double>::infinity();
@@ -2195,8 +2259,9 @@ std::vector<DroneTrajectorySolution> solve(const std::vector<DroneTransitionProb
             // Separation and floor are fine; only the keep-out zone failed.
             throw KeepOutViolationError(
                 "Holding-area clearance violated: drone " + std::to_string(closest_to_zone.drone_id) +
-                    " comes within " + std::to_string(closest_to_zone.distance_m) + " m of the holding area (required " +
-                    std::to_string(config.safety.keep_out->clearance_m) + " m), after " + std::to_string(attempt + 1) +
+                    " comes within " + std::to_string(closest_to_zone.distance_m) + " m of holding area " +
+                    std::to_string(closest_to_zone.area + 1) + " (required " +
+                    std::to_string(closest_to_zone.clearance_m) + " m), after " + std::to_string(attempt + 1) +
                     " attempt(s)",
                 closest_to_zone, attempt + 1);
         }

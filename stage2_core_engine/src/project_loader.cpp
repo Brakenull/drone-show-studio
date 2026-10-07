@@ -30,28 +30,48 @@ ProjectData parse_project(const nlohmann::json& root) {
     data.metadata.min_distance_m = meta_json.at("min_distance_m").get<double>();
     data.metadata.heading_offset_deg = meta_json.at("heading_offset_deg").get<double>();
 
-    const nlohmann::json& holding_json = meta_json.at("holding_area");
-    const auto center = holding_json.at("center").get<std::vector<double>>();
-    const auto size = holding_json.at("size").get<std::vector<double>>();
-    require(center.size() == 3, "holding_area.center must have 3 elements");
-    require(size.size() == 2, "holding_area.size must have 2 elements");
-    data.metadata.holding_area.center = Eigen::Vector3d(center[0], center[1], center[2]);
-    data.metadata.holding_area.size = Eigen::Vector2d(size[0], size[1]);
-    data.metadata.holding_area.max_height = holding_json.at("max_height").get<double>();
-    data.metadata.holding_area.layer_spacing_m = holding_json.at("layer_spacing_m").get<double>();
-    // grid_spacing_m is newer; older exports don't have it,
-    // so fall back to layer_spacing_m (which was itself just min_distance_m
-    // before that revision separated the two).
-    data.metadata.holding_area.grid_spacing_m = holding_json.contains("grid_spacing_m")
-                                                     ? holding_json.at("grid_spacing_m").get<double>()
-                                                     : data.metadata.holding_area.layer_spacing_m;
-    if (holding_json.contains("staggered_layers") && !holding_json.at("staggered_layers").is_null()) {
-        data.metadata.holding_area.staggered_layers = holding_json.at("staggered_layers").get<bool>();
-    }
-    if (holding_json.contains("show_clearance_m") && !holding_json.at("show_clearance_m").is_null()) {
-        const double clearance = holding_json.at("show_clearance_m").get<double>();
-        require(clearance >= 0.0, "holding_area.show_clearance_m must be >= 0");
-        data.metadata.holding_area.show_clearance_m = clearance;
+    // Phase 1 schema 1.8.0: holding_areas; older files: one holding_area,
+    // home of the whole fleet.
+    const auto read_holding_area = [&](const nlohmann::json& holding_json) {
+        HoldingArea area;
+        const auto center = holding_json.at("center").get<std::vector<double>>();
+        const auto size = holding_json.at("size").get<std::vector<double>>();
+        require(center.size() == 3, "holding area center must have 3 elements");
+        require(size.size() == 2, "holding area size must have 2 elements");
+        area.center = Eigen::Vector3d(center[0], center[1], center[2]);
+        area.size = Eigen::Vector2d(size[0], size[1]);
+        area.max_height = holding_json.at("max_height").get<double>();
+        area.layer_spacing_m = holding_json.at("layer_spacing_m").get<double>();
+        // grid_spacing_m is newer; older exports don't have it,
+        // so fall back to layer_spacing_m (which was itself just min_distance_m
+        // before that revision separated the two).
+        area.grid_spacing_m = holding_json.contains("grid_spacing_m") ? holding_json.at("grid_spacing_m").get<double>()
+                                                                      : area.layer_spacing_m;
+        if (holding_json.contains("staggered_layers") && !holding_json.at("staggered_layers").is_null()) {
+            area.staggered_layers = holding_json.at("staggered_layers").get<bool>();
+        }
+        if (holding_json.contains("show_clearance_m") && !holding_json.at("show_clearance_m").is_null()) {
+            const double clearance = holding_json.at("show_clearance_m").get<double>();
+            require(clearance >= 0.0, "holding area show_clearance_m must be >= 0");
+            area.show_clearance_m = clearance;
+        }
+        return area;
+    };
+    if (meta_json.contains("holding_areas") && !meta_json.at("holding_areas").is_null() &&
+        !meta_json.at("holding_areas").empty()) {
+        int total = 0;
+        for (const auto& area_json : meta_json.at("holding_areas")) {
+            HoldingArea area = read_holding_area(area_json);
+            area.slot_count = area_json.at("slot_count").get<int>();
+            require(area.slot_count >= 0, "holding_areas[].slot_count must be >= 0");
+            total += area.slot_count;
+            data.metadata.holding_areas.push_back(area);
+        }
+        require(total == data.metadata.fleet_size, "holding_areas slot counts must add up to fleet_size");
+    } else {
+        HoldingArea area = read_holding_area(meta_json.at("holding_area"));
+        area.slot_count = data.metadata.fleet_size;
+        data.metadata.holding_areas.push_back(area);
     }
 
     // Phase 1 schema 1.7.0 (optional): waiting areas.
@@ -326,6 +346,40 @@ HoldingRegion compute_waiting_region(const WaitingArea& area) {
         region.hi = region.hi.cwiseMax(Eigen::Vector3d(slots.colwise().maxCoeff().transpose()) + pad);
     }
     return region;
+}
+
+Eigen::MatrixXd compute_all_holding_positions(const std::vector<HoldingArea>& areas) {
+    int total = 0;
+    for (const HoldingArea& a : areas) total += std::max(a.slot_count, 0);
+    Eigen::MatrixXd all(total, 3);
+    int row = 0;
+    for (const HoldingArea& a : areas) {
+        const Eigen::MatrixXd slots = compute_holding_positions(a.slot_count, a, a.grid_spacing_m);
+        all.middleRows(row, slots.rows()) = slots;
+        row += static_cast<int>(slots.rows());
+    }
+    return all;
+}
+
+std::vector<int> compute_all_holding_row_indices(const std::vector<HoldingArea>& areas) {
+    std::vector<int> all;
+    for (const HoldingArea& a : areas) {
+        const std::vector<int> rows = compute_holding_row_indices(a.slot_count, a, a.grid_spacing_m);
+        all.insert(all.end(), rows.begin(), rows.end());
+    }
+    return all;
+}
+
+std::vector<HoldingRegion> compute_holding_regions(const std::vector<HoldingArea>& areas) {
+    std::vector<HoldingRegion> regions;
+    for (const HoldingArea& a : areas) regions.push_back(compute_holding_region(a.slot_count, a, a.grid_spacing_m));
+    return regions;
+}
+
+std::vector<int> compute_home_areas(const std::vector<HoldingArea>& areas) {
+    std::vector<int> home;
+    for (int k = 0; k < static_cast<int>(areas.size()); ++k) home.insert(home.end(), std::max(areas[k].slot_count, 0), k);
+    return home;
 }
 
 Eigen::MatrixXd compute_all_waiting_slots(const std::vector<WaitingArea>& areas) {

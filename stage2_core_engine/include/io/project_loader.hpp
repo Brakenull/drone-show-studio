@@ -48,6 +48,10 @@ struct HoldingArea {
     // When set, show drones keep at least this
     // far from the holding region.
     std::optional<double> show_clearance_m;
+    // The drones whose home area this is (Phase 1 schema 1.8.0): they take
+    // off from, land in, park on and return to this area only. A file with
+    // the old single holding_area has one area holding the whole fleet.
+    int slot_count = 0;
 };
 
 // The holding region (a port of Phase 1's
@@ -90,7 +94,10 @@ struct ProjectMetadata {
     double safety_radius_m = 0.0;
     double min_distance_m = 0.0;
     double heading_offset_deg = 0.0;
-    HoldingArea holding_area;
+    // Phase 1 schema 1.8.0's holding_areas, or the older single holding_area
+    // as a one-item list. Their slot counts add up to fleet_size; drone i
+    // takes off from slot i of every area's slots concatenated in list order.
+    std::vector<HoldingArea> holding_areas;
     ShowLegs legs;
     // Phase 1 schema 1.6.0 (optional): ENU height of the ground.
     // nullopt for files that don't declare one.
@@ -122,6 +129,15 @@ Eigen::MatrixXd compute_holding_positions(int fleet_size, const HoldingArea& hol
 std::vector<int> compute_holding_row_indices(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
 
 HoldingRegion compute_holding_region(int fleet_size, const HoldingArea& holding_area, double grid_spacing_m);
+
+// Several holding areas, each laid out for its own slot_count drones with
+// its own grid spacing: every area's slots (and their launch row indices)
+// concatenated in list order, one region per area, and each drone's home
+// area (the area of its takeoff slot).
+Eigen::MatrixXd compute_all_holding_positions(const std::vector<HoldingArea>& areas);
+std::vector<int> compute_all_holding_row_indices(const std::vector<HoldingArea>& areas);
+std::vector<HoldingRegion> compute_holding_regions(const std::vector<HoldingArea>& areas);
+std::vector<int> compute_home_areas(const std::vector<HoldingArea>& areas);
 
 // One waiting area's slots (its slot_count of them, row by row) and region
 // (the footprint, widened if needed, at center z, together with the slots

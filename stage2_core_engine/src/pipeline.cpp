@@ -530,25 +530,103 @@ PadMoves count_pad_moves(const std::vector<PadPlan>& plans) {
     return m;
 }
 
+// Every holding area's region, and each drone's home area (the area of its
+// takeoff slot). A drone takes off from, lands in, parks on and returns to
+// its home area only.
+struct HoldingAreas {
+    std::vector<HoldingRegion> regions;
+    std::vector<int> home;  // per drone_id
+
+    explicit HoldingAreas(const ProjectData& project)
+        : regions(compute_holding_regions(project.metadata.holding_areas)),
+          home(compute_home_areas(project.metadata.holding_areas)) {}
+
+    // The area whose region holds `p`, or -1.
+    int area_of(const Eigen::Vector3d& p) const {
+        for (int k = 0; k < static_cast<int>(regions.size()); ++k) {
+            if ((p.array() >= regions[k].lo.array() - 1e-6).all() && (p.array() <= regions[k].hi.array() + 1e-6).all()) {
+                return k;
+            }
+        }
+        return -1;
+    }
+    bool contains(const Eigen::Vector3d& p) const { return area_of(p) >= 0; }
+
+    // How messages name area `k`.
+    std::string name(int k) const {
+        return regions.size() == 1 ? "the holding area" : "holding area " + std::to_string(k + 1);
+    }
+};
+
+// A pad (holding-area target) of another area than the drone's home costs
+// this: never chosen while a choice within the home area exists.
+constexpr double kForbiddenCost = 1e6;
+
+// Adds kForbiddenCost to every column whose target lies in another holding
+// area than the home of row i's drone (`drone_ids[i]`, rows past it are
+// dummies).
+void forbid_other_areas(Eigen::MatrixXd& cost, const std::vector<int>& drone_ids, const Eigen::MatrixXd& targets,
+                        const HoldingAreas& holding) {
+    if (holding.regions.size() < 2) return;
+    std::vector<int> target_area(targets.rows());
+    for (int j = 0; j < targets.rows(); ++j) target_area[j] = holding.area_of(targets.row(j).transpose());
+    for (int i = 0; i < static_cast<int>(drone_ids.size()); ++i) {
+        const int home = holding.home[drone_ids[i]];
+        for (int j = 0; j < targets.rows(); ++j) {
+            if (target_area[j] >= 0 && target_area[j] != home) cost(i, j) += kForbiddenCost;
+        }
+    }
+}
+
+// A forbidden choice left in an assignment is a bug, not a planning result.
+void check_no_forbidden(const Eigen::MatrixXd& cost, const std::vector<int>& assignment, int rows) {
+    for (int i = 0; i < rows; ++i) {
+        if (cost(i, assignment[i]) >= kForbiddenCost) {
+            throw std::logic_error("a drone was assigned a pad of another holding area or another drone's pad");
+        }
+    }
+}
+
 // The design's own safety settings on top of the resolved config, shared by
 // the show and its return paths.
-CoreConfig show_config(const ProjectData& project, const CoreConfig& base_config, const HoldingRegion& holding_region) {
+CoreConfig show_config(const ProjectData& project, const CoreConfig& base_config, const HoldingAreas& holding) {
     // Altitude floor: the
     // design's ground, when the file declares one.
     CoreConfig config = base_config;
     config.safety.altitude_floor_m = project.metadata.ground_z_m;
-    // Holding-area keep-out zone: the
-    // designer's safe distance around the holding region, when declared.
-    if (project.metadata.holding_area.show_clearance_m) {
+    // Holding-area keep-out zones: the
+    // designer's safe distance around each holding region, when declared.
+    config.safety.keep_out.clear();
+    for (int k = 0; k < static_cast<int>(holding.regions.size()); ++k) {
+        const std::optional<double>& clearance = project.metadata.holding_areas[k].show_clearance_m;
+        if (!clearance) continue;
         KeepOutZone zone;
         for (int axis = 0; axis < 3; ++axis) {
-            zone.lo[axis] = holding_region.lo(axis);
-            zone.hi[axis] = holding_region.hi(axis);
+            zone.lo[axis] = holding.regions[k].lo(axis);
+            zone.hi[axis] = holding.regions[k].hi(axis);
         }
-        zone.clearance_m = *project.metadata.holding_area.show_clearance_m;
-        config.safety.keep_out = zone;
+        zone.clearance_m = *clearance;
+        zone.area = k;
+        config.safety.keep_out.push_back(zone);
     }
     return config;
+}
+
+// The largest declared safe distance (the output's holding_clearance_m).
+std::optional<double> largest_clearance(const CoreConfig& config) {
+    std::optional<double> largest;
+    for (const KeepOutZone& zone : config.safety.keep_out) largest = std::max(largest.value_or(0.0), zone.clearance_m);
+    return largest;
+}
+
+// The holding area a drone may enter in a transition (exempt from its
+// keep-out zone): the one it starts or ends in, or, for a pad-related drone,
+// its pad's (its hover point may be above the region); -1 = none.
+int exempt_area(const HoldingAreas& holding, const trajectory::BoundaryConditions& start,
+                const trajectory::BoundaryConditions& end, const std::optional<Eigen::Vector3d>& pad) {
+    if (pad) return holding.area_of(*pad);
+    const int from = holding.area_of(start.position);
+    return from >= 0 ? from : holding.area_of(end.position);
 }
 
 Eigen::Vector3i lerp_color(const Eigen::Vector3i& c0, const Eigen::Vector3i& c1, double frac) {
@@ -561,15 +639,12 @@ Eigen::Vector3i lerp_color(const Eigen::Vector3i& c0, const Eigen::Vector3i& c1,
 PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_config,
                             const ProgressCallback& progress) {
     const int n = project.metadata.fleet_size;
-    const HoldingRegion holding_region = compute_holding_region(n, project.metadata.holding_area,
-                                                                project.metadata.holding_area.grid_spacing_m);
-    const CoreConfig config = show_config(project, base_config, holding_region);
-    // A point inside the holding region is a launch slot or a parked drone:
-    // drones starting or ending a transition there are exempt from the zone.
-    auto in_holding_region = [&](const Eigen::Vector3d& p) {
-        return (p.array() >= holding_region.lo.array() - 1e-6).all() &&
-               (p.array() <= holding_region.hi.array() + 1e-6).all();
-    };
+    const HoldingAreas holding(project);
+    const CoreConfig config = show_config(project, base_config, holding);
+    // A point inside a holding region is a launch slot or a parked drone:
+    // drones starting or ending a transition there are exempt from that
+    // area's zone.
+    auto in_holding_region = [&](const Eigen::Vector3d& p) { return holding.contains(p); };
     // Waiting areas (Phase 1 schema 1.7.0):
     // a target in a waiting region is a spare drone waiting in the air. It
     // arrives at rest (and, staying, is a fixed hold), is left
@@ -586,14 +661,15 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     };
     PipelineResult result;
     result.metadata.altitude_floor_m = config.safety.altitude_floor_m;
-    if (config.safety.keep_out) result.metadata.holding_clearance_m = config.safety.keep_out->clearance_m;
+    result.metadata.holding_clearance_m = largest_clearance(config);
+    result.metadata.holding_areas = project.metadata.holding_areas;
+    result.metadata.home_area = holding.home;
     result.metadata.fleet_size = n;
     result.metadata.spline_degree = trajectory::kDegree;
     result.metadata.min_distance_enforced_m =
         config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
 
-    Eigen::MatrixXd P =
-        compute_holding_positions(n, project.metadata.holding_area, project.metadata.holding_area.grid_spacing_m);
+    Eigen::MatrixXd P = compute_all_holding_positions(project.metadata.holding_areas);
     std::vector<int> drone_id_by_slot(n);
     for (int i = 0; i < n; ++i) drone_id_by_slot[i] = i;
 
@@ -623,10 +699,10 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     // See stage2_nway_conflict_limitation memory for the full investigation
     // and re-test results.
     const bool stagger_takeoff = config.solver.enable_staggered_takeoff;
+    // Row indices within each area and layer: wave r launches row r of
+    // every holding area together.
     const std::vector<int> launch_row_indices =
-        stagger_takeoff ? compute_holding_row_indices(n, project.metadata.holding_area,
-                                                        project.metadata.holding_area.grid_spacing_m)
-                         : std::vector<int>();
+        stagger_takeoff ? compute_all_holding_row_indices(project.metadata.holding_areas) : std::vector<int>();
     const int max_launch_row =
         launch_row_indices.empty() ? 0 : *std::max_element(launch_row_indices.begin(), launch_row_indices.end());
 
@@ -679,7 +755,8 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     // which parked drones leave next) and reused.
     constexpr double kPadChangeCost = 1e4;
     const auto assign_slots = [&](const Eigen::MatrixXd& from, const Eigen::MatrixXd& to, const Eigen::MatrixXd& v_xy,
-                                  const std::vector<std::optional<Eigen::Vector3d>>& parked_pad) {
+                                  const std::vector<std::optional<Eigen::Vector3d>>& parked_pad,
+                                  const std::vector<int>& drone_ids) {
         assignment::AssignmentInput ain;
         ain.P = from;
         ain.Q = to;
@@ -695,7 +772,10 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 if (in_holding_region(q) && (q - *parked_pad[i]).norm() > 1e-6) cost(i, j) += kPadChangeCost;
             }
         }
-        return assignment::solve_auction(cost);
+        forbid_other_areas(cost, drone_ids, to, holding);
+        assignment::AssignmentResult result = assignment::solve_auction(cost);
+        check_no_forbidden(cost, result.assignment, static_cast<int>(drone_ids.size()));
+        return result;
     };
     std::optional<assignment::AssignmentResult> next_assignment;
 
@@ -729,7 +809,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 }
             }
         };
-        check_below(P, "the holding area");
+        check_below(P, "a holding area");
         check_below(waiting_slots, "a waiting area");
         for (const Keyframe& kf : project.keyframes) check_below(points_by_index(kf, n), "keyframe '" + kf.shape_name + "'");
     }
@@ -737,8 +817,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     // refuses to export otherwise): a pinned
     // target inside the zone can't be planned around. Points inside the
     // region itself are parked drones and don't count.
-    if (config.safety.keep_out) {
-        const KeepOutZone& zone = *config.safety.keep_out;
+    for (const KeepOutZone& zone : config.safety.keep_out) {
         for (const Keyframe& kf : project.keyframes) {
             const Eigen::MatrixXd pts = points_by_index(kf, n);
             for (int i = 0; i < pts.rows(); ++i) {
@@ -747,8 +826,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 const double d = optimizer::distance_to_keep_out_region(p, zone);
                 if (d < zone.clearance_m - 1e-9) {
                     throw std::runtime_error("keyframe '" + kf.shape_name + "' has a point " + std::to_string(d) +
-                                             " m from the holding area, closer than the safe distance of " +
-                                             std::to_string(zone.clearance_m) + " m");
+                                             " m from " + holding.name(zone.area) +
+                                             ", closer than the safe distance of " + std::to_string(zone.clearance_m) +
+                                             " m");
                 }
             }
         }
@@ -774,11 +854,10 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         specs.push_back(std::move(spec));
     }
     if (legs.present) {
-        // Return leg: land on the holding-area slots, any free slot (the
+        // Return leg: land in the home holding area, any free slot of it (the
         // auction picks), LEDs fading to off as they are while parked.
         TransitionSpec ret;
-        ret.targets = compute_holding_positions(n, project.metadata.holding_area,
-                                                project.metadata.holding_area.grid_spacing_m);
+        ret.targets = compute_all_holding_positions(project.metadata.holding_areas);
         ret.target_colors = Eigen::MatrixXi::Zero(n, 3);
         ret.from_name = project.keyframes.back().shape_name;
         ret.to_name = "holding_area";
@@ -803,9 +882,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
     // empty) can take waiting slots and pads, never a formation target. The
     // chosen slots and pads then replace the keyframe's waiting targets in
     // `spec`, LEDs off.
-    constexpr double kForbiddenCost = 1e6;
     const auto assign_spec = [&](const Eigen::MatrixXd& from, TransitionSpec& spec, const Eigen::MatrixXd& v_xy,
-                                 const std::vector<std::optional<Eigen::Vector3d>>& parked_pad) {
+                                 const std::vector<std::optional<Eigen::Vector3d>>& parked_pad,
+                                 const std::vector<int>& drone_ids) {
         std::vector<int> formation_rows, waiting_rows;
         for (int j = 0; j < spec.targets.rows(); ++j) {
             (in_waiting_region(spec.targets.row(j).transpose()) ? waiting_rows : formation_rows).push_back(j);
@@ -826,7 +905,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         const int slots = static_cast<int>(waiting_slots.rows());
         const int n_pads = static_cast<int>(pads.size());
         if (waiting_rows.empty() || slots + n_pads < static_cast<int>(waiting_rows.size())) {
-            return assign_slots(from, spec.targets, v_xy, parked_pad);
+            return assign_slots(from, spec.targets, v_xy, parked_pad, drone_ids);
         }
         const int n_form = static_cast<int>(formation_rows.size());
         const int pad0 = n_form + slots;  // first pad column
@@ -853,6 +932,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             cost.row(i).setZero();
             cost.block(i, 0, 1, n_form).setConstant(kForbiddenCost);
         }
+        // A formation target in a holding region (a pad) is for drones of
+        // that area only; a drone's own pad (above) is in its home area.
+        forbid_other_areas(cost, drone_ids, candidates, holding);
         const assignment::AssignmentResult full = assignment::solve_auction(cost);
 
         assignment::AssignmentResult result;
@@ -861,7 +943,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
         for (int i = 0; i < n; ++i) {
             const int c = full.assignment[i];
             if (cost(i, c) >= kForbiddenCost) {
-                throw std::logic_error("a drone was assigned another drone's pad");
+                throw std::logic_error("a drone was assigned another drone's pad or a pad of another holding area");
             }
             if (c < n_form) {
                 result.assignment[i] = formation_rows[c];
@@ -918,7 +1000,7 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             }
         }
         const assignment::AssignmentResult assign_result =
-            next_assignment ? *next_assignment : assign_spec(P, spec, v_in_xy, parked_pad);
+            next_assignment ? *next_assignment : assign_spec(P, spec, v_in_xy, parked_pad, drone_id_by_slot);
         next_assignment.reset();
 
         // The transition and its leg start at t_cursor; the solved part after
@@ -1032,15 +1114,17 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             TransitionSpec& next_spec = specs[kf_index + 1];
             Eigen::MatrixXd next_v_xy = Eigen::MatrixXd::Zero(n, 2);
             std::vector<std::optional<Eigen::Vector3d>> next_parked(n);
+            std::vector<int> next_drone_ids(n, -1);
             for (int slot = 0; slot < n; ++slot) {
                 const int j = assign_result.assignment[slot];
+                next_drone_ids[j] = drone_id_by_slot[slot];
                 if (target_is_pad[j]) {
                     next_parked[j] = Q.row(j).transpose();
                 } else if (!is_final_keyframe) {
                     next_v_xy.row(j) = formation_velocity.head<2>().transpose();
                 }
             }
-            next_assignment = assign_spec(Q, next_spec, next_v_xy, next_parked);
+            next_assignment = assign_spec(Q, next_spec, next_v_xy, next_parked, next_drone_ids);
             for (int j = 0; j < n; ++j) {
                 if (!target_is_pad[j]) continue;
                 const int jn = next_assignment->assignment[j];
@@ -1111,13 +1195,15 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
                 in_waiting_region(problem.end.position);
             problem.end.velocity = is_final_keyframe || at_rest_end ? Eigen::Vector3d::Zero() : formation_velocity;
             problem.end.acceleration = Eigen::Vector3d::Zero();
-            // Only drones flying the show keep out of the zone;
-            // taking off, landing or parked (start or end in the holding
-            // region) are exempt, and so is every pad-related drone (its hover
-            // point may be above the region).
-            problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
-                               !in_holding_region(problem.end.position) &&
-                               !(pad_rule && plans[slot].pad_related());
+            // Every drone keeps out of every holding area's zone except the
+            // area it takes off from, lands in or is parked in, and a
+            // pad-related drone's pad area (its hover point may be above the
+            // region).
+            problem.keep_out = !config.safety.keep_out.empty();
+            problem.keep_out_exempt_area =
+                exempt_area(holding, problem.start, problem.end,
+                            pad_rule && plans[slot].pad_related() ? std::optional<Eigen::Vector3d>(plans[slot].pad)
+                                                                  : std::nullopt);
             if (pad_rule) {
                 const PadPlan& plan = plans[slot];
                 if (plan.leave == Leave::kFromHover || plan.leave == Leave::kPrelude ||
@@ -1227,9 +1313,9 @@ PipelineResult run_pipeline(const ProjectData& project, const CoreConfig& base_c
             throw std::runtime_error(
                 "Holding-area clearance violated in transition " + std::to_string(kf_index) + " (" + from_keyframe +
                 " -> " + spec.to_name + "): drone " + std::to_string(v.drone_id) + " comes within " +
-                std::to_string(v.distance_m) + " m of the holding area at show time " +
-                std::to_string(t_start + v.time_sec) + " s (required " +
-                std::to_string(config.safety.keep_out->clearance_m) + " m), after " + std::to_string(e.attempts()) +
+                std::to_string(v.distance_m) + " m of " + holding.name(v.area) + " at show time " +
+                std::to_string(t_start + v.time_sec) + " s at (" + std::to_string(v.position.x()) + ", " + std::to_string(v.position.y()) + ", " + std::to_string(v.position.z()) + ") (required " + std::to_string(v.clearance_m) +
+                " m), after " + std::to_string(e.attempts()) +
                 " attempt(s)");
         }
 
@@ -1546,13 +1632,8 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
                                  std::to_string(n));
     }
 
-    const HoldingRegion holding_region = compute_holding_region(n, project.metadata.holding_area,
-                                                                project.metadata.holding_area.grid_spacing_m);
-    const CoreConfig config = show_config(project, base_config, holding_region);
-    auto in_holding_region = [&](const Eigen::Vector3d& p) {
-        return (p.array() >= holding_region.lo.array() - 1e-6).all() &&
-               (p.array() <= holding_region.hi.array() + 1e-6).all();
-    };
+    const HoldingAreas holding(project);
+    const CoreConfig config = show_config(project, base_config, holding);
 
     // Each drone's state and LED color at the abort time, from its own
     // spline: the segment that ends there (every transition ends at a
@@ -1602,12 +1683,11 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         start_color.row(slot) = color.transpose();
     }
 
-    // As the show's return leg: any free holding-area slot (the auction
-    // picks), landing at rest, LEDs fading to off; through hover points above
-    // the slots. A drone already parked (on its pad, or at its
-    // hover point) at the abort time keeps its pad.
-    const Eigen::MatrixXd slots = compute_holding_positions(n, project.metadata.holding_area,
-                                                            project.metadata.holding_area.grid_spacing_m);
+    // As the show's return leg: any free slot of the drone's home holding
+    // area (the auction picks), landing at rest, LEDs fading to off; through
+    // hover points above the slots. A drone already parked (on its pad, or at
+    // its hover point) at the abort time keeps its pad.
+    const Eigen::MatrixXd slots = compute_all_holding_positions(project.metadata.holding_areas);
     const double pad_height = std::max(config.solver.landing_approach_height_m, 0.0);
     const bool pad_rule =
         pad_height > 0.0 && slots_keep_distance(slots, config.solver.continuous_gatekeeper.min_allowable_distance_m);
@@ -1640,7 +1720,9 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
             if ((slots.row(j).transpose() - *parked[i]).norm() > 1e-6) cost(i, j) += 1e4;  // no pad change
         }
     }
+    forbid_other_areas(cost, drone_id_by_slot, slots, holding);
     const assignment::AssignmentResult assign_result = assignment::solve_auction(cost);
+    check_no_forbidden(cost, assign_result.assignment, n);
 
     std::vector<PadPlan> plans;
     if (pad_rule) {
@@ -1682,11 +1764,13 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
         problem.end.position = end_of(slot);
         problem.end.velocity = Eigen::Vector3d::Zero();
         problem.end.acceleration = Eigen::Vector3d::Zero();
-        // Every drone ends in the holding region, so all are exempt from the
-        // keep-out zone, exactly as on the show's return leg;
-        // a hover point above the region lands too.
-        problem.keep_out = config.safety.keep_out.has_value() && !in_holding_region(problem.start.position) &&
-                           !in_holding_region(problem.end.position) && !pad_rule;
+        // Every drone ends in its home area, so it is exempt from that
+        // area's zone (a hover point above the region lands too) and keeps
+        // out of the others, exactly as on the show's return leg.
+        problem.keep_out = !config.safety.keep_out.empty();
+        problem.keep_out_exempt_area =
+            exempt_area(holding, problem.start, problem.end,
+                        pad_rule ? std::optional<Eigen::Vector3d>(plans[slot].pad) : std::nullopt);
         if (pad_rule) {
             const PadPlan& plan = plans[slot];
             if (plan.arrive == Arrive::kToHover) {
@@ -1746,7 +1830,9 @@ ReturnPathResult plan_return_path(const ProjectData& project, const CoreConfig& 
     meta.spline_degree = trajectory::kDegree;
     meta.min_distance_enforced_m = config.safety.min_distance_m * (1.0 + config.solver.collision_margin_fraction);
     meta.altitude_floor_m = config.safety.altitude_floor_m;
-    if (config.safety.keep_out) meta.holding_clearance_m = config.safety.keep_out->clearance_m;
+    meta.holding_clearance_m = largest_clearance(config);
+    meta.holding_areas = project.metadata.holding_areas;
+    meta.home_area = holding.home;
 
     std::vector<optimizer::DroneTrajectorySolution> solutions;
     optimizer::SolveStats solve_stats;

@@ -67,7 +67,9 @@ struct ShowMetadata {
     std::optional<LegTiming> return_leg;   // last keyframe -> holding area
     std::vector<TransitionTiming> transitions;  // every transition that passed, in order
     std::optional<double> altitude_floor_m;     // the file's ground_z_m, when it declares one
-    std::optional<double> holding_clearance_m;  // the file's show_clearance_m, when it declares one
+    std::optional<double> holding_clearance_m;  // the largest show_clearance_m of the holding areas, when declared
+    std::vector<HoldingArea> holding_areas;     // as read, with slot_count
+    std::vector<int> home_area;                 // per drone_id: its holding area's index
 };
 
 struct PipelineResult {

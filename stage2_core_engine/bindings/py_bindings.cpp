@@ -49,6 +49,24 @@ py::list color_keyframes_to_py(const std::vector<drone_core::ColorKeyframe>& col
 
 py::tuple vec3_to_py(const Eigen::Vector3d& v) { return py::make_tuple(v.x(), v.y(), v.z()); }
 
+// Phase 1's holding_areas items, as Stage 2 read them.
+py::list holding_areas_to_py(const std::vector<drone_core::io::HoldingArea>& areas) {
+    py::list out;
+    for (const auto& a : areas) {
+        py::dict d;
+        d["center"] = py::make_tuple(a.center.x(), a.center.y(), a.center.z());
+        d["size"] = py::make_tuple(a.size.x(), a.size.y());
+        d["max_height"] = a.max_height;
+        d["grid_spacing_m"] = a.grid_spacing_m;
+        d["layer_spacing_m"] = a.layer_spacing_m;
+        d["staggered_layers"] = a.staggered_layers;
+        d["show_clearance_m"] = a.show_clearance_m ? py::object(py::float_(*a.show_clearance_m)) : py::object(py::none());
+        d["slot_count"] = a.slot_count;
+        out.append(d);
+    }
+    return out;
+}
+
 py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
     py::dict metadata;
     metadata["version"] = meta.version;
@@ -83,9 +101,15 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
     // The design's ground as enforced; None = no floor.
     metadata["altitude_floor_m"] =
         meta.altitude_floor_m ? py::object(py::float_(*meta.altitude_floor_m)) : py::object(py::none());
-    // The holding-area safe distance as enforced; None = no zone.
+    // The holding-area safe distance as enforced (the largest, with several
+    // areas); None = no zone.
     metadata["holding_clearance_m"] =
         meta.holding_clearance_m ? py::object(py::float_(*meta.holding_clearance_m)) : py::object(py::none());
+    // The holding areas as read, and each drone's home area (by drone_id).
+    if (!meta.holding_areas.empty()) {
+        metadata["holding_areas"] = holding_areas_to_py(meta.holding_areas);
+        metadata["home_area"] = meta.home_area;
+    }
     // Only for Phase 1 files with `legs` (schema 1.6.0).
     if (meta.takeoff_leg || meta.return_leg) {
         auto leg_to_py = [](const std::optional<drone_core::io::LegTiming>& leg) -> py::object {
@@ -270,7 +294,8 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
 //                                 "end_time_sec", "planned_duration_sec", "flown_duration_sec",
 //                                 "attempts"}, ...],
 //                "altitude_floor_m" (the file's ground_z_m, or None: no floor),
-//                "holding_clearance_m" (the file's holding_area.show_clearance_m, or None: no zone),
+//                "holding_clearance_m" (the largest show_clearance_m of the holding areas, or None: no zone),
+//                "holding_areas" (as read, with slot_count), "home_area" (per drone_id),
 //                "legs" (only for Phase 1 files with legs): {"takeoff", "return"}:
 //                  {"start_time_sec", "end_time_sec", "duration_sec", "target_duration_sec"}},
 //   "trajectories": [{"drone_id", "segments": [{"segment_index",
@@ -486,21 +511,30 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
 }
 
 // The holding-area layout Stage 2 derives from a Phase 1 file (its port of
-// Phase 1's holding_area.py): slots, launch row indices and the region, so
-// tests can check that the two never disagree.
+// Phase 1's holding_area.py): every area's slots concatenated, their launch
+// row indices, each drone's home area and one region per area (the first
+// area's also as region_lo / region_hi), so tests can check that the two
+// never disagree.
 py::dict holding_layout(const py::object& phase1_intermediate_json) {
     const drone_core::io::ProjectData project =
         drone_core::io::parse_project(drone_core::bindings::py_to_json(phase1_intermediate_json));
-    const drone_core::io::HoldingArea& ha = project.metadata.holding_area;
-    const int n = project.metadata.fleet_size;
-    const Eigen::MatrixXd slots = drone_core::io::compute_holding_positions(n, ha, ha.grid_spacing_m);
-    const drone_core::io::HoldingRegion region = drone_core::io::compute_holding_region(n, ha, ha.grid_spacing_m);
+    const auto& areas = project.metadata.holding_areas;
+    const std::vector<drone_core::io::HoldingRegion> regions = drone_core::io::compute_holding_regions(areas);
     auto vec3 = [](const Eigen::Vector3d& v) { return py::make_tuple(v.x(), v.y(), v.z()); };
     py::dict out;
-    out["slots"] = control_points_to_py(slots);
-    out["row_indices"] = drone_core::io::compute_holding_row_indices(n, ha, ha.grid_spacing_m);
-    out["region_lo"] = vec3(region.lo);
-    out["region_hi"] = vec3(region.hi);
+    out["slots"] = control_points_to_py(drone_core::io::compute_all_holding_positions(areas));
+    out["row_indices"] = drone_core::io::compute_all_holding_row_indices(areas);
+    out["home_area"] = drone_core::io::compute_home_areas(areas);
+    out["region_lo"] = vec3(regions.front().lo);
+    out["region_hi"] = vec3(regions.front().hi);
+    py::list region_list;
+    for (const auto& r : regions) {
+        py::dict d;
+        d["region_lo"] = vec3(r.lo);
+        d["region_hi"] = vec3(r.hi);
+        region_list.append(d);
+    }
+    out["holding_regions"] = region_list;
     py::list waiting;
     for (const drone_core::io::WaitingArea& area : project.metadata.waiting_areas) {
         const drone_core::io::HoldingRegion r = drone_core::io::compute_waiting_region(area);
@@ -571,7 +605,8 @@ PYBIND11_MODULE(drone_core, m) {
           "(min_duration_sec, farthest_drone_id, farthest_distance_m, ...), or {'error': message}.");
 
     m.def("holding_layout", &holding_layout, py::arg("phase1_intermediate_json"),
-          "The holding-area slots (fleet_size of them, in slot order), their launch row indices and the "
-          "holding region (lo, hi) Stage 2 derives from a Phase 1 file, and each waiting area's slots and "
-          "region (`waiting_areas`).");
+          "The holding-area slots (fleet_size of them: every holding area's, concatenated in list order), "
+          "their launch row indices, each drone's home area, the holding regions (`holding_regions`; the first "
+          "one also as region_lo / region_hi) Stage 2 derives from a Phase 1 file, and each waiting area's "
+          "slots and region (`waiting_areas`).");
 }

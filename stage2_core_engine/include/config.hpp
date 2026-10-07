@@ -34,13 +34,15 @@ struct SolverWeights {
 };
 
 // Holding-area keep-out zone: drones flying
-// the show keep at least `clearance_m` from the holding region box [lo, hi]
-// (ENU). Drones taking off, landing or parked in that transition are exempt
-// (DroneTransitionProblem::keep_out = false).
+// the show keep at least `clearance_m` from one holding area's region box
+// [lo, hi] (ENU). A drone taking off from, landing in or parked in that area
+// in a transition is exempt from that zone only
+// (DroneTransitionProblem::keep_out_exempt_area).
 struct KeepOutZone {
     std::array<double, 3> lo{};
     std::array<double, 3> hi{};
     double clearance_m = 0.0;
+    int area = 0;  // the holding area's index
 };
 
 struct SafetyConfig {
@@ -51,9 +53,9 @@ struct SafetyConfig {
     // io::run_pipeline() from the Phase 1 file's project_metadata.ground_z_m;
     // unset (no floor) for files that don't declare a ground. Not a JSON key.
     std::optional<double> altitude_floor_m;
-    // Set per run by io::run_pipeline() from the Phase 1 file's
-    // holding_area.show_clearance_m; unset (no zone) otherwise. Not a JSON key.
-    std::optional<KeepOutZone> keep_out;
+    // Set per run by io::run_pipeline(): one zone per holding area that
+    // declares a show_clearance_m; empty (no zone) otherwise. Not a JSON key.
+    std::vector<KeepOutZone> keep_out;
 };
 
 // APF Warm-Start Seeding:
