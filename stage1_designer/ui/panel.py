@@ -483,8 +483,8 @@ def _copy_props(src, dst) -> None:
 
 
 class DSS_OT_HoldingAreaAdd(bpy.types.Operator):
-    """Add a holding area. The fleet fills the areas in list order; each drone takes off from, lands in and
-    returns to its own area"""
+    """Add a holding area. The fleet fills the areas in list order for takeoff; drones land on the nearest
+    free pads of any area"""
 
     bl_idname = "dss.holding_area_add"
     bl_label = "Add Holding Area"

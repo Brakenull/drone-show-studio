@@ -388,7 +388,7 @@ class ReturnFacts:
     attempts: int | None = None
     farthest_drone: int | None = None     # the drone with the longest way home, which sets T_min
     farthest_m: float | None = None
-    farthest_area: int | None = None      # that drone's home holding area (0-based); None with one area
+    farthest_area: int | None = None      # the holding area it lands in (0-based); None with one area
     reversed_takeoff: bool = False        # the takeoff flown backwards: nothing to re-plan
 
 

@@ -111,7 +111,7 @@ if _HAS_BPY:
         """Slots for the drones a formation leaves spare: the first waiting slots when the design has waiting areas
         (`spare_needed`, the most spare drones at any later keyframe, sizes
         the areas), else the first holding-area slots (all areas' slots in
-        list order; Stage 2 keeps each drone in its home area). The first
+        list order; Stage 2 picks which drones park where). The first
         formation's spare drones always stay on their pads: every drone takes
         off from the holding area when a formation first needs it."""
         if len(settings.waiting_areas) and not first_keyframe:

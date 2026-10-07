@@ -105,10 +105,10 @@ py::dict metadata_to_py(const drone_core::io::ShowMetadata& meta) {
     // areas); None = no zone.
     metadata["holding_clearance_m"] =
         meta.holding_clearance_m ? py::object(py::float_(*meta.holding_clearance_m)) : py::object(py::none());
-    // The holding areas as read, and each drone's home area (by drone_id).
+    // The holding areas as read, and the area each drone takes off from (by drone_id).
     if (!meta.holding_areas.empty()) {
         metadata["holding_areas"] = holding_areas_to_py(meta.holding_areas);
-        metadata["home_area"] = meta.home_area;
+        metadata["takeoff_area"] = meta.takeoff_area;
     }
     // Only for Phase 1 files with `legs` (schema 1.6.0).
     if (meta.takeoff_leg || meta.return_leg) {
@@ -295,7 +295,7 @@ py::dict progress_event_to_py(const drone_core::ProgressEvent& e) {
 //                                 "attempts"}, ...],
 //                "altitude_floor_m" (the file's ground_z_m, or None: no floor),
 //                "holding_clearance_m" (the largest show_clearance_m of the holding areas, or None: no zone),
-//                "holding_areas" (as read, with slot_count), "home_area" (per drone_id),
+//                "holding_areas" (as read, with slot_count), "takeoff_area" (per drone_id),
 //                "legs" (only for Phase 1 files with legs): {"takeoff", "return"}:
 //                  {"start_time_sec", "end_time_sec", "duration_sec", "target_duration_sec"}},
 //   "trajectories": [{"drone_id", "segments": [{"segment_index",
@@ -445,6 +445,7 @@ py::list estimate_return_paths(const py::dict& phase1_intermediate_json, const p
             info["inside_transition"] = wanted[i].second.has_value();
             info["min_duration_sec"] = r.min_duration_sec;
             info["farthest_drone_id"] = r.farthest_drone_id;
+            info["farthest_area"] = r.farthest_area;
             info["farthest_distance_m"] = r.farthest_distance_m;
         }
         out.append(info);
@@ -497,6 +498,7 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
     info["min_duration_sec"] = r.min_duration_sec;
     info["inside_transition"] = abort_time.has_value();
     info["farthest_drone_id"] = r.farthest_drone_id;
+    info["farthest_area"] = r.farthest_area;
     info["farthest_distance_m"] = r.farthest_distance_m;
     if (estimate_only) {
         py::dict out;
@@ -512,7 +514,7 @@ py::dict plan_return_path(const py::dict& phase1_intermediate_json, const py::di
 
 // The holding-area layout Stage 2 derives from a Phase 1 file (its port of
 // Phase 1's holding_area.py): every area's slots concatenated, their launch
-// row indices, each drone's home area and one region per area (the first
+// row indices, each drone's takeoff area and one region per area (the first
 // area's also as region_lo / region_hi), so tests can check that the two
 // never disagree.
 py::dict holding_layout(const py::object& phase1_intermediate_json) {
@@ -524,7 +526,7 @@ py::dict holding_layout(const py::object& phase1_intermediate_json) {
     py::dict out;
     out["slots"] = control_points_to_py(drone_core::io::compute_all_holding_positions(areas));
     out["row_indices"] = drone_core::io::compute_all_holding_row_indices(areas);
-    out["home_area"] = drone_core::io::compute_home_areas(areas);
+    out["takeoff_area"] = drone_core::io::compute_takeoff_areas(areas);
     out["region_lo"] = vec3(regions.front().lo);
     out["region_hi"] = vec3(regions.front().hi);
     py::list region_list;
@@ -606,7 +608,7 @@ PYBIND11_MODULE(drone_core, m) {
 
     m.def("holding_layout", &holding_layout, py::arg("phase1_intermediate_json"),
           "The holding-area slots (fleet_size of them: every holding area's, concatenated in list order), "
-          "their launch row indices, each drone's home area, the holding regions (`holding_regions`; the first "
+          "their launch row indices, each drone's takeoff area, the holding regions (`holding_regions`; the first "
           "one also as region_lo / region_hi) Stage 2 derives from a Phase 1 file, and each waiting area's "
           "slots and region (`waiting_areas`).");
 }

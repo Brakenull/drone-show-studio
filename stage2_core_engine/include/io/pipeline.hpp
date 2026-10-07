@@ -69,7 +69,7 @@ struct ShowMetadata {
     std::optional<double> altitude_floor_m;     // the file's ground_z_m, when it declares one
     std::optional<double> holding_clearance_m;  // the largest show_clearance_m of the holding areas, when declared
     std::vector<HoldingArea> holding_areas;     // as read, with slot_count
-    std::vector<int> home_area;                 // per drone_id: its holding area's index
+    std::vector<int> takeoff_area;              // per drone_id: the holding area it takes off from
 };
 
 struct PipelineResult {
@@ -127,6 +127,7 @@ struct ReturnPathResult {
     double worst_separation_m = 0.0;  // the passing attempt's, as the gatekeeper measured it
     double min_duration_sec = 0.0;    // the Auto duration (T_min, plus the final descent), before any retry
     int farthest_drone_id = -1;       // the drone with the longest way to its slot, which sets T_min
+    int farthest_area = -1;           // the holding area that slot is in
     double farthest_distance_m = 0.0;
 };
 

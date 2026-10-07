@@ -144,7 +144,7 @@ function detail(item: Suggestion): string {
         need > 0
           ? `it would need ${seconds(need)} (${seconds(n.short_sec ?? 0)} shorter)`
           : `even an instant return would leave the ${seconds(n.move_sec ?? 0)} move into it too long`;
-      const home = n.farthest_area != null ? `holding area ${n.farthest_area + 1} (home of drone ${n.farthest_drone}, the farthest)` : "the holding area";
+      const home = n.farthest_area != null ? `holding area ${n.farthest_area + 1} (where drone ${n.farthest_drone}, the farthest, lands)` : "the holding area";
       return `${what} takes ${seconds(n.return_sec ?? 0)}; ${fix}. Change the design in Blender: move ${name} closer to ${home}, lower it, or put it earlier in the show.`;
     }
   }

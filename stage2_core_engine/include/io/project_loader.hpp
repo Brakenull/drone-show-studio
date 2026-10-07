@@ -48,9 +48,9 @@ struct HoldingArea {
     // When set, show drones keep at least this
     // far from the holding region.
     std::optional<double> show_clearance_m;
-    // The drones whose home area this is (Phase 1 schema 1.8.0): they take
-    // off from, land in, park on and return to this area only. A file with
-    // the old single holding_area has one area holding the whole fleet.
+    // The drones that take off from this area (Phase 1 schema 1.8.0); they
+    // land, park and return on any free pad of any area. A file with the old
+    // single holding_area has one area holding the whole fleet.
     int slot_count = 0;
 };
 
@@ -132,12 +132,12 @@ HoldingRegion compute_holding_region(int fleet_size, const HoldingArea& holding_
 
 // Several holding areas, each laid out for its own slot_count drones with
 // its own grid spacing: every area's slots (and their launch row indices)
-// concatenated in list order, one region per area, and each drone's home
+// concatenated in list order, one region per area, and each drone's takeoff
 // area (the area of its takeoff slot).
 Eigen::MatrixXd compute_all_holding_positions(const std::vector<HoldingArea>& areas);
 std::vector<int> compute_all_holding_row_indices(const std::vector<HoldingArea>& areas);
 std::vector<HoldingRegion> compute_holding_regions(const std::vector<HoldingArea>& areas);
-std::vector<int> compute_home_areas(const std::vector<HoldingArea>& areas);
+std::vector<int> compute_takeoff_areas(const std::vector<HoldingArea>& areas);
 
 // One waiting area's slots (its slot_count of them, row by row) and region
 // (the footprint, widened if needed, at center z, together with the slots

@@ -376,10 +376,12 @@ std::vector<HoldingRegion> compute_holding_regions(const std::vector<HoldingArea
     return regions;
 }
 
-std::vector<int> compute_home_areas(const std::vector<HoldingArea>& areas) {
-    std::vector<int> home;
-    for (int k = 0; k < static_cast<int>(areas.size()); ++k) home.insert(home.end(), std::max(areas[k].slot_count, 0), k);
-    return home;
+std::vector<int> compute_takeoff_areas(const std::vector<HoldingArea>& areas) {
+    std::vector<int> takeoff;
+    for (int k = 0; k < static_cast<int>(areas.size()); ++k) {
+        takeoff.insert(takeoff.end(), std::max(areas[k].slot_count, 0), k);
+    }
+    return takeoff;
 }
 
 Eigen::MatrixXd compute_all_waiting_slots(const std::vector<WaitingArea>& areas) {

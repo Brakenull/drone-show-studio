@@ -301,7 +301,7 @@ def test_several_holding_areas():
         compute_all_holding_positions,
         compute_all_padding_positions,
         compute_all_row_indices,
-        home_areas,
+        takeoff_areas,
         in_holding_region,
     )
 
@@ -318,7 +318,7 @@ def test_several_holding_areas():
     slots = compute_all_holding_positions([west, east], counts)
     np.testing.assert_array_equal(slots[:452], compute_holding_positions(452, *west.args))
     np.testing.assert_array_equal(slots[452:], compute_holding_positions(48, *east.args))
-    assert list(np.bincount(home_areas(counts))) == counts
+    assert list(np.bincount(takeoff_areas(counts))) == counts
     rows = compute_all_row_indices([west, east], counts)
     assert rows[0] == rows[452] == 0  # both areas launch row 0 in the first wave
     np.testing.assert_array_equal(compute_all_padding_positions(460, [west, east], counts), slots[:460])

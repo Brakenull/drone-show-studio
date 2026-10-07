@@ -58,14 +58,14 @@ def _waiting_overlay(meta: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _overlays(run_dir: Path, failure: dict[str, Any] | None) -> dict[str, Any]:
-    from stage1_designer.core.holding_area import home_areas
+    from stage1_designer.core.holding_area import takeoff_areas
 
     phase1 = _load_json(run_dir / "input" / "phase1.json")
     meta = phase1["project_metadata"]
     overlays: dict[str, Any] = {
         "holding_areas": _holding_overlay(meta),
-        # Each drone's home area (drone i takes off from slot i), for the drone inspector.
-        "home_area": home_areas(holding_areas(meta)[1]).tolist(),
+        # Each drone's takeoff area (drone i takes off from slot i), for the drone inspector.
+        "takeoff_area": takeoff_areas(holding_areas(meta)[1]).tolist(),
         "waiting_areas": _waiting_overlay(meta),
         "keyframes": [{"shape_name": kf["shape_name"], "time_sec": kf["time_sec"]} for kf in phase1["keyframes"]],
         "nominal_min_distance_m": meta["min_distance_m"],

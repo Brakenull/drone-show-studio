@@ -3,10 +3,9 @@
 8 drones, 4 in each of two 2 x 2 holding areas (two launch rows each): west at
 x = -30, east at x = 0, a line formation at x = 25..39, 12 m up. Every way from
 the west area to the formation passes over the east one. Checks: both areas
-launch row r together; every drone lands back in its own (home) area, on the
-return leg and on a planned return path, though the east area is closer for
-all of them; west drones keep the east area's safe distance during takeoff and
-landing, east drones (exempt from their own area's zone) don't have to.
+launch row r together; on the return leg and on a planned return path the
+drones land on free slots of any area, every slot once; a drone keeps every area's safe
+distance in a transition unless it takes off from or lands in that area.
 Skips if drone_core is not built for this Python.
 """
 
@@ -23,7 +22,12 @@ sys.path.insert(0, str(REPO / "tools" / "scripts"))
 
 from smoke_test_stage2 import build_phase1_json, evaluate  # noqa: E402
 
-from stage1_designer.core.holding_area import areas_from_metadata, distance_to_region, holding_regions  # noqa: E402
+from stage1_designer.core.holding_area import (  # noqa: E402
+    areas_from_metadata,
+    compute_all_holding_positions,
+    distance_to_region,
+    holding_regions,
+)
 
 CLEARANCE_M = 5.0
 TOL_M = 1e-3
@@ -75,11 +79,11 @@ def planned(drone_core):
     return phase1, drone_core.optimize_trajectories(copy.deepcopy(phase1), {})
 
 
-def test_metadata_carries_the_areas_and_home_areas(planned):
+def test_metadata_carries_the_areas_and_takeoff_areas(planned):
     _phase1, result = planned
     meta = result["metadata"]
     assert [a["slot_count"] for a in meta["holding_areas"]] == [4, 4]
-    assert list(meta["home_area"]) == [0, 0, 0, 0, 1, 1, 1, 1]
+    assert list(meta["takeoff_area"]) == [0, 0, 0, 0, 1, 1, 1, 1]
     assert meta["holding_clearance_m"] == CLEARANCE_M
 
 
@@ -97,37 +101,50 @@ def test_rows_of_both_areas_launch_together(planned):
     assert first_move[2] == first_move[3] == first_move[6] == first_move[7]
 
 
-def _landed_home(result, phase1, t):
+def _end_positions(result):
+    degree = result["metadata"]["spline_degree"]
+    t = result["metadata"]["total_duration_sec"]
+    return np.array([position(traj, t, degree) for traj in result["trajectories"]])
+
+
+def _landed_on_every_slot_once(result, phase1):
+    areas, counts = areas_from_metadata(phase1["project_metadata"])
+    slots = compute_all_holding_positions(areas, counts)
+    ends = _end_positions(result)
+    d = np.linalg.norm(ends[:, None, :] - slots[None, :, :], axis=2)
+    nearest = d.argmin(axis=1)
+    assert d.min(axis=1).max() < 0.05, d.min(axis=1)
+    assert sorted(nearest.tolist()) == list(range(len(slots)))
+    return nearest
+
+
+def test_drones_land_on_free_slots(planned):
+    phase1, result = planned
+    assert result["metadata"]["transitions"][-1]["to_keyframe"] == "holding_area"
+    _landed_on_every_slot_once(result, phase1)
+
+
+def test_a_return_path_lands_on_free_slots_too(drone_core, planned):
+    phase1, show = planned
+    back = drone_core.plan_return_path(copy.deepcopy(phase1), show, 0, {})
+    _landed_on_every_slot_once(back, phase1)
+
+
+def test_drones_keep_out_of_areas_they_do_not_use(planned):
+    """Per transition: a drone that neither starts nor ends in an area keeps its safe distance."""
+    phase1, result = planned
     areas, counts = areas_from_metadata(phase1["project_metadata"])
     regions = holding_regions(areas, counts)
     degree = result["metadata"]["spline_degree"]
-    for traj, home in zip(result["trajectories"], result["metadata"]["home_area"]):
-        p = position(traj, t, degree)
-        inside = [k for k, (lo, hi) in enumerate(regions) if distance_to_region(p, lo, hi)[0] == 0.0]
-        assert inside == [home], (traj["drone_id"], p, inside)
-
-
-def test_every_drone_lands_in_its_home_area(planned):
-    phase1, result = planned
-    assert result["metadata"]["transitions"][-1]["to_keyframe"] == "holding_area"
-    _landed_home(result, phase1, result["metadata"]["total_duration_sec"])
-
-
-def test_a_return_path_lands_in_the_home_areas_too(drone_core, planned):
-    phase1, show = planned
-    back = drone_core.plan_return_path(copy.deepcopy(phase1), show, 0, {})
-    _landed_home(back, phase1, back["metadata"]["total_duration_sec"])
-
-
-def test_west_drones_keep_out_of_the_east_area(planned):
-    phase1, result = planned
-    areas, counts = areas_from_metadata(phase1["project_metadata"])
-    (_w_lo, _w_hi), (e_lo, e_hi) = holding_regions(areas, counts)
-    degree = result["metadata"]["spline_degree"]
-    t_end = result["metadata"]["total_duration_sec"]
-    closest = {0: np.inf, 1: np.inf}
-    for traj, home in zip(result["trajectories"], result["metadata"]["home_area"]):
-        d = distance_to_region(samples(traj, 0.0, t_end, degree), e_lo, e_hi)
-        closest[home] = min(closest[home], float(d.min()))
-    assert closest[0] >= CLEARANCE_M - TOL_M  # takeoff and landing included
-    assert closest[1] == pytest.approx(0.0, abs=1e-9)  # their own area: exempt
+    checked = 0
+    for tr in result["metadata"]["transitions"]:
+        t0, t1 = tr["start_time_sec"], tr["end_time_sec"]
+        for traj in result["trajectories"]:
+            pts = samples(traj, t0, t1, degree)
+            for lo, hi in regions:
+                d = distance_to_region(pts, lo, hi)
+                if d[0] == 0.0 or d[-1] == 0.0:
+                    continue  # takes off from or lands in this area
+                checked += 1
+                assert d.min() >= CLEARANCE_M - TOL_M, (tr["index"], traj["drone_id"], d.min())
+    assert checked > 0

@@ -327,9 +327,9 @@ def check_show_clearance(
 
 # --- Several holding areas -------------------------------------------------
 #
-# Every drone belongs to one holding area, its home area, for the whole show:
-# it takes off from, lands in, parks on and returns to that area only. The
-# fleet fills the areas in list order (each takes what its layers under
+# Every drone takes off from one holding area, its takeoff area; it lands,
+# parks and returns on any free pad of any area (Stage 2 picks the nearest).
+# The fleet fills the areas in list order (each takes what its layers under
 # max_height hold, only the last one widens), and the slots are concatenated
 # in that order: drone i takes off from slot i (all of area 1, then area 2...).
 # One area lays out exactly like the single holding area above.
@@ -395,8 +395,8 @@ def compute_all_row_indices(areas: Sequence[HoldingArea], counts: Sequence[int])
     return np.concatenate(parts) if parts else np.zeros(0, dtype=int)
 
 
-def home_areas(counts: Sequence[int]) -> np.ndarray:
-    """Each drone's home area index (drone i on slot i)."""
+def takeoff_areas(counts: Sequence[int]) -> np.ndarray:
+    """Each drone's takeoff area index (drone i on slot i)."""
     return np.repeat(np.arange(len(counts)), counts)
 
 

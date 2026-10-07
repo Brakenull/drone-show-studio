@@ -265,7 +265,7 @@ export interface Suggestion {
     attempts?: number | null;
     farthest_drone?: number | null;
     farthest_m?: number | null;
-    /** The farthest drone's home holding area (0-based); null with one area. */
+    /** The holding area the farthest drone lands in (0-based); null with one area. */
     farthest_area?: number | null;
     short_sec?: number;
     return_needed_sec?: number;
@@ -463,7 +463,7 @@ export interface ValidationSummary {
     layer_spacing_m: number;
     /** Schema 1.7.0: alternate layers shifted half a slot (absent in older files). */
     staggered_layers?: boolean;
-    /** The drones whose home area this is. */
+    /** The drones that take off from this area. */
     slot_count: number;
     layers: number;
     /** Phase 1's layout rules applied to the declared area (tools/studio_bridge/validate.py). */

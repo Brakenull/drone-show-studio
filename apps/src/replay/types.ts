@@ -39,8 +39,8 @@ export interface ReplayHeader {
     holding_area?: HoldingOverlay;
     /** Each holding area with its own drones' slots. */
     holding_areas?: HoldingOverlay[];
-    /** Per drone: its home holding area (0-based). */
-    home_area?: number[];
+    /** Per drone: the holding area it takes off from (0-based). */
+    takeoff_area?: number[];
     /** Places in the air where spare drones wait (schema 1.7.0); absent or empty without any. */
     waiting_areas?: { center: V3; size: [number, number]; grid_spacing_m: number; slots: V3[] }[];
     keyframes?: { shape_name: string; time_sec?: number }[];

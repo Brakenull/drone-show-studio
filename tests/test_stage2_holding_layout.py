@@ -95,7 +95,7 @@ def test_two_holding_areas_agree(drone_core):
         areas_from_metadata,
         compute_all_holding_positions,
         compute_all_row_indices,
-        home_areas,
+        takeoff_areas,
         holding_regions,
     )
 
@@ -114,7 +114,7 @@ def test_two_holding_areas_agree(drone_core):
     stage2 = drone_core.holding_layout(data)
     np.testing.assert_allclose(np.asarray(stage2["slots"]), compute_all_holding_positions(areas, counts), atol=1e-9)
     assert list(stage2["row_indices"]) == compute_all_row_indices(areas, counts).tolist()
-    assert list(stage2["home_area"]) == home_areas(counts).tolist()
+    assert list(stage2["takeoff_area"]) == takeoff_areas(counts).tolist()
     for s2, (lo, hi) in zip(stage2["holding_regions"], holding_regions(areas, counts)):
         np.testing.assert_allclose(s2["region_lo"], lo, atol=1e-9)
         np.testing.assert_allclose(s2["region_hi"], hi, atol=1e-9)

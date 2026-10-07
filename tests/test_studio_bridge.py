@@ -340,7 +340,7 @@ def test_validate_reports_every_holding_area(tmp_path):
     assert any("Holding areas 1 and 2 are" in w["message"] for w in warnings)
 
 
-def test_replay_overlays_carry_every_holding_area_and_home_areas():
+def test_replay_overlays_carry_every_holding_area():
     from tools.studio_bridge.stage2_job import _holding_overlay
 
     meta = _two_area_file()["project_metadata"]

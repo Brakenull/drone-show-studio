@@ -119,7 +119,7 @@
               "staggered_layers": { "type": "boolean" },
               "show_clearance_m": { "type": "number", "minimum": 0 },
               "slot_count": {
-                "description": "The drones whose home area this is: they take off from, land in, park on and return to this area only. The fleet fills the areas in list order, the counts add up to fleet_size, and drone i takes off from slot i of every area's slots concatenated in list order.",
+                "description": "The drones that take off from this area, and the slots laid out in it. The fleet fills the areas in list order, the counts add up to fleet_size, and drone i takes off from slot i of every area's slots concatenated in list order. Drones land, park and return on any free slot of any area.",
                 "type": "integer", "minimum": 0
               }
             }

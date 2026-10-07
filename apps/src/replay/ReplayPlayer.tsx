@@ -43,10 +43,10 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
 
   const failure = header.overlays.failure;
   const sim = header.overlays.simulation ?? null;
-  // A drone's home holding area, named only when the show has more than one.
-  const homeName = (drone: number) => {
-    const home = header.overlays.home_area?.[drone];
-    return home !== undefined && (header.overlays.holding_areas?.length ?? 1) > 1 ? `holding area ${home + 1}` : null;
+  // The holding area a drone takes off from, named only when the show has more than one.
+  const takeoffName = (drone: number) => {
+    const area = header.overlays.takeoff_area?.[drone];
+    return area !== undefined && (header.overlays.holding_areas?.length ?? 1) > 1 ? `holding area ${area + 1}` : null;
   };
   // A simulated flight is judged by the crash distance, a plan by the planner's required distance.
   const floor = sim ? separation.crash_m : (header.overlays.gatekeeper_floor_m ?? null);
@@ -249,7 +249,7 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
               </p>
               <p className="muted">
                 Drone {pair[0]} at {positionAt(data, pair[0], time).map((v) => v.toFixed(1)).join(", ")} m
-                {homeName(pair[0]) && `, home ${homeName(pair[0])}`}
+                {takeoffName(pair[0]) && `, took off from ${takeoffName(pair[0])}`}
               </p>
               <button className="link" onClick={() => setHighlight([])}>
                 Clear selection
