@@ -25,7 +25,7 @@ from typing import List, Mapping, NamedTuple, Sequence, Tuple
 
 import numpy as np
 
-from .holding_area import ClearanceResult, check_show_clearance, distance_to_region, layer_grid_dims
+from .holding_area import ClearanceResult, box_distance, check_show_clearance, distance_to_region, layer_grid_dims
 
 # A waiting layer this close to the ground (or lower) locks Export: drones
 # wait in the air, with room under them.
@@ -167,12 +167,12 @@ def check_detours(
     slot_counts: Sequence[int],
     formations: Sequence[Tuple[str, np.ndarray]],
     fleet_size: int,
-    holding_lo: np.ndarray,
-    holding_hi: np.ndarray,
+    holding_regions: Sequence[Tuple[np.ndarray, np.ndarray]],
 ) -> List[Detour]:
     """Keyframes after the first (whose spare drones wait in the air) where
-    every waiting area is a longer trip than the holding area. Not a safety
-    problem; it stretches the show and costs battery."""
+    every waiting area is a longer trip than the nearest holding area
+    (`holding_regions`: one (lo, hi) per area). Not a safety problem; it
+    stretches the show and costs battery."""
     if not areas:
         return []
     regions = [waiting_region_bounds(n, a) for a, n in zip(areas, slot_counts)]
@@ -191,7 +191,7 @@ def check_detours(
             return float(sum(distance_to_region(c[None, :], lo, hi)[0] for c in ends))
 
         waiting = min(trip(lo, hi) for lo, hi in regions)
-        home = trip(holding_lo, holding_hi)
+        home = min(trip(lo, hi) for lo, hi in holding_regions)
         if waiting > home + 1e-6:
             detours.append(Detour(k, name, spare, waiting, home))
     return detours
@@ -203,33 +203,28 @@ def size_needed(n_slots: int, area: WaitingArea) -> Tuple[float, float]:
     return layout.width, layout.length
 
 
-def box_distance(lo_a, hi_a, lo_b, hi_b) -> float:
-    """Euclidean distance between two axis-aligned boxes (0 when they touch)."""
-    gap = np.maximum(np.maximum(np.asarray(lo_b) - hi_a, np.asarray(lo_a) - hi_b), 0.0)
-    return float(np.linalg.norm(gap))
-
-
 class WaitingCheck(NamedTuple):
     """Everything the add-on checks about the waiting areas."""
 
     clearance: List[List[ClearanceResult]]  # per area: formations too close
-    holding_gaps: List[float]  # per area: distance to the holding region
+    holding_gaps: List[List[float]]  # per waiting area: distance to each holding region
     overlaps: List[Tuple[int, int, float]]  # (area a, area b, closest slots) closer than a grid step
     too_low: List[Tuple[int, float]]  # (area, height above ground) below the minimum
 
-    def messages(self, holding_clearance_m: float) -> List[str]:
+    def messages(self, holding_clearances: Sequence[float]) -> List[str]:
+        """`holding_clearances`: each holding area's safe distance, the gap a
+        waiting area needs from it."""
         lines = []
         for i, results in enumerate(self.clearance):
             for r in results:
                 if r.is_caution:
                     where = f"{r.inside} point(s) inside" if r.inside else f"{r.too_close} point(s) too close to"
                     lines.append(f"'{r.shape_name}': {where} Waiting Area {i + 1} (closest {r.closest_m:.2f} m)")
-        for i, gap in enumerate(self.holding_gaps):
-            if gap < holding_clearance_m - 1e-9:
-                lines.append(
-                    f"Waiting Area {i + 1} is {gap:.2f} m from the holding area "
-                    f"(needs {holding_clearance_m:g} m)"
-                )
+        for i, gaps in enumerate(self.holding_gaps):
+            for j, (gap, needed) in enumerate(zip(gaps, holding_clearances)):
+                if gap < needed - 1e-9:
+                    where = "the holding area" if len(gaps) == 1 else f"Holding Area {j + 1}"
+                    lines.append(f"Waiting Area {i + 1} is {gap:.2f} m from {where} (needs {needed:g} m)")
         for a, b, dist in self.overlaps:
             lines.append(f"Waiting Areas {a + 1} and {b + 1} overlap (slots {dist:.2f} m apart)")
         for i, height in self.too_low:
@@ -244,15 +239,15 @@ def check_waiting_areas(
     areas: Sequence[WaitingArea],
     slot_counts: Sequence[int],
     formations: Sequence[Tuple[str, np.ndarray]],
-    holding_lo: np.ndarray,
-    holding_hi: np.ndarray,
+    holding_regions: Sequence[Tuple[np.ndarray, np.ndarray]],
     ground_z_m: float,
 ) -> WaitingCheck:
     """`formations`: each keyframe's sampled points (padding excluded), as for
-    the holding area's clearance check."""
+    the holding area's clearance check; `holding_regions`: one (lo, hi) per
+    holding area."""
     regions = [waiting_region_bounds(n, a) for a, n in zip(areas, slot_counts)]
     clearance = [check_show_clearance(formations, lo, hi, a.show_clearance_m) for a, (lo, hi) in zip(areas, regions)]
-    holding_gaps = [box_distance(lo, hi, holding_lo, holding_hi) for lo, hi in regions]
+    holding_gaps = [[box_distance(lo, hi, *h) for h in holding_regions] for lo, hi in regions]
     slots = [compute_waiting_positions(n, a) for a, n in zip(areas, slot_counts)]
     overlaps = []
     for i in range(len(areas)):

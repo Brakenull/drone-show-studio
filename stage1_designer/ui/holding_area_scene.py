@@ -1,25 +1,28 @@
-"""Holding area as real scene objects ("Create in Scene").
+"""Holding areas as real scene objects ("Create in Scene").
 
 The GPU overlay (`viewport_drawer`) only previews the leftover parked drones.
 This module builds editable geometry instead, so a designer can see the
-takeoff volume next to the formations and keep them out of it:
+takeoff volumes next to the formations and keep them out of them. One set of
+objects per holding area `n` (1-based, in list order):
 
   DSS Holding Area (collection)
-  ├── DSS_HoldingArea_Volume     wire box: the holding region the clearance
-  │                              check uses (parked grid padded by half a grid
-  │                              step); grab it (G) to move the holding area
-  ├── DSS_HoldingArea_Slots      one sphere of R_safe per launch slot, for the
-  │                              whole fleet (Stage 2 launches every drone
-  │                              from here), parented to the box
-  └── DSS_HoldingArea_Clearance  yellow wire box: the region grown by the safe
-                                 distance to the show; formation
-                                 points should stay outside it
+  ├── DSS_HoldingArea_<n>_Volume     wire box: the area's region the clearance
+  │                                  check uses (parked grid padded by half a
+  │                                  grid step); grab it (G) to move the area
+  ├── DSS_HoldingArea_<n>_Slots      one sphere of R_safe per launch slot of
+  │                                  the drones whose home it is, parented to
+  │                                  the box
+  └── DSS_HoldingArea_<n>_Clearance  yellow wire box: the region grown by the
+                                     safe distance to the show; formation
+                                     points should stay outside it
 
-The holding area is declared in ENU, so the box sits at
-`blender_from_enu(center)` and is turned by the heading offset. Moving the box
-writes the new center (and shifts `max_height` by the same dz) back into the
-settings; rotation and scale are locked because they have no meaning in the
-settings (size is edited in the panel).
+Each area is declared in ENU, so its box sits at `blender_from_enu(center)`
+and is turned by the heading offset. Moving a box writes the new center (and
+shifts `max_height` by the same dz) back into that area's settings; rotation
+and scale are locked because they have no meaning in the settings (size is
+edited in the panel).
+
+The object helpers here are shared with the waiting areas' objects.
 """
 
 import bpy
@@ -29,9 +32,9 @@ from .. import config
 from ..core import holding_area, timeline_sampler
 
 COLLECTION_NAME = "DSS Holding Area"
-VOLUME_NAME = "DSS_HoldingArea_Volume"
-SLOTS_NAME = "DSS_HoldingArea_Slots"
-CLEARANCE_NAME = "DSS_HoldingArea_Clearance"
+_PREFIX = "DSS_HoldingArea_"
+# Before the holding area became a list, its objects had no number.
+_LEGACY_NAMES = ("DSS_HoldingArea_Slots", "DSS_HoldingArea_Clearance", "DSS_HoldingArea_Volume")
 _GEOMETRY_KEY = "dss_geometry_key"
 _EPS = 1e-4
 
@@ -62,40 +65,63 @@ _ICO_FACES = np.array(
 )
 
 
-def layout_args(settings):
-    """Positional arguments of the core layout functions (holding_area.py)
-    for the whole fleet, from the add-on settings."""
-    ha = settings.holding_area
-    return (
-        settings.fleet_size,
-        tuple(ha.center),
-        tuple(ha.size),
-        ha.max_height,
-        ha.grid_spacing_m,
-        ha.layer_spacing_m,
-        ha.staggered_layers,
-    )
+def area_props(settings):
+    """The holding areas' property groups, in list order. A scene that never
+    added a second area (or a .blend saved before the list existed) keeps its
+    one area in `settings.holding_area`."""
+    return list(settings.holding_areas) or [settings.holding_area]
 
 
-def layout_for(settings) -> holding_area.HoldingLayout:
-    return holding_area.compute_holding_layout(*layout_args(settings))
+def areas_of(settings):
+    return [
+        holding_area.HoldingArea(
+            tuple(float(v) for v in a.center),
+            tuple(float(v) for v in a.size),
+            float(a.max_height),
+            float(a.grid_spacing_m),
+            float(a.layer_spacing_m),
+            bool(a.staggered_layers),
+            float(a.show_clearance_m),
+        )
+        for a in area_props(settings)
+    ]
 
 
-def _geometry_key(settings) -> str:
-    """Everything the meshes depend on. The center is left out on purpose:
-    the meshes are built relative to it, so moving the box needs no rebuild."""
-    ha = settings.holding_area
+def slot_counts(settings):
+    """Drones per area, in list order (exported as `slot_count`)."""
+    return holding_area.allocate_holding_counts(areas_of(settings), settings.fleet_size)
+
+
+def layouts_for(settings):
+    """Each area's resolved layout for its own drones."""
+    return [holding_area.compute_holding_layout(n, *a.args) for a, n in zip(areas_of(settings), slot_counts(settings))]
+
+
+def regions_for(settings):
+    """One (lo, hi) ENU box per area."""
+    return holding_area.holding_regions(areas_of(settings), slot_counts(settings))
+
+
+def area_names(prefix: str, i: int):
+    base = f"{prefix}{i + 1}_"
+    return base + "Volume", base + "Slots", base + "Clearance"
+
+
+def _geometry_key(area, count: int, safety_radius_m: float) -> str:
+    """Everything an area's meshes depend on. The center's X / Y are left out
+    on purpose: the meshes are built relative to it, so moving the box needs
+    no rebuild."""
     return repr(
         (
-            settings.fleet_size,
-            round(ha.center[2], 6),
-            tuple(round(v, 6) for v in ha.size),
-            round(ha.max_height, 6),
-            round(ha.grid_spacing_m, 6),
-            round(ha.layer_spacing_m, 6),
-            bool(ha.staggered_layers),
-            round(settings.safety_radius_m, 6),
-            round(ha.show_clearance_m, 6),
+            int(count),
+            round(area.center[2], 6),
+            tuple(round(v, 6) for v in area.size),
+            round(area.max_height, 6),
+            round(area.grid_spacing_m, 6),
+            round(area.layer_spacing_m, 6),
+            bool(area.staggered_layers),
+            round(safety_radius_m, 6),
+            round(area.show_clearance_m, 6),
         )
     )
 
@@ -116,36 +142,30 @@ def _box_mesh(mesh, lo, hi) -> None:
     _set_mesh(mesh, verts, faces)
 
 
-def _build_region_meshes(volume_mesh, clearance_mesh, settings) -> None:
-    """Holding region (and its safe-distance zone) in the box's local frame,
-    i.e. ENU offsets from the center."""
-    lo, hi = holding_area.holding_region_bounds(*layout_args(settings))
-    center = np.asarray(settings.holding_area.center, dtype=float)
+def build_area_meshes(volume, slots, clearance, center, lo, hi, clearance_m, slot_positions, safety_radius) -> None:
+    """An area's region box, its safe-distance box and one sphere per slot, in
+    the box's local frame (ENU offsets from `center`; the box carries the
+    heading)."""
+    center = np.asarray(center, dtype=float)
     lo, hi = lo - center, hi - center
-    _box_mesh(volume_mesh, lo, hi)
-    c = settings.holding_area.show_clearance_m
-    if c > 0.0:
+    _box_mesh(volume.data, lo, hi)
+    if clearance_m > 0.0:
         # The true zone has rounded edges/corners; the box around it is the
         # simple, conservative picture of it.
-        _box_mesh(clearance_mesh, lo - c, hi + c)
+        _box_mesh(clearance.data, lo - clearance_m, hi + clearance_m)
     else:
-        clearance_mesh.clear_geometry()
-        clearance_mesh.update()
-
-
-def _build_slots_mesh(mesh, settings) -> None:
-    args = layout_args(settings)
-    slots = holding_area.compute_holding_positions(*args)
-    local = slots - np.asarray(args[1], dtype=float)  # ENU offsets; the box carries the heading
-    verts = (local[:, None, :] + _ICO_VERTS[None, :, :] * settings.safety_radius_m).reshape(-1, 3)
+        clearance.data.clear_geometry()
+        clearance.data.update()
+    local = np.asarray(slot_positions, dtype=float).reshape(-1, 3) - center
+    verts = (local[:, None, :] + _ICO_VERTS[None, :, :] * safety_radius).reshape(-1, 3)
     faces = (_ICO_FACES[None, :, :] + (np.arange(len(local)) * len(_ICO_VERTS))[:, None, None]).reshape(-1, 3)
-    _set_mesh(mesh, verts, faces)
+    _set_mesh(slots.data, verts, faces)
 
 
-def _ensure_collection(scene):
-    coll = bpy.data.collections.get(COLLECTION_NAME)
+def _ensure_collection(scene, name):
+    coll = bpy.data.collections.get(name)
     if coll is None:
-        coll = bpy.data.collections.new(COLLECTION_NAME)
+        coll = bpy.data.collections.new(name)
     if coll.name not in scene.collection.children:
         scene.collection.children.link(coll)
     return coll
@@ -160,39 +180,82 @@ def _ensure_object(name, coll):
     return obj
 
 
-def _create(scene, settings):
-    coll = _ensure_collection(scene)
-    volume = _ensure_object(VOLUME_NAME, coll)
-    slots = _ensure_object(SLOTS_NAME, coll)
-    clearance = _ensure_object(CLEARANCE_NAME, coll)
-
-    color = config.COLOR_HOLDING_RGBA
+def ensure_area_objects(scene, collection_name, names, color):
+    """(volume, slots, clearance) of one area: the box, and the slots and
+    safe-distance box parented to it (clicks go to the box, which is what
+    moves the area)."""
+    coll = _ensure_collection(scene, collection_name)
+    volume, slots, clearance = (_ensure_object(name, coll) for name in names)
     volume.display_type = "WIRE"
     volume.show_in_front = True
     volume.hide_render = True
     volume.color = color
     volume.lock_rotation = (True, True, True)
     volume.lock_scale = (True, True, True)
-
     for child in (slots, clearance):
-        child.parent = volume
-        child.matrix_parent_inverse.identity()
+        if child.parent is not volume:
+            child.parent = volume
+            child.matrix_parent_inverse.identity()
         child.location = (0.0, 0.0, 0.0)
         child.rotation_euler = (0.0, 0.0, 0.0)
         child.scale = (1.0, 1.0, 1.0)
         child.hide_render = True
-        child.hide_select = True  # clicks go to the box, which is what moves the area
+        child.hide_select = True
     slots.color = color
     slots.display_type = "SOLID"
     clearance.color = config.COLOR_KINEMATIC_WARNING_RGBA
     clearance.display_type = "WIRE"
+    return volume, slots, clearance
 
-    settings.holding_area_object = volume
-    return volume
+
+def existing_indices(prefix):
+    """Area indices that have objects named `<prefix><n>_...`."""
+    found = set()
+    for obj in bpy.data.objects:
+        if obj.name.startswith(prefix):
+            head = obj.name[len(prefix):].split("_", 1)[0]
+            if head.isdigit():
+                found.add(int(head) - 1)
+    return found
+
+
+def remove_named(names) -> None:
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+
+
+def remove_area_objects(prefix, collection_name) -> None:
+    for i in sorted(existing_indices(prefix)):
+        remove_named(area_names(prefix, i)[::-1])
+    coll = bpy.data.collections.get(collection_name)
+    if coll is not None and len(coll.all_objects) == 0:
+        bpy.data.collections.remove(coll)
+
+
+def place_box(volume, center, heading_deg) -> None:
+    """Put an area's box at its ENU center, turned by the heading."""
+    target = timeline_sampler.blender_from_enu(tuple(center), heading_deg)[0]
+    if np.abs(np.asarray(volume.location) - target).max() > _EPS:
+        volume.location = target
+    rot_z = np.radians(heading_deg)
+    if abs(volume.rotation_euler.z - rot_z) > 1e-6 or volume.rotation_euler.x or volume.rotation_euler.y:
+        volume.rotation_euler = (0.0, 0.0, rot_z)
+    if tuple(volume.scale) != (1.0, 1.0, 1.0):
+        volume.scale = (1.0, 1.0, 1.0)
+
+
+def remove_objects() -> None:
+    remove_named(_LEGACY_NAMES)
+    remove_area_objects(_PREFIX, COLLECTION_NAME)
 
 
 def sync_objects(scene) -> None:
-    """Rebuild / re-place the scene objects from the settings (settings win)."""
+    """Rebuild / re-place every area's objects from the settings (settings win)."""
     global _syncing
     settings = getattr(scene, "drone_show_settings", None)
     if settings is None or _syncing:
@@ -200,56 +263,27 @@ def sync_objects(scene) -> None:
     _syncing = True
     try:
         if not settings.show_holding_area_object:
-            remove_objects(settings)
+            remove_objects()
             return
-
-        volume = settings.holding_area_object
-        if volume is None or volume.name not in scene.objects:
-            volume = _create(scene, settings)
-        slots = _child(volume, SLOTS_NAME)
-        clearance = _child(volume, CLEARANCE_NAME)
-        if slots is None or clearance is None:
-            volume = _create(scene, settings)
-            slots = _child(volume, SLOTS_NAME)
-            clearance = _child(volume, CLEARANCE_NAME)
-            volume.pop(_GEOMETRY_KEY, None)
-
-        key = _geometry_key(settings)
-        if volume.get(_GEOMETRY_KEY) != key:
-            _build_region_meshes(volume.data, clearance.data, settings)
-            _build_slots_mesh(slots.data, settings)
-            volume[_GEOMETRY_KEY] = key
-
-        heading = settings.heading_offset_deg
-        target = timeline_sampler.blender_from_enu(tuple(settings.holding_area.center), heading)[0]
-        if np.abs(np.asarray(volume.location) - target).max() > _EPS:
-            volume.location = target
-        rot_z = np.radians(heading)
-        if abs(volume.rotation_euler.z - rot_z) > 1e-6 or volume.rotation_euler.x or volume.rotation_euler.y:
-            volume.rotation_euler = (0.0, 0.0, rot_z)
-        if tuple(volume.scale) != (1.0, 1.0, 1.0):
-            volume.scale = (1.0, 1.0, 1.0)
+        remove_named(_LEGACY_NAMES)
+        props, areas, counts = area_props(settings), areas_of(settings), slot_counts(settings)
+        for i in existing_indices(_PREFIX) - set(range(len(areas))):
+            remove_named(area_names(_PREFIX, i)[::-1])
+        for i, (prop, area, count) in enumerate(zip(props, areas, counts)):
+            volume, slots, clearance = ensure_area_objects(
+                scene, COLLECTION_NAME, area_names(_PREFIX, i), config.COLOR_HOLDING_RGBA
+            )
+            key = _geometry_key(prop, count, settings.safety_radius_m)
+            if volume.get(_GEOMETRY_KEY) != key:
+                lo, hi = holding_area.holding_region_bounds(count, *area.args)
+                build_area_meshes(
+                    volume, slots, clearance, area.center, lo, hi, area.show_clearance_m,
+                    holding_area.compute_holding_positions(count, *area.args), settings.safety_radius_m,
+                )
+                volume[_GEOMETRY_KEY] = key
+            place_box(volume, area.center, settings.heading_offset_deg)
     finally:
         _syncing = False
-
-
-def _child(volume, name):
-    return next((c for c in volume.children if c.name.startswith(name)), None)
-
-
-def remove_objects(settings) -> None:
-    for name in (SLOTS_NAME, CLEARANCE_NAME, VOLUME_NAME):
-        obj = bpy.data.objects.get(name)
-        if obj is not None:
-            mesh = obj.data
-            bpy.data.objects.remove(obj, do_unlink=True)
-            if mesh is not None and mesh.users == 0:
-                bpy.data.meshes.remove(mesh)
-    coll = bpy.data.collections.get(COLLECTION_NAME)
-    if coll is not None and len(coll.all_objects) == 0:
-        bpy.data.collections.remove(coll)
-    if settings.holding_area_object is not None:
-        settings.holding_area_object = None
 
 
 def on_settings_changed(self, context):
@@ -259,38 +293,35 @@ def on_settings_changed(self, context):
 
 
 def _pull_from_objects(scene) -> None:
-    """The box was moved in the viewport: write its position back to the
-    settings (objects win). Moving on Z carries `max_height` along."""
+    """A box was moved in the viewport: write its position back to its area's
+    settings (objects win). Moving on Z carries `max_height` along. A deleted
+    box turns the toggle off and clears the rest, instead of recreating it."""
     global _syncing
     settings = getattr(scene, "drone_show_settings", None)
     if settings is None or not settings.show_holding_area_object or _syncing:
         return
-    volume = settings.holding_area_object
-    if volume is None or volume.name not in scene.objects:
-        # Deleted by the user: switch the toggle off instead of recreating it,
-        # and clear what's left (the slots, the collection).
+    for i, ha in enumerate(area_props(settings)):
+        volume = bpy.data.objects.get(area_names(_PREFIX, i)[0])
+        if volume is None or volume.name not in scene.objects:
+            _syncing = True
+            try:
+                settings.show_holding_area_object = False
+                remove_objects()
+            finally:
+                _syncing = False
+            return
+        new_center = timeline_sampler.enu_transform(tuple(volume.location), settings.heading_offset_deg)[0]
+        old_center = np.asarray(ha.center, dtype=float)
+        if np.abs(new_center - old_center).max() <= _EPS:
+            continue
         _syncing = True
         try:
-            settings.show_holding_area_object = False
-            remove_objects(settings)
+            ha.max_height += float(new_center[2] - old_center[2])
+            ha.center = tuple(float(v) for v in new_center)
+            # Box height is unchanged, so the meshes stay valid; record that.
+            volume[_GEOMETRY_KEY] = _geometry_key(ha, slot_counts(settings)[i], settings.safety_radius_m)
         finally:
             _syncing = False
-        return
-
-    ha = settings.holding_area
-    new_center = timeline_sampler.enu_transform(tuple(volume.location), settings.heading_offset_deg)[0]
-    old_center = np.asarray(ha.center, dtype=float)
-    if np.abs(new_center - old_center).max() <= _EPS:
-        return
-
-    _syncing = True
-    try:
-        ha.max_height += float(new_center[2] - old_center[2])
-        ha.center = tuple(float(v) for v in new_center)
-        # Box height is unchanged, so the meshes stay valid; record that.
-        volume[_GEOMETRY_KEY] = _geometry_key(settings)
-    finally:
-        _syncing = False
 
 
 @bpy.app.handlers.persistent

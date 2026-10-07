@@ -3,7 +3,7 @@
 Values mirror the defaults of the intermediate schema at `schemas/project_intermediate.schema.json`.
 """
 
-SCHEMA_VERSION = "1.7.0"  # 1.7.0: holding_area.layer_spacing_m honoured, staggered_layers
+SCHEMA_VERSION = "1.8.0"  # 1.8.0: holding_areas (a list with slot_count) replaces holding_area
 
 # --- Safety distance ---
 SAFETY_RADIUS_M = 0.75          # R_safe

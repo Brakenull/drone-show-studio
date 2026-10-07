@@ -290,3 +290,54 @@ def test_padding_uses_the_fleet_layout_pads():
             compute_padding_positions(n_park, 300, GROUND, SIZE, MAX_HEIGHT, 2.0),
             compute_holding_positions(n_park, GROUND, SIZE, MAX_HEIGHT, 2.0),
         )
+
+
+def test_several_holding_areas():
+    from stage1_designer.core.holding_area import (
+        HoldingArea,
+        allocate_holding_counts,
+        areas_from_metadata,
+        areas_too_close,
+        compute_all_holding_positions,
+        compute_all_padding_positions,
+        compute_all_row_indices,
+        home_areas,
+        in_holding_region,
+    )
+
+    west = HoldingArea((0.0, -30.0, 0.0), (40.0, 10.0), 15.0, 2.0, 4.0, True, 5.0)
+    east = west._replace(center=(60.0, -30.0, 0.0))
+    assert west.capacity == 126 + 100 + 126 + 100  # 4 layers under 15 m, shifted
+    # List order: the first area full, the last the rest (widened when needed).
+    assert allocate_holding_counts([west, east], 500) == [452, 48]
+    assert allocate_holding_counts([west, east], 100) == [100, 0]
+    assert allocate_holding_counts([west, east], 1000) == [452, 548]
+    assert allocate_holding_counts([west], 500) == [500]
+
+    counts = [452, 48]
+    slots = compute_all_holding_positions([west, east], counts)
+    np.testing.assert_array_equal(slots[:452], compute_holding_positions(452, *west.args))
+    np.testing.assert_array_equal(slots[452:], compute_holding_positions(48, *east.args))
+    assert list(np.bincount(home_areas(counts))) == counts
+    rows = compute_all_row_indices([west, east], counts)
+    assert rows[0] == rows[452] == 0  # both areas launch row 0 in the first wave
+    np.testing.assert_array_equal(compute_all_padding_positions(460, [west, east], counts), slots[:460])
+    with pytest.raises(ValueError):
+        compute_all_padding_positions(501, [west, east], counts)
+    assert in_holding_region(slots, [west, east], counts).all()
+    assert not in_holding_region([[30.0, -30.0, 2.0]], [west, east], counts).any()
+
+    assert areas_too_close([west, east], counts) == []  # 18 m apart
+    near = east._replace(center=(43.0, -30.0, 0.0))
+    (i, j, gap, needed), = areas_too_close([west, near], counts)
+    assert (i, j, needed) == (0, 1, 5.0) and gap < 5.0
+
+    # Readers: holding_areas, or the old single holding_area (the whole fleet).
+    meta = {"fleet_size": 500, "holding_area": {"center": [0, -30, 0], "size": [40, 10], "max_height": 15,
+                                                 "grid_spacing_m": 2, "layer_spacing_m": 4, "staggered_layers": True,
+                                                 "show_clearance_m": 5}}
+    areas, n = areas_from_metadata(meta)
+    assert areas == [west] and n == [500]
+    meta["holding_areas"] = [{**meta["holding_area"], "slot_count": 452},
+                             {**meta["holding_area"], "center": [60, -30, 0], "slot_count": 48}]
+    assert areas_from_metadata(meta) == ([west, east], counts)

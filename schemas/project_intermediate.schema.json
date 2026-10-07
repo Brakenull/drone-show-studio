@@ -34,8 +34,11 @@
         "min_distance_m",
         "coordinate_system",
         "heading_offset_deg",
-        "origin_gps",
-        "holding_area"
+        "origin_gps"
+      ],
+      "anyOf": [
+        { "required": ["holding_areas"] },
+        { "required": ["holding_area"] }
       ],
       "additionalProperties": false,
       "properties": {
@@ -68,6 +71,7 @@
           }
         },
         "holding_area": {
+          "description": "Up to 1.7.0: the one holding area, home of the whole fleet. 1.8.0 files carry holding_areas instead; readers accept both, holding_area meaning a one-item list.",
           "type": "object",
           "required": ["center", "size", "max_height", "grid_spacing_m", "layer_spacing_m"],
           "additionalProperties": false,
@@ -91,6 +95,33 @@
             "show_clearance_m": {
               "description": "The designer's Safe Distance to Show (added in 1.6.0, optional). When present, Stage 2 keeps show drones at least this far from the holding region.",
               "type": "number", "minimum": 0
+            }
+          }
+        },
+        "holding_areas": {
+          "description": "Added in 1.8.0, replaces holding_area. Each area is laid out like holding_area for its own slot_count drones; only the last one widens when the fleet is too big for them.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["center", "size", "max_height", "grid_spacing_m", "layer_spacing_m", "slot_count"],
+            "additionalProperties": false,
+            "properties": {
+              "center": {
+                "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3
+              },
+              "size": {
+                "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2
+              },
+              "max_height": { "type": "number", "exclusiveMinimum": 0 },
+              "grid_spacing_m": { "type": "number", "minimum": 1.8 },
+              "layer_spacing_m": { "type": "number", "exclusiveMinimum": 0 },
+              "staggered_layers": { "type": "boolean" },
+              "show_clearance_m": { "type": "number", "minimum": 0 },
+              "slot_count": {
+                "description": "The drones whose home area this is: they take off from, land in, park on and return to this area only. The fleet fills the areas in list order, the counts add up to fleet_size, and drone i takes off from slot i of every area's slots concatenated in list order.",
+                "type": "integer", "minimum": 0
+              }
             }
           }
         },

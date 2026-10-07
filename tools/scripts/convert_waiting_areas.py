@@ -63,11 +63,11 @@ def convert(data: dict, areas: list[WaitingArea]) -> list[str]:
 
     lo, hi = holding_region_bounds(fleet, tuple(ha["center"]), tuple(ha["size"]), ha["max_height"],
                                    ha["grid_spacing_m"], **layout_options(ha))
-    check = check_waiting_areas(areas, counts, formations, lo, hi, float(meta.get("ground_z_m", 0.0)))
+    check = check_waiting_areas(areas, counts, formations, [(lo, hi)], float(meta.get("ground_z_m", 0.0)))
     report = [f"{kf['shape_name']}: {n} {'on their pads' if k == 0 else 'waiting'}"
               for k, (kf, n) in enumerate(zip(data["keyframes"], spare))]
-    report.append(f"slot counts {counts}; holding gaps {[round(g, 2) for g in check.holding_gaps]}")
-    report += [f"CAUTION {m}" for m in check.messages(float(ha.get("show_clearance_m") or 0.0))]
+    report.append(f"slot counts {counts}; holding gaps {[round(g[0], 2) for g in check.holding_gaps]}")
+    report += [f"CAUTION {m}" for m in check.messages([float(ha.get("show_clearance_m") or 0.0)])]
     return report
 
 

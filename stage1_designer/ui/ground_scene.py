@@ -2,7 +2,7 @@
 
   DSS Ground (collection)
   └── DSS_Ground   wire grid at the ground level, 10 m cells, covering the
-                   holding area and the last sampled show plus a margin
+                   holding areas and the last sampled show plus a margin
 
 The extent is worked out in ENU and the vertices are placed back in Blender
 space with the heading offset, like the holding area (holding_area_scene.py).
@@ -36,10 +36,11 @@ def set_show_extent(point_sets) -> None:
 
 
 def _grid_extent(settings):
-    from .holding_area_scene import layout_args
+    from .holding_area_scene import regions_for
 
-    lo, hi = holding_area.holding_region_bounds(*layout_args(settings))
-    lo, hi = lo[:2], hi[:2]
+    regions = regions_for(settings)
+    lo = np.min([r[0][:2] for r in regions], axis=0)
+    hi = np.max([r[1][:2] for r in regions], axis=0)
     if _show_extent["lo"] is not None:
         lo = np.minimum(lo, _show_extent["lo"])
         hi = np.maximum(hi, _show_extent["hi"])

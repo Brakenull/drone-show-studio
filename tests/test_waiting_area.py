@@ -71,11 +71,11 @@ def test_detours_flag_areas_farther_than_home():
     formations = [("a", np.zeros((0, 3)) + show[:1]), ("b", show), ("c", show[:1]), ("d", show)]
     far = WaitingArea((-40.0, 25.0, 21.0), (26.0, 24.0), 2.0, 5.0)  # ~60 m from the show, holding ~50 m
     near = WaitingArea((60.0, 22.0, 20.0), (10.0, 10.0), 2.0, 5.0)  # ~20 m from the show
-    found = check_detours([far], [far.capacity], formations, 2, holding_lo, holding_hi)
+    found = check_detours([far], [far.capacity], formations, 2, [(holding_lo, holding_hi)])
     assert [(d.keyframe_index, d.shape_name, d.spare) for d in found] == [(2, "c", 1)]
     assert found[0].waiting_m > found[0].home_m
-    assert check_detours([far, near], [far.capacity, near.capacity], formations, 2, holding_lo, holding_hi) == []
-    assert check_detours([], [], formations, 2, holding_lo, holding_hi) == []
+    assert check_detours([far, near], [far.capacity, near.capacity], formations, 2, [(holding_lo, holding_hi)]) == []
+    assert check_detours([], [], formations, 2, [(holding_lo, holding_hi)]) == []
 
 
 def test_region_contains_slots_and_footprint():
@@ -120,13 +120,13 @@ def test_checks():
     areas = [EAST, near_show, near_holding, overlapping, low]
     counts = [a.capacity for a in areas]
     formations = [("Shape_1", np.array([[0.0, 14.0, 10.0], [0.0, 30.0, 20.0]]))]
-    check = check_waiting_areas(areas, counts, formations, holding_lo, holding_hi, ground_z_m=0.0)
+    check = check_waiting_areas(areas, counts, formations, [(holding_lo, holding_hi)], ground_z_m=0.0)
     assert not check.clearance[0][0].is_caution
     assert check.clearance[1][0].is_caution and check.clearance[1][0].too_close == 1
-    assert check.holding_gaps[2] < 5.0 <= check.holding_gaps[0]
+    assert check.holding_gaps[2][0] < 5.0 <= check.holding_gaps[0][0]
     assert [(a, b) for a, b, _d in check.overlaps] == [(0, 3)]
     assert check.too_low == [(4, 1.0)]
-    lines = check.messages(holding_clearance_m=5.0)
+    lines = check.messages([5.0])
     assert any("Waiting Area 2" in m for m in lines)
     assert any("Waiting Area 3 is" in m and "holding area" in m for m in lines)
     assert any("Waiting Areas 1 and 4 overlap" in m for m in lines)

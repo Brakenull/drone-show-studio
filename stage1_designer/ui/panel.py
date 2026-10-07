@@ -56,6 +56,7 @@ _passed_check = {"key": None, "entries": None, "transitions": None}
 _UNTRACKED_SETTINGS = {
     "export_path", "export_format", "show_viewport_overlay", "live_update_on_frame_change",
     "show_holding_area_preview", "show_compass_gizmo", "show_ground_object", "waiting_area_index",
+    "holding_area_index",
 }
 
 
@@ -111,19 +112,25 @@ def set_formation_cache(formations) -> None:
     _formation_cache.update(formations=formations, key=None, results=None)
 
 
+def area_label(i: int, n: int) -> str:
+    """How messages name holding area `i` of `n`."""
+    return "the holding area" if n == 1 else f"Holding Area {i + 1}"
+
+
 def get_clearance_results(settings):
-    """Clearance results for the cached formations, or None if never sampled."""
+    """Per holding area, the clearance results for the cached formations, or
+    None if never sampled."""
     formations = _formation_cache["formations"]
     if formations is None:
         return None
-    ha = settings.holding_area
-    args = holding_area_scene.layout_args(settings)
-    key = (args, ha.show_clearance_m)
+    areas = holding_area_scene.areas_of(settings)
+    counts = holding_area_scene.slot_counts(settings)
+    key = (tuple(areas), tuple(counts))
     if _formation_cache["key"] != key:
-        lo, hi = holding_area_core.holding_region_bounds(*args)
-        _formation_cache["results"] = holding_area_core.check_show_clearance(
-            formations, lo, hi, ha.show_clearance_m
-        )
+        _formation_cache["results"] = [
+            holding_area_core.check_show_clearance(formations, lo, hi, a.show_clearance_m)
+            for a, (lo, hi) in zip(areas, holding_area_core.holding_regions(areas, counts))
+        ]
         _formation_cache["key"] = key
     return _formation_cache["results"]
 
@@ -134,10 +141,13 @@ def ground_warnings(settings) -> list:
     (known after a sampling pass). Any line locks Export."""
     ground_z = settings.ground_z_m
     messages = []
-    # The bottom layer of parked drones always sits at the holding area's center Z.
-    depth = ground_core.lowest_point_below([(0.0, 0.0, settings.holding_area.center[2])], ground_z)
-    if depth > 0.0:
-        messages.append(f"Holding area: the bottom layer is {depth:.2f} m below the ground")
+    # The bottom layer of parked drones always sits at its holding area's center Z.
+    areas = holding_area_scene.areas_of(settings)
+    for i, a in enumerate(areas):
+        depth = ground_core.lowest_point_below([(0.0, 0.0, a.center[2])], ground_z)
+        if depth > 0.0:
+            where = "Holding area" if len(areas) == 1 else f"Holding Area {i + 1}"
+            messages.append(f"{where}: the bottom layer is {depth:.2f} m below the ground")
     for r in get_ground_results(settings) or []:
         if r.is_warning:
             messages.append(f"'{r.shape_name}': {r.below} point(s) below the ground (lowest {r.depth_m:.2f} m below)")
@@ -152,25 +162,40 @@ def get_ground_results(settings):
     return ground_core.check_formations_ground(formations, settings.ground_z_m)
 
 
-def min_layer_gap(settings) -> float:
-    """Smallest allowed holding-area layer gap: a pad's
+def min_layer_gap(settings, area) -> float:
+    """Smallest allowed layer gap of a holding area: a pad's
     vertical path to its hover point (Stage 2's landing approach height)
     keeps Stage 2's planning distance below the slot above, and stacked slots
     stay a grid step apart."""
     planning = settings.min_distance_m * config.STAGE2_PLANNING_DISTANCE_FACTOR
     hover_clear = holding_area_core.min_layer_spacing(config.STAGE2_HOVER_HEIGHT_M, planning)
-    return max(hover_clear, settings.holding_area.grid_spacing_m)
+    return max(hover_clear, area.grid_spacing_m)
 
 
-def layer_gap_message(settings):
-    """Caution (locks Export) when the fleet stacks layers closer than
-    `min_layer_gap`, else None. A one-layer holding area has no gap to check."""
-    if holding_area_scene.layout_for(settings).layers < 2:
-        return None
-    gap, minimum = settings.holding_area.layer_spacing_m, min_layer_gap(settings)
-    if gap >= minimum - 1e-9:
-        return None
-    return f"Layer gap {gap:g} m is below {minimum:.2f} m: pads' hover points reach the layer above"
+def layer_gap_messages(settings) -> list:
+    """Cautions (they lock Export) for holding areas that stack layers closer
+    than `min_layer_gap`. A one-layer area has no gap to check."""
+    areas = holding_area_scene.areas_of(settings)
+    messages = []
+    for i, (a, layout) in enumerate(zip(areas, holding_area_scene.layouts_for(settings))):
+        gap, minimum = a.layer_spacing_m, min_layer_gap(settings, a)
+        if layout.layers >= 2 and gap < minimum - 1e-9:
+            where = "" if len(areas) == 1 else f"Holding Area {i + 1}: "
+            messages.append(
+                f"{where}Layer gap {gap:g} m is below {minimum:.2f} m: pads' hover points reach the layer above"
+            )
+    return messages
+
+
+def holding_apart_messages(settings) -> list:
+    """Cautions (they lock Export) for holding areas closer to each other than
+    the larger of their safe distances."""
+    return [
+        f"Holding Areas {i + 1} and {j + 1} are {gap:.2f} m apart (need {needed:g} m)"
+        for i, j, gap, needed in holding_area_core.areas_too_close(
+            holding_area_scene.areas_of(settings), holding_area_scene.slot_counts(settings)
+        )
+    ]
 
 
 def waiting_messages(settings) -> list:
@@ -181,23 +206,23 @@ def waiting_messages(settings) -> list:
         return []
     areas = waiting_area_scene.areas_of(settings)
     counts = waiting_area_scene.slot_counts(settings)
-    lo, hi = holding_area_core.holding_region_bounds(*holding_area_scene.layout_args(settings))
     formations = _formation_cache["formations"] or []
-    check = waiting_area_core.check_waiting_areas(areas, counts, formations, lo, hi, settings.ground_z_m)
-    return check.messages(settings.holding_area.show_clearance_m)
+    check = waiting_area_core.check_waiting_areas(
+        areas, counts, formations, holding_area_scene.regions_for(settings), settings.ground_z_m
+    )
+    return check.messages([a.show_clearance_m for a in holding_area_scene.areas_of(settings)])
 
 
 def waiting_detour_notes(settings) -> list:
     """Notes (they do not lock Export) for short keyframes whose spare drones
-    would fly farther to every waiting area and back than to the holding area
-    and back. Known after a sampling pass."""
+    would fly farther to every waiting area and back than to the nearest
+    holding area and back. Known after a sampling pass."""
     formations = _formation_cache["formations"]
     if not len(settings.waiting_areas) or not formations:
         return []
-    lo, hi = holding_area_core.holding_region_bounds(*holding_area_scene.layout_args(settings))
     detours = waiting_area_core.check_detours(
         waiting_area_scene.areas_of(settings), waiting_area_scene.slot_counts(settings), formations,
-        settings.fleet_size, lo, hi,
+        settings.fleet_size, holding_area_scene.regions_for(settings),
     )
     return [
         f"'{d.shape_name}': its {d.spare} spare drones fly ~{d.waiting_m:.0f} m to the nearest waiting area "
@@ -207,20 +232,29 @@ def waiting_detour_notes(settings) -> list:
 
 
 def clearance_cautions(settings) -> list:
-    """Formations too close to the holding area (they lock Export)."""
-    return [r for r in get_clearance_results(settings) or [] if r.is_caution]
+    """(area index, result) of every formation too close to a holding area
+    (they lock Export)."""
+    return [(i, r) for i, results in enumerate(get_clearance_results(settings) or []) for r in results if r.is_caution]
 
 
-def clearance_message(result, clearance_m: float) -> str:
+def clearance_message(result, clearance_m: float, where: str = "the holding area") -> str:
     if result.inside:
         return (
-            f"'{result.shape_name}': {result.inside} point(s) inside the holding area"
+            f"'{result.shape_name}': {result.inside} point(s) inside {where}"
             + (f", {result.too_close} more within {clearance_m:g} m" if result.too_close else "")
         )
     return (
         f"'{result.shape_name}': {result.too_close} point(s) within {clearance_m:g} m "
-        f"of the holding area (closest {result.closest_m:.2f} m)"
+        f"of {where} (closest {result.closest_m:.2f} m)"
     )
+
+
+def clearance_messages(settings) -> list:
+    areas = holding_area_scene.areas_of(settings)
+    return [
+        clearance_message(r, areas[i].show_clearance_m, area_label(i, len(areas)))
+        for i, r in clearance_cautions(settings)
+    ]
 
 
 def configured_v_max(settings) -> float:
@@ -248,12 +282,17 @@ def get_leg_estimates(settings):
     first, last = _leg_cache["first"], _leg_cache["last"]
     if first is None or len(first) != settings.fleet_size:
         return None
-    args = holding_area_scene.layout_args(settings)
+    areas = holding_area_scene.areas_of(settings)
+    counts = holding_area_scene.slot_counts(settings)
     v_max = configured_v_max(settings)
-    key = (args, v_max)
+    key = (tuple(areas), tuple(counts), v_max)
     if _leg_cache["key"] != key:
-        slots = holding_area_core.compute_holding_positions(*args)
-        waves = show_legs.launch_wave_span(*args, wave_delay_s=config.STAGE2_STAGGER_WAVE_DELAY_S)
+        slots = holding_area_core.compute_all_holding_positions(areas, counts)
+        # Every area launches its row r in wave r.
+        rows = holding_area_core.compute_all_row_indices(areas, counts)
+        waves = int(rows.max()) * config.STAGE2_STAGGER_WAVE_DELAY_S if len(rows) else 0.0
+        # The return is matched over every slot: which drone (so which home
+        # area) ends at which point of the last formation is Stage 2's choice.
         _leg_cache["estimates"] = (
             show_legs.estimate_leg(slots, first, v_max, wave_span_sec=waves),
             show_legs.estimate_leg(last, slots, v_max),
@@ -363,6 +402,9 @@ class DSS_OT_WaitingAreaRemove(bpy.types.Operator):
 
 
 class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
+    """One holding area: the launch grid of the drones whose home it is."""
+
+    name: bpy.props.StringProperty(name="Name", default="Holding Area")
     center: bpy.props.FloatVectorProperty(
         name="Center", size=3, default=config.DEFAULT_HOLDING_AREA["center"], subtype="XYZ",
         update=_on_layout_changed,
@@ -423,6 +465,68 @@ class DSS_PG_HoldingArea(bpy.types.PropertyGroup):
         unit="LENGTH",
         update=_on_layout_changed,
     )
+
+
+class DSS_UL_HoldingAreas(bpy.types.UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        row.label(text=f"{index + 1}.", icon="MESH_GRID")
+        row.prop(item, "name", text="", emboss=False)
+        counts = holding_area_scene.slot_counts(context.scene.drone_show_settings)
+        row.label(text=f"{counts[index]} drones" if index < len(counts) else "")
+
+
+def _copy_props(src, dst) -> None:
+    for prop in src.bl_rna.properties:
+        if prop.identifier != "rna_type" and not prop.is_readonly:
+            setattr(dst, prop.identifier, getattr(src, prop.identifier))
+
+
+class DSS_OT_HoldingAreaAdd(bpy.types.Operator):
+    """Add a holding area. The fleet fills the areas in list order; each drone takes off from, lands in and
+    returns to its own area"""
+
+    bl_idname = "dss.holding_area_add"
+    bl_label = "Add Holding Area"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = context.scene.drone_show_settings
+        areas = settings.holding_areas
+        if not len(areas):  # the scene's one area becomes the first item
+            first = areas.add()
+            _copy_props(settings.holding_area, first)
+            first.name = "Holding Area 1"
+        last = areas[-1]
+        lo, hi = holding_area_scene.regions_for(settings)[-1]
+        area = areas.add()
+        _copy_props(last, area)
+        area.name = f"Holding Area {len(areas)}"
+        # Next to the last one, its safe distance and a slot step away.
+        area.center[0] = hi[0] + last.show_clearance_m + last.grid_spacing_m + last.size[0] / 2.0
+        settings.holding_area_index = len(areas) - 1
+        holding_area_scene.sync_objects(context.scene)
+        return {"FINISHED"}
+
+
+class DSS_OT_HoldingAreaRemove(bpy.types.Operator):
+    """Remove the selected holding area (one always stays)"""
+
+    bl_idname = "dss.holding_area_remove"
+    bl_label = "Remove Holding Area"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return len(context.scene.drone_show_settings.holding_areas) > 1
+
+    def execute(self, context):
+        settings = context.scene.drone_show_settings
+        settings.holding_areas.remove(settings.holding_area_index)
+        settings.holding_area_index = max(0, min(settings.holding_area_index, len(settings.holding_areas) - 1))
+        holding_area_scene.remove_objects()  # names follow the list order: rebuild them all
+        holding_area_scene.sync_objects(context.scene)
+        return {"FINISHED"}
 
 
 def _leg_mode_items(self, context):
@@ -561,16 +665,11 @@ class DSS_PG_ProjectSettings(bpy.types.PropertyGroup):
     show_holding_area_object: bpy.props.BoolProperty(
         name="Create in Scene",
         description=(
-            "Create the holding area as scene objects: a wire box for the volume and a sphere "
-            "(R_safe) per launch slot for the whole fleet. Grab the box (G) to move the holding "
-            "area; size and height are edited here"
+            "Create each holding area as scene objects: a wire box for the volume and a sphere "
+            "(R_safe) per launch slot. Grab a box (G) to move its area; size and height are edited here"
         ),
         default=False,
         update=_on_layout_changed,
-    )
-    holding_area_object: bpy.props.PointerProperty(
-        name="Holding Area Object", type=bpy.types.Object,
-        description="The wire box created by Create in Scene (managed by the add-on)",
     )
     show_compass_gizmo: bpy.props.BoolProperty(
         name="Show Compass Gizmo", default=True,
@@ -583,7 +682,11 @@ class DSS_PG_ProjectSettings(bpy.types.PropertyGroup):
         items=[("JSON", "JSON", "Human-readable JSON"), ("MSGPACK", "MessagePack", "Compact binary")],
     )
     origin_gps: bpy.props.PointerProperty(type=DSS_PG_OriginGPS)
+    # The one holding area of a scene that never added a second (and of every
+    # .blend saved before the list); `holding_areas` once it has more.
     holding_area: bpy.props.PointerProperty(type=DSS_PG_HoldingArea)
+    holding_areas: bpy.props.CollectionProperty(type=DSS_PG_HoldingArea)
+    holding_area_index: bpy.props.IntProperty(name="Active Holding Area", default=0, min=0)
     waiting_areas: bpy.props.CollectionProperty(type=DSS_PG_WaitingArea)
     waiting_area_index: bpy.props.IntProperty(name="Active Waiting Area", default=0, min=0)
     show_waiting_area_objects: bpy.props.BoolProperty(
@@ -659,51 +762,7 @@ class DSS_PT_MainPanel(bpy.types.Panel):
                 icon="CHECKMARK",
             )
 
-        box = layout.box()
-        box.label(text="Holding Area")
-        box.prop(settings, "show_holding_area_object", toggle=True, icon="MESH_CUBE")
-        layout_info = holding_area_scene.layout_for(settings)
-        per_layer = f"{layout_info.cols} x {layout_info.rows} grid"
-        if layout_info.staggered and layout_info.layers > 1:
-            per_layer = f"{layout_info.layer(0).capacity} / {layout_info.layer(1).capacity} per layer (shifted)"
-        box.label(
-            text=f"{settings.fleet_size} slots: {per_layer}, {layout_info.layers} layer(s) "
-            f"{settings.holding_area.layer_spacing_m:g} m apart",
-        )
-        if layout_info.widened:
-            box.label(text=f"Widened to {layout_info.width:.1f} m to fit the fleet", icon="ERROR")
-        box.prop(settings.holding_area, "center")
-        box.prop(settings.holding_area, "size")
-        box.prop(settings.holding_area, "max_height")
-        box.prop(settings.holding_area, "grid_spacing_m")
-        box.prop(settings.holding_area, "layer_spacing_m")
-        box.prop(settings.holding_area, "staggered_layers")
-        gap_message = layer_gap_message(settings)
-        if gap_message:
-            col = box.column(align=True)
-            col.alert = True
-            col.label(text=f"CAUTION: {gap_message}", icon="ERROR")
-            col.label(text="Export is locked")
-        box.prop(settings.holding_area, "show_clearance_m")
-        results = get_clearance_results(settings)
-        if results is None:
-            box.label(text="Clearance: run Check Kinematics to check the show")
-        else:
-            cautions = [r for r in results if r.is_caution]
-            if not cautions:
-                closest = min((r.closest_m for r in results), default=float("inf"))
-                box.label(
-                    text=f"Show clears the holding area (closest {closest:.1f} m)"
-                    if results else "Show clears the holding area",
-                    icon="CHECKMARK",
-                )
-            else:
-                col = box.column(align=True)
-                col.alert = True
-                col.label(text=f"CAUTION: {len(cautions)} formation(s) too close to the holding area", icon="ERROR")
-                for r in cautions:
-                    col.label(text=clearance_message(r, settings.holding_area.show_clearance_m))
-                col.label(text="Export is locked")
+        _draw_holding_areas(layout, settings)
 
         _draw_waiting_areas(layout, settings)
 
@@ -756,12 +815,13 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         box.prop(settings, "export_format")
         clearance_locked = bool(clearance_cautions(settings))
         ground_locked = bool(ground_warnings(settings))
-        gap_locked = layer_gap_message(settings) is not None
+        gap_locked = bool(layer_gap_messages(settings))
+        apart_locked = bool(holding_apart_messages(settings))
         waiting_locked = bool(waiting_messages(settings))
         row = box.row()
         row.enabled = (
             not has_kinematic_error() and not clearance_locked and not ground_locked and not gap_locked
-            and not waiting_locked
+            and not apart_locked and not waiting_locked
         )
         row.operator("dss.export_intermediate", icon="EXPORT")
         if has_kinematic_error():
@@ -774,12 +834,75 @@ class DSS_PT_MainPanel(bpy.types.Panel):
         if ground_locked:
             box.label(text="Raise the drones above the ground (or lower Ground Level) to unlock Export", icon="ERROR")
         if gap_locked:
-            box.label(
-                text=f"Raise the holding area's Layer Gap to {min_layer_gap(settings):.2f} m to unlock Export",
-                icon="ERROR",
-            )
+            box.label(text="Raise the Layer Gap named above to unlock Export", icon="ERROR")
+        if apart_locked:
+            box.label(text="Move the holding areas apart (or lower Safe Distance) to unlock Export", icon="ERROR")
         if waiting_locked:
             box.label(text="Fix the waiting area caution(s) above to unlock Export", icon="ERROR")
+
+
+def _draw_holding_areas(layout, settings):
+    box = layout.box()
+    box.label(text="Holding Areas")
+    row = box.row()
+    if len(settings.holding_areas):
+        row.template_list(
+            "DSS_UL_HoldingAreas", "", settings, "holding_areas", settings, "holding_area_index", rows=2
+        )
+    else:
+        row.label(text="1. Holding Area", icon="MESH_GRID")
+    col = row.column(align=True)
+    col.operator("dss.holding_area_add", icon="ADD", text="")
+    col.operator("dss.holding_area_remove", icon="REMOVE", text="")
+    box.prop(settings, "show_holding_area_object", toggle=True, icon="MESH_CUBE")
+
+    props = holding_area_scene.area_props(settings)
+    counts = holding_area_scene.slot_counts(settings)
+    layouts = holding_area_scene.layouts_for(settings)
+    many = len(props) > 1
+    for i, (prop, n, info) in enumerate(zip(props, counts, layouts)):
+        per_layer = f"{info.cols} x {info.rows} grid"
+        if info.staggered and info.layers > 1:
+            per_layer = f"{info.layer(0).capacity} / {info.layer(1).capacity} per layer (shifted)"
+        where = f"Area {i + 1}: " if many else ""
+        box.label(
+            text=f"{where}{n} slots: {per_layer}, {info.layers} layer(s) {prop.layer_spacing_m:g} m apart"
+            if n else f"{where}no drones (the areas before it hold the fleet)",
+        )
+        if info.widened:
+            box.label(text=f"{where}Widened to {info.width:.1f} m to fit the fleet", icon="ERROR")
+
+    index = min(settings.holding_area_index, len(props) - 1) if many else 0
+    ha = props[index]
+    col = box.column(align=True)
+    for name in ("center", "size", "max_height", "grid_spacing_m", "layer_spacing_m", "staggered_layers",
+                 "show_clearance_m"):
+        col.prop(ha, name)
+
+    cautions = layer_gap_messages(settings) + holding_apart_messages(settings)
+    if cautions:
+        col = box.column(align=True)
+        col.alert = True
+        for m in cautions:
+            col.label(text=f"CAUTION: {m}", icon="ERROR")
+        col.label(text="Export is locked")
+
+    results = get_clearance_results(settings)
+    if results is None:
+        box.label(text="Clearance: run Check Kinematics to check the show")
+        return
+    messages = clearance_messages(settings)
+    if not messages:
+        closest = min((r.closest_m for per_area in results for r in per_area), default=float("inf"))
+        text = "Show clears the holding area" + ("s" if many else "")
+        box.label(text=f"{text} (closest {closest:.1f} m)" if closest < float("inf") else text, icon="CHECKMARK")
+        return
+    col = box.column(align=True)
+    col.alert = True
+    col.label(text=f"CAUTION: {len(messages)} formation(s) too close to a holding area", icon="ERROR")
+    for m in messages:
+        col.label(text=m)
+    col.label(text="Export is locked")
 
 
 def _draw_waiting_areas(layout, settings):
@@ -875,6 +998,9 @@ CLASSES = (
     DSS_OT_WaitingAreaAdd,
     DSS_OT_WaitingAreaRemove,
     DSS_PG_HoldingArea,
+    DSS_UL_HoldingAreas,
+    DSS_OT_HoldingAreaAdd,
+    DSS_OT_HoldingAreaRemove,
     DSS_PG_ShowLegs,
     DSS_PG_KinematicConstraints,
     DSS_PG_OriginGPS,

@@ -278,6 +278,12 @@ def min_layer_spacing(hover_height_m: float, planning_distance_m: float) -> floa
     return hover_height_m + planning_distance_m
 
 
+def box_distance(lo_a, hi_a, lo_b, hi_b) -> float:
+    """Euclidean distance between two axis-aligned boxes (0 when they touch)."""
+    gap = np.maximum(np.maximum(np.asarray(lo_b) - hi_a, np.asarray(lo_a) - hi_b), 0.0)
+    return float(np.linalg.norm(gap))
+
+
 def distance_to_region(points: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
     """Euclidean distance from each point to the box [lo, hi] (0 inside it)."""
     pts = np.atleast_2d(np.asarray(points, dtype=float))
@@ -317,3 +323,125 @@ def check_show_clearance(
         too_close = int(((d > 0.0) & (d < clearance_m)).sum())
         results.append(ClearanceResult(k, shape_name, inside, too_close, float(d.min())))
     return results
+
+
+# --- Several holding areas -------------------------------------------------
+#
+# Every drone belongs to one holding area, its home area, for the whole show:
+# it takes off from, lands in, parks on and returns to that area only. The
+# fleet fills the areas in list order (each takes what its layers under
+# max_height hold, only the last one widens), and the slots are concatenated
+# in that order: drone i takes off from slot i (all of area 1, then area 2...).
+# One area lays out exactly like the single holding area above.
+
+
+class HoldingArea(NamedTuple):
+    """One holding area as the designer declares it (ENU)."""
+
+    center: Tuple[float, float, float]
+    size: Tuple[float, float]
+    max_height: float = 15.0
+    grid_spacing_m: float = 2.0
+    layer_spacing_m: Optional[float] = None
+    staggered_layers: bool = False
+    show_clearance_m: float = 0.0
+
+    @staticmethod
+    def from_mapping(area: Mapping) -> "HoldingArea":
+        """From an exported `holding_area` / `holding_areas` item."""
+        return HoldingArea(
+            tuple(float(v) for v in area["center"]),
+            tuple(float(v) for v in area["size"]),
+            float(area["max_height"]),
+            float(area["grid_spacing_m"]),
+            **layout_options(area),
+            show_clearance_m=float(area.get("show_clearance_m") or 0.0),
+        )
+
+    @property
+    def args(self) -> tuple:
+        """Positional arguments after `n_park` of the layout functions above."""
+        return (self.center, self.size, self.max_height, self.grid_spacing_m, self.layer_spacing_m,
+                self.staggered_layers)
+
+    @property
+    def capacity(self) -> int:
+        """Drones the declared footprint holds in the layers under max_height."""
+        layout = compute_holding_layout(0, *self.args)
+        return layout.total_capacity(max_layer_count(self.center[2], self.max_height, layout.layer_spacing_m))
+
+
+def allocate_holding_counts(areas: Sequence[HoldingArea], fleet_size: int) -> List[int]:
+    """Drones per area, in list order: each area as many as it holds, the last
+    one the rest (it widens when that is more than it holds)."""
+    counts, left = [], max(int(fleet_size), 0)
+    for i, area in enumerate(areas):
+        n = left if i == len(areas) - 1 else min(left, area.capacity)
+        counts.append(n)
+        left -= n
+    return counts
+
+
+def compute_all_holding_positions(areas: Sequence[HoldingArea], counts: Sequence[int]) -> np.ndarray:
+    """Every area's slots, concatenated in area order (drone i's takeoff slot is row i)."""
+    parts = [compute_holding_positions(n, *a.args) for a, n in zip(areas, counts)]
+    return np.vstack(parts) if parts else np.zeros((0, 3), dtype=float)
+
+
+def compute_all_row_indices(areas: Sequence[HoldingArea], counts: Sequence[int]) -> np.ndarray:
+    """Each slot's row within its own area and layer, in the order above: row r
+    of every area launches in the same wave."""
+    parts = [compute_holding_row_indices(n, *a.args) for a, n in zip(areas, counts)]
+    return np.concatenate(parts) if parts else np.zeros(0, dtype=int)
+
+
+def home_areas(counts: Sequence[int]) -> np.ndarray:
+    """Each drone's home area index (drone i on slot i)."""
+    return np.repeat(np.arange(len(counts)), counts)
+
+
+def holding_regions(areas: Sequence[HoldingArea], counts: Sequence[int]) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """One (lo, hi) box per area (`holding_region_bounds` for its own drones)."""
+    return [holding_region_bounds(n, *a.args) for a, n in zip(areas, counts)]
+
+
+def in_holding_region(points: np.ndarray, areas: Sequence[HoldingArea], counts: Sequence[int]) -> np.ndarray:
+    """Boolean per point: inside any area's region."""
+    pts = np.atleast_2d(np.asarray(points, dtype=float))
+    inside = np.zeros(len(pts), dtype=bool)
+    for lo, hi in holding_regions(areas, counts):
+        inside |= distance_to_region(pts, lo, hi) <= 0.0
+    return inside
+
+
+def compute_all_padding_positions(n_park: int, areas: Sequence[HoldingArea], counts: Sequence[int]) -> np.ndarray:
+    """The first `n_park` slots of the concatenated order: the pads a short
+    formation's spare drones stay on (Stage 2 picks which drones)."""
+    slots = compute_all_holding_positions(areas, counts)
+    if n_park > len(slots):
+        raise ValueError(f"n_park {n_park} > fleet_size {len(slots)}")
+    return slots[: max(n_park, 0)]
+
+
+def areas_too_close(areas: Sequence[HoldingArea], counts: Sequence[int]) -> List[Tuple[int, int, float, float]]:
+    """(area a, area b, gap, needed) for every pair of regions closer than the
+    larger of their safe distances: a drone taking off from one would be in
+    the other's keep-out zone."""
+    regions = holding_regions(areas, counts)
+    found = []
+    for i in range(len(areas)):
+        for j in range(i + 1, len(areas)):
+            gap = box_distance(*regions[i], *regions[j])
+            needed = max(areas[i].show_clearance_m, areas[j].show_clearance_m)
+            if gap <= 0.0 or gap < needed - 1e-9:
+                found.append((i, j, gap, needed))
+    return found
+
+
+def areas_from_metadata(metadata: Mapping) -> Tuple[List[HoldingArea], List[int]]:
+    """(areas, counts) from an exported `project_metadata`: `holding_areas`
+    (schema 1.8.0) or the older single `holding_area` (all the fleet's)."""
+    raw = metadata.get("holding_areas")
+    if raw:
+        return [HoldingArea.from_mapping(a) for a in raw], [int(a["slot_count"]) for a in raw]
+    return [HoldingArea.from_mapping(metadata["holding_area"])], [int(metadata["fleet_size"])]

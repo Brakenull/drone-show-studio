@@ -10,7 +10,7 @@ remain importable - and unit-testable with pytest - outside Blender.
 bl_info = {
     "name": "Drone Show Studio - Designer",
     "author": "Drone Show Studio",
-    "version": (1, 7, 0),
+    "version": (1, 8, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > Drone Show",
     "description": (
@@ -110,14 +110,17 @@ if _HAS_BPY:
     def _padding_positions(settings, n_park, spare_needed, first_keyframe=False):
         """Slots for the drones a formation leaves spare: the first waiting slots when the design has waiting areas
         (`spare_needed`, the most spare drones at any later keyframe, sizes
-        the areas), else the first holding-area slots. The first
+        the areas), else the first holding-area slots (all areas' slots in
+        list order; Stage 2 keeps each drone in its home area). The first
         formation's spare drones always stay on their pads: every drone takes
         off from the holding area when a formation first needs it."""
         if len(settings.waiting_areas) and not first_keyframe:
             areas = waiting_area_scene.areas_of(settings)
             counts = waiting_area_scene.slot_counts(settings, max(spare_needed, n_park))
             return waiting_area.compute_padding_positions(n_park, areas, counts)
-        return holding_area.compute_padding_positions(n_park, *holding_area_scene.layout_args(settings))
+        return holding_area.compute_all_padding_positions(
+            n_park, holding_area_scene.areas_of(settings), holding_area_scene.slot_counts(settings)
+        )
 
     def _sample_keyframe(settings, obj, scene, time_sec):
         """One keyframe's formation: ENU points (at most fleet_size) and colors."""
@@ -443,15 +446,23 @@ if _HAS_BPY:
             # Holding-area clearance gate: same rule as
             # above - _sample_all_keyframes_for_validation just refreshed the
             # formation cache, so this checks the show being exported now.
-            cautions = panel.clearance_cautions(settings)
+            cautions = panel.clearance_messages(settings)
             if cautions:
-                for r in cautions:
-                    self.report({"ERROR"}, panel.clearance_message(r, settings.holding_area.show_clearance_m))
+                for msg in cautions:
+                    self.report({"ERROR"}, msg)
                 self.report(
                     {"ERROR"},
-                    f"Export blocked: {len(cautions)} formation(s) closer than "
-                    f"{settings.holding_area.show_clearance_m:g} m to the holding area",
+                    f"Export blocked: {len(cautions)} formation(s) closer than the safe distance to a holding area",
                 )
+                return {"CANCELLED"}
+
+            # Holding areas too close to each other: a drone taking off from
+            # one would fly through the other's keep-out zone.
+            apart = panel.holding_apart_messages(settings)
+            if apart:
+                for msg in apart:
+                    self.report({"ERROR"}, msg)
+                self.report({"ERROR"}, "Export blocked: holding areas too close to each other")
                 return {"CANCELLED"}
 
             # Waiting area gate: formations too close
@@ -465,9 +476,10 @@ if _HAS_BPY:
                 return {"CANCELLED"}
 
             # Holding-area layer gap gate.
-            gap_message = panel.layer_gap_message(settings)
-            if gap_message:
-                self.report({"ERROR"}, f"Export blocked: {gap_message}")
+            gap_messages = panel.layer_gap_messages(settings)
+            if gap_messages:
+                for msg in gap_messages:
+                    self.report({"ERROR"}, f"Export blocked: {msg}")
                 return {"CANCELLED"}
 
             # Ground gate: formation points (freshly
@@ -500,15 +512,12 @@ if _HAS_BPY:
                     settings.origin_gps.longitude,
                     settings.origin_gps.altitude_amsl,
                 ),
-                holding_area={
-                    "center": tuple(settings.holding_area.center),
-                    "size": tuple(settings.holding_area.size),
-                    "max_height": settings.holding_area.max_height,
-                    "grid_spacing_m": settings.holding_area.grid_spacing_m,
-                    "layer_spacing_m": settings.holding_area.layer_spacing_m,
-                    "staggered_layers": settings.holding_area.staggered_layers,
-                    "show_clearance_m": settings.holding_area.show_clearance_m,
-                },
+                holding_areas=[
+                    {**area._asdict(), "slot_count": count}
+                    for area, count in zip(
+                        holding_area_scene.areas_of(settings), holding_area_scene.slot_counts(settings)
+                    )
+                ],
                 fps=settings.dense_fps if settings.sampling_mode == config.SAMPLING_MODE_DENSE_SAMPLED else None,
                 safety_radius_m=settings.safety_radius_m,
                 min_distance_m=settings.min_distance_m,

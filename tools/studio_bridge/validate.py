@@ -159,7 +159,7 @@ def waiting_summary(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
     # The first formation's spare drones are on their pads: count only the drones outside the holding region.
     formations = [(name, pts[distance_to_region(pts, lo, hi) > 0.0]) if len(pts) else (name, pts)
                   for name, pts in formations]
-    for d in check_detours(areas, counts, formations, fleet, lo, hi):
+    for d in check_detours(areas, counts, formations, fleet, [(lo, hi)]):
         warnings.append({"path": f"/keyframes/{d.keyframe_index}",
                          "message": f"The {d.spare} spare drones of {d.shape_name} fly about {d.waiting_m:.0f} m to the "
                                     f"nearest waiting area and back, against {d.home_m:.0f} m through the holding "

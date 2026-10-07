@@ -21,7 +21,7 @@ def build_project_metadata(
     total_duration_sec: float,
     heading_offset_deg: float,
     origin_gps: Tuple[float, float, float],
-    holding_area: dict,
+    holding_areas: Sequence[dict],
     fps: Optional[int] = None,
     safety_radius_m: float = 0.75,
     min_distance_m: float = 1.5,
@@ -34,6 +34,9 @@ def build_project_metadata(
     """`takeoff_duration_sec` / `return_duration_sec`: the legs' target
     durations, None meaning Auto (Stage 2's minimum).
     `ground_z_m`: ENU height of the ground.
+    `holding_areas`: dicts with center, size, max_height, grid_spacing_m,
+    layer_spacing_m, staggered_layers, show_clearance_m (optional) and
+    slot_count (the drones whose home it is, in list order).
     `waiting_areas`: dicts with center, size, grid_spacing_m,
     show_clearance_m and slot_count; omitted when empty."""
     lat, lon, alt = origin_gps
@@ -53,19 +56,23 @@ def build_project_metadata(
             "longitude": float(lon),
             "altitude_amsl": float(alt),
         },
-        "holding_area": {
-            "center": [float(v) for v in holding_area["center"]],
-            "size": [float(v) for v in holding_area["size"]],
-            "max_height": float(holding_area["max_height"]),
-            "grid_spacing_m": float(holding_area["grid_spacing_m"]),
-            "layer_spacing_m": float(holding_area["layer_spacing_m"]),
-            "staggered_layers": bool(holding_area.get("staggered_layers", False)),
-            **(
-                {"show_clearance_m": float(holding_area["show_clearance_m"])}
-                if holding_area.get("show_clearance_m") is not None
-                else {}
-            ),
-        },
+        "holding_areas": [
+            {
+                "center": [float(v) for v in area["center"]],
+                "size": [float(v) for v in area["size"]],
+                "max_height": float(area["max_height"]),
+                "grid_spacing_m": float(area["grid_spacing_m"]),
+                "layer_spacing_m": float(area["layer_spacing_m"]),
+                "staggered_layers": bool(area.get("staggered_layers", False)),
+                **(
+                    {"show_clearance_m": float(area["show_clearance_m"])}
+                    if area.get("show_clearance_m") is not None
+                    else {}
+                ),
+                "slot_count": int(area["slot_count"]),
+            }
+            for area in holding_areas
+        ],
         "kinematic_constraints": (
             {
                 "v_max_mps": float(kinematic_constraints["v_max_mps"]),
@@ -142,6 +149,8 @@ def validate_intermediate_data(data: dict) -> List[str]:
       - no pair of points in a keyframe violates min_distance_m
       - a leg's target duration, when set, is positive
       - holding-area layers are at least a grid step apart
+      - the holding areas' slot counts add up to fleet_size, and the first
+        keyframe's drones inside a holding area are on its slots
       - the waiting areas have room for every keyframe's spare drones
     """
     errors: List[str] = []
@@ -149,13 +158,20 @@ def validate_intermediate_data(data: dict) -> List[str]:
     fleet_size = metadata.get("fleet_size")
     min_distance_m = metadata.get("min_distance_m")
 
-    holding = metadata.get("holding_area") or {}
-    grid, gap = holding.get("grid_spacing_m"), holding.get("layer_spacing_m")
-    if grid is not None and gap is not None and gap < grid - 1e-9:
-        errors.append(
-            f"[holding_area] layer_spacing_m {gap} m < grid_spacing_m {grid} m: stacked slots would be "
-            "closer than the grid spacing"
-        )
+    holding = metadata.get("holding_areas") or [metadata.get("holding_area") or {}]
+    for i, area in enumerate(holding):
+        grid, gap = area.get("grid_spacing_m"), area.get("layer_spacing_m")
+        if grid is not None and gap is not None and gap < grid - 1e-9:
+            errors.append(
+                f"[holding_areas.{i}] layer_spacing_m {gap} m < grid_spacing_m {grid} m: stacked slots would be "
+                "closer than the grid spacing"
+            )
+    if metadata.get("holding_areas") and fleet_size is not None:
+        total = sum(int(a.get("slot_count", 0)) for a in metadata["holding_areas"])
+        if total != fleet_size:
+            errors.append(f"[holding_areas] slot counts add up to {total}, not fleet_size {fleet_size}")
+        else:
+            errors += _first_keyframe_off_slots(metadata, data.get("keyframes", []))
 
     waiting = metadata.get("waiting_areas") or []
     if waiting and fleet_size is not None:
@@ -207,6 +223,28 @@ def _sampled_count(keyframe: dict, waiting_areas: Sequence[dict]) -> int:
     areas = [WaitingArea.from_mapping(a) for a in waiting_areas]
     counts = [int(a["slot_count"]) for a in waiting_areas]
     return int((~in_waiting_region(points, areas, counts)).sum()) if len(points) else 0
+
+
+def _first_keyframe_off_slots(metadata: dict, keyframes: Sequence[dict]) -> List[str]:
+    """The first keyframe's spare drones stay on their pads: any of its points
+    inside a holding area must be on one of the slots."""
+    from ..core.holding_area import areas_from_metadata, compute_all_holding_positions, in_holding_region
+
+    if not keyframes:
+        return []
+    points = np.array([p["pos"] for p in keyframes[0].get("points", [])], dtype=float).reshape(-1, 3)
+    if not len(points):
+        return []
+    areas, counts = areas_from_metadata(metadata)
+    slots = compute_all_holding_positions(areas, counts)
+    inside = points[in_holding_region(points, areas, counts)]
+    if not len(inside):
+        return []
+    off = int((np.linalg.norm(inside[:, None, :] - slots[None, :, :], axis=2).min(axis=1) > 1e-6).sum())
+    if off:
+        return [f"[{keyframes[0].get('shape_name', '<unknown>')}] {off} point(s) inside a holding area but not on "
+                "one of its slots"]
+    return []
 
 
 def export_json(data: dict, filepath: str | Path, indent: int = 2) -> None:
