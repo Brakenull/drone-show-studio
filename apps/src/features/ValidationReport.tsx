@@ -4,17 +4,20 @@ import type { Validation } from "../bridge/types";
 
 const fmt = (v: number, d = 1) => v.toFixed(d);
 
+type HoldingSummary = NonNullable<Validation["summary"]>["holding_areas"][number];
+
 /** Holding-area capacity: one block per layer the area may stack, filled by
  *  the drones parked in it, so a crowded or overflowing area shows before a long Stage 2 run. */
-function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) {
-  const ha = summary.holding_area;
+function Capacity({ ha, index, count }: { ha: HoldingSummary; index: number; count: number }) {
   const c = ha.capacity;
-  const n = summary.fleet_size;
+  const n = ha.slot_count;
   const floor = ha.gatekeeper_floor_m;
   const tooClose = floor !== null && ha.grid_spacing_m < floor;
+  const title = count === 1 ? "Holding area" : `Holding area ${index + 1}`;
+  const id = `capacity-title-${index}`;
   return (
-    <section className="capacity" aria-labelledby="capacity-title">
-      <h3 id="capacity-title">Holding area</h3>
+    <section className="capacity" aria-labelledby={id}>
+      <h3 id={id}>{title}</h3>
       <div className="capacity-gauge" role="img" aria-label={`${Math.min(n, c.capacity)} of ${c.capacity} places used`}>
         {c.layer_capacities.map((size, layer) => {
           const below = c.layer_capacities.slice(0, layer).reduce((a, b) => a + b, 0);
@@ -31,10 +34,12 @@ function Capacity({ summary }: { summary: NonNullable<Validation["summary"]> }) 
       </div>
       <p className={c.widened ? "tone-warn" : undefined}>
         {c.widened
-          ? `Too small: room for ${c.capacity} drones, the fleet has ${n}. Phase 1 widened it to ${fmt(c.width_used_m)} m.`
-          : `Room for ${c.capacity} drones in ${ha.size[0]} × ${ha.size[1]} m; this show parks ${n} in ${c.layers_used} of ${c.max_layers} ${
-              c.max_layers === 1 ? "layer" : "layers"
-            }.`}
+          ? `Too small: room for ${c.capacity} drones, ${n} park here. Phase 1 widened it to ${fmt(c.width_used_m)} m.`
+          : n === 0
+            ? `Room for ${c.capacity} drones in ${ha.size[0]} × ${ha.size[1]} m; the areas before it hold the fleet, so none park here.`
+            : `Room for ${c.capacity} drones in ${ha.size[0]} × ${ha.size[1]} m; this show parks ${n} in ${c.layers_used} of ${c.max_layers} ${
+                c.max_layers === 1 ? "layer" : "layers"
+              }.`}
       </p>
       <p className="muted small">
         {c.staggered_layers
@@ -133,7 +138,9 @@ export function ValidationReport({ validation }: { validation: Validation }) {
               <dd>{summary.min_distance_m} m</dd>
             </div>
           </dl>
-          <Capacity summary={summary} />
+          {summary.holding_areas.map((ha, i) => (
+            <Capacity key={i} ha={ha} index={i} count={summary.holding_areas.length} />
+          ))}
           <WaitingAreas summary={summary} />
           <h3>Formations, in show order</h3>
           <ol className="formation-cards">

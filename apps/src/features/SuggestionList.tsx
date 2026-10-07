@@ -129,7 +129,9 @@ function detail(item: Suggestion): string {
     case "faster_return":
       if (!n.possible) {
         return n.farthest_drone != null && n.farthest_m != null
-          ? `It takes ${seconds(n.return_sec ?? 0)}: drone ${n.farthest_drone} has ${Math.round(n.farthest_m)} m to its slot.`
+          ? `It takes ${seconds(n.return_sec ?? 0)}: drone ${n.farthest_drone} has ${Math.round(n.farthest_m)} m to its slot${
+              n.farthest_area != null ? ` in holding area ${n.farthest_area + 1}` : ""
+            }.`
           : `It takes ${seconds(n.return_sec ?? 0)}.`;
       }
       return n.new_sec != null
@@ -142,7 +144,8 @@ function detail(item: Suggestion): string {
         need > 0
           ? `it would need ${seconds(need)} (${seconds(n.short_sec ?? 0)} shorter)`
           : `even an instant return would leave the ${seconds(n.move_sec ?? 0)} move into it too long`;
-      return `${what} takes ${seconds(n.return_sec ?? 0)}; ${fix}. Change the design in Blender: move ${name} closer to the holding area, lower it, or put it earlier in the show.`;
+      const home = n.farthest_area != null ? `holding area ${n.farthest_area + 1} (home of drone ${n.farthest_drone}, the farthest)` : "the holding area";
+      return `${what} takes ${seconds(n.return_sec ?? 0)}; ${fix}. Change the design in Blender: move ${name} closer to ${home}, lower it, or put it earlier in the show.`;
     }
   }
 }

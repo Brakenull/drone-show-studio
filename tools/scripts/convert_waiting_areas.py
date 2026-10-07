@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from convert_holding_layout import padding_count  # noqa: E402
 
-from stage1_designer.core.holding_area import holding_region_bounds, layout_options  # noqa: E402
+from stage1_designer.core.holding_area import areas_from_metadata, holding_regions  # noqa: E402
 from stage1_designer.core.waiting_area import (  # noqa: E402
     WaitingArea,
     allocate_slot_counts,
@@ -38,9 +38,7 @@ from stage1_designer.exporters.intermediate_exporter import validate_intermediat
 
 def convert(data: dict, areas: list[WaitingArea]) -> list[str]:
     meta = data["project_metadata"]
-    ha = meta["holding_area"]
-    fleet = meta["fleet_size"]
-    spare = [padding_count(np.array([p["pos"] for p in kf["points"]], dtype=float), fleet, ha)
+    spare = [padding_count(np.array([p["pos"] for p in kf["points"]], dtype=float), meta)
              for kf in data["keyframes"]]
     # The first formation's spare drones stay on their pads.
     counts = allocate_slot_counts(areas, max(spare[1:], default=0))
@@ -59,15 +57,15 @@ def convert(data: dict, areas: list[WaitingArea]) -> list[str]:
          "show_clearance_m": a.show_clearance_m, "slot_count": int(n)}
         for a, n in zip(areas, counts)
     ]
-    meta["version"] = "1.7.0"
+    meta["version"] = "1.8.0" if meta.get("holding_areas") else "1.7.0"
 
-    lo, hi = holding_region_bounds(fleet, tuple(ha["center"]), tuple(ha["size"]), ha["max_height"],
-                                   ha["grid_spacing_m"], **layout_options(ha))
-    check = check_waiting_areas(areas, counts, formations, [(lo, hi)], float(meta.get("ground_z_m", 0.0)))
+    homes, home_counts = areas_from_metadata(meta)
+    check = check_waiting_areas(areas, counts, formations, holding_regions(homes, home_counts),
+                                float(meta.get("ground_z_m", 0.0)))
     report = [f"{kf['shape_name']}: {n} {'on their pads' if k == 0 else 'waiting'}"
               for k, (kf, n) in enumerate(zip(data["keyframes"], spare))]
-    report.append(f"slot counts {counts}; holding gaps {[round(g[0], 2) for g in check.holding_gaps]}")
-    report += [f"CAUTION {m}" for m in check.messages([float(ha.get("show_clearance_m") or 0.0)])]
+    report.append(f"slot counts {counts}; holding gaps {[[round(g, 2) for g in gaps] for gaps in check.holding_gaps]}")
+    report += [f"CAUTION {m}" for m in check.messages([h.show_clearance_m for h in homes])]
     return report
 
 

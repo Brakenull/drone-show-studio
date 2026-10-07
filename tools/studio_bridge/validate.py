@@ -52,57 +52,59 @@ def semantic_errors(data: dict[str, Any]) -> list[dict[str, str]]:
     return errors
 
 
-def holding_positions(meta: dict[str, Any]) -> np.ndarray:
-    from stage1_designer.core.holding_area import compute_holding_positions, layout_options
+def holding_areas(meta: dict[str, Any]):
+    """(areas, counts): `holding_areas` (schema 1.8.0) or the older single `holding_area`."""
+    from stage1_designer.core.holding_area import areas_from_metadata
 
-    ha = meta["holding_area"]
-    return compute_holding_positions(meta["fleet_size"], tuple(ha["center"]), tuple(ha["size"]),
-                                     ha["max_height"], ha["grid_spacing_m"], **layout_options(ha))
+    return areas_from_metadata(meta)
+
+
+def holding_positions(meta: dict[str, Any]) -> np.ndarray:
+    """Every holding area's slots, concatenated in list order (drone i takes off from row i)."""
+    from stage1_designer.core.holding_area import compute_all_holding_positions
+
+    return compute_all_holding_positions(*holding_areas(meta))
 
 
 PARKED_TOLERANCE_M = 1e-3
 
 
 def targets_inside_holding_area(meta: dict[str, Any], targets: np.ndarray, slots: np.ndarray) -> tuple[int, int]:
-    """(overlapping, parked) targets of a formation inside the holding area: the declared volume plus the
+    """(overlapping, parked) targets of a formation inside a holding area: the declared volume plus the
     parked grid padded by half a grid step, the same region the Blender add-on checks (holding_region_bounds).
     A target exactly on a holding slot is a drone the formation doesn't use, left parked;
     only the others overlap the area."""
     from scipy.spatial import cKDTree
 
-    from stage1_designer.core.holding_area import holding_region_bounds, layout_options
+    from stage1_designer.core.holding_area import in_holding_region
 
-    ha = meta["holding_area"]
-    lo, hi = holding_region_bounds(meta["fleet_size"], tuple(ha["center"]), tuple(ha["size"]),
-                                   ha["max_height"], ha["grid_spacing_m"], **layout_options(ha))
-    inside = targets[np.all((targets >= lo) & (targets <= hi), axis=1)]
+    inside = targets[in_holding_region(targets, *holding_areas(meta))] if len(targets) else targets
     if not len(inside):
         return 0, 0
     parked = int((cKDTree(slots).query(inside)[0] <= PARKED_TOLERANCE_M).sum())
     return len(inside) - parked, parked
 
 
-def holding_capacity(meta: dict[str, Any], slots: np.ndarray) -> dict[str, Any]:
-    """How many drones the declared holding area takes (Phase 1's own layout rules), and what the layout
-    actually used. Phase 1 widens the area along X when the fleet doesn't fit (holding_area.py). With
-    staggered layers (schema 1.7.0) the per-layer capacity alternates: `layer_capacities` lists each layer's."""
-    from stage1_designer.core.holding_area import compute_holding_layout, layout_options, max_layer_count
+def holding_capacity(area, slots: np.ndarray) -> dict[str, Any]:
+    """How many drones one declared holding area takes (Phase 1's own layout rules), and what the layout
+    actually used for its own drones (`slots`). Phase 1 widens the last area along X when the fleet doesn't
+    fit (holding_area.py). With staggered layers (schema 1.7.0) the per-layer capacity alternates:
+    `layer_capacities` lists each layer's."""
+    from stage1_designer.core.holding_area import compute_holding_layout, max_layer_count
 
-    ha = meta["holding_area"]
-    spacing = ha["grid_spacing_m"]
-    options = layout_options(ha)
-    declared = compute_holding_layout(0, tuple(ha["center"]), tuple(ha["size"]), ha["max_height"], spacing, **options)
-    max_layers = max_layer_count(ha["center"][2], ha["max_height"], declared.layer_spacing_m)
+    spacing = area.grid_spacing_m
+    declared = compute_holding_layout(0, *area.args)
+    max_layers = max_layer_count(area.center[2], area.max_height, declared.layer_spacing_m)
     layer_capacities = [declared.layer(m).capacity for m in range(max_layers)]
     width_used = float(np.ptp(slots[:, 0])) if len(slots) else 0.0
     return {
         "per_layer": layer_capacities[0],
         "layer_capacities": layer_capacities,
         "layer_spacing_m": declared.layer_spacing_m,
-        "staggered_layers": options["staggered_layers"],
+        "staggered_layers": area.staggered_layers,
         "max_layers": max_layers,
         "capacity": sum(layer_capacities),
-        "layers_used": int(len(np.unique(np.round(slots[:, 2], 6)))),
+        "layers_used": int(len(np.unique(np.round(slots[:, 2], 6)))) if len(slots) else 0,
         "widened": width_used > (declared.cols - 1) * spacing + 1e-6,
         "width_used_m": width_used,
     }
@@ -139,7 +141,7 @@ def waiting_summary(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
                                  "message": f"{close} point(s) of {kf['shape_name']} are within "
                                             f"{area.show_clearance_m:g} m of waiting area {i + 1} (closest "
                                             f"{float(d.min()):.2f} m). Drones waiting there would be next to the show."})
-    from stage1_designer.core.holding_area import holding_region_bounds, layout_options
+    from stage1_designer.core.holding_area import holding_regions, in_holding_region
     from stage1_designer.core.waiting_area import check_detours, size_needed
 
     for i, (area, n) in enumerate(zip(areas, counts)):
@@ -153,17 +155,15 @@ def waiting_summary(data: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
     for kf in data["keyframes"]:
         pts = np.array([q["pos"] for q in kf["points"]], dtype=float).reshape(-1, 3)
         formations.append((kf["shape_name"], pts[~in_waiting_region(pts, areas, counts)] if len(pts) else pts))
-    ha = meta["holding_area"]
-    lo, hi = holding_region_bounds(fleet, tuple(ha["center"]), tuple(ha["size"]), ha["max_height"],
-                                   ha["grid_spacing_m"], **layout_options(ha))
-    # The first formation's spare drones are on their pads: count only the drones outside the holding region.
-    formations = [(name, pts[distance_to_region(pts, lo, hi) > 0.0]) if len(pts) else (name, pts)
+    homes = holding_areas(meta)
+    # The first formation's spare drones are on their pads: count only the drones outside the holding regions.
+    formations = [(name, pts[~in_holding_region(pts, *homes)]) if len(pts) else (name, pts)
                   for name, pts in formations]
-    for d in check_detours(areas, counts, formations, fleet, [(lo, hi)]):
+    for d in check_detours(areas, counts, formations, fleet, holding_regions(*homes)):
         warnings.append({"path": f"/keyframes/{d.keyframe_index}",
                          "message": f"The {d.spare} spare drones of {d.shape_name} fly about {d.waiting_m:.0f} m to the "
-                                    f"nearest waiting area and back, against {d.home_m:.0f} m through the holding "
-                                    "area. A waiting area closer to the show would shorten the show."})
+                                    f"nearest waiting area and back, against {d.home_m:.0f} m through the nearest "
+                                    "holding area. A waiting area closer to the show would shorten the show."})
     if spare_max > sum(counts):
         warnings.append({"path": "/project_metadata/waiting_areas",
                          "message": f"A formation leaves {spare_max} drones spare, but the waiting areas have "
@@ -193,9 +193,56 @@ def min_spacing(points: np.ndarray) -> float:
     return float(cKDTree(points).query(points, k=2)[0][:, 1].min())
 
 
+def holding_summary(meta: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Each holding area (its own drones' layout, capacity, region) and its warnings: widened, or parked
+    drones closer than the safety check requires, or two areas closer than their safe distance."""
+    from stage1_designer.core.holding_area import areas_too_close, compute_holding_positions, holding_region_bounds
+
+    areas, counts = holding_areas(meta)
+    raw = meta.get("holding_areas") or [meta["holding_area"]]
+    many = len(areas) > 1
+    floor = gatekeeper_floor_default()
+    summary, warnings = [], []
+    for i, (area, n, declared) in enumerate(zip(areas, counts, raw)):
+        name = f"Holding area {i + 1}" if many else "The holding area"
+        path = f"/project_metadata/holding_areas/{i}" if meta.get("holding_areas") else "/project_metadata/holding_area"
+        slots = compute_holding_positions(n, *area.args)
+        capacity = holding_capacity(area, slots)
+        if capacity["widened"]:
+            warnings.append({"path": path,
+                             "message": f"{name} ({area.size[0]:g} × {area.size[1]:g} m, up to "
+                                        f"{capacity['max_layers']} layers {capacity['layer_spacing_m']:g} m apart) has "
+                                        f"room for {capacity['capacity']} drones, and {n} park there. Phase 1 widened "
+                                        f"it to {capacity['width_used_m']:.1f} m along X to fit everyone, so it covers "
+                                        "more ground than its size says."
+                                        + (" Another holding area would avoid that." if not many else "")})
+        if floor is not None and area.grid_spacing_m < floor:
+            warnings.append({"path": f"{path}/grid_spacing_m",
+                             "message": f"Parked drones in {name[0].lower() + name[1:]} are {area.grid_spacing_m:g} m "
+                                        f"apart, closer than the {floor:g} m the safety check requires. Stage 2 will "
+                                        "reject the show at takeoff. Use a grid spacing of at least that."})
+        lo, hi = holding_region_bounds(n, *area.args)
+        summary.append({
+            **{k: v for k, v in declared.items() if k != "slot_count"},
+            "slot_count": n,
+            "layers": capacity["layers_used"],
+            "slots_bbox_min": (slots.min(axis=0) if len(slots) else lo).tolist(),
+            "slots_bbox_max": (slots.max(axis=0) if len(slots) else hi).tolist(),
+            "region_min": lo.tolist(),
+            "region_max": hi.tolist(),
+            "capacity": capacity,
+            "gatekeeper_floor_m": floor,
+        })
+    for a, b, gap, needed in areas_too_close(areas, counts):
+        warnings.append({"path": "/project_metadata/holding_areas",
+                         "message": f"Holding areas {a + 1} and {b + 1} are {gap:.2f} m apart, closer than their "
+                                    f"safe distance of {needed:g} m: drones taking off from one fly through the "
+                                    "other's keep-out zone. Stage 2 may fail to keep them out."})
+    return summary, warnings
+
+
 def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
     meta = data["project_metadata"]
-    ha = meta["holding_area"]
     d_min = meta["min_distance_m"]
     warnings = []
     keyframes = []
@@ -218,25 +265,14 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
     if overlap:
         warnings.append({"path": "/keyframes/0",
                          "message": f"{overlap} of the {len(first)} targets of the first formation "
-                                    f"({data['keyframes'][0]['shape_name']}) are inside the holding area, not on a "
+                                    f"({data['keyframes'][0]['shape_name']}) are inside "
+                                    f"{'a' if len(holding_areas(meta)[0]) > 1 else 'the'} holding area, not on a "
                                     "parking slot. Drones "
                                     "leaving the upper layers then have to pass through parked drones, which Stage 2 "
                                     "usually cannot make safe. Move the holding area away from the formation."})
 
-    capacity = holding_capacity(meta, slots)
-    if capacity["widened"]:
-        warnings.append({"path": "/project_metadata/holding_area",
-                         "message": f"The holding area ({ha['size'][0]:g} × {ha['size'][1]:g} m, up to "
-                                    f"{capacity['max_layers']} layers {capacity['layer_spacing_m']:g} m apart) has room "
-                                    f"for {capacity['capacity']} drones, and the fleet has {meta['fleet_size']}. "
-                                    f"Phase 1 widened it to {capacity['width_used_m']:.1f} m along X to fit "
-                                    "everyone, so it covers more ground than its size says."})
-    floor = gatekeeper_floor_default()
-    if floor is not None and ha["grid_spacing_m"] < floor:
-        warnings.append({"path": "/project_metadata/holding_area/grid_spacing_m",
-                         "message": f"Parked drones are {ha['grid_spacing_m']:g} m apart, closer than the "
-                                    f"{floor:g} m the safety check requires. Stage 2 will reject the show at "
-                                    "takeoff. Use a grid spacing of at least that."})
+    holding, holding_warnings = holding_summary(meta)
+    warnings.extend(holding_warnings)
 
     waiting, waiting_warnings = waiting_summary(data)
     warnings.extend(waiting_warnings)
@@ -247,14 +283,8 @@ def summarize(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]
         "total_duration_sec": meta["total_duration_sec"],
         "min_distance_m": d_min,
         "keyframes": keyframes,
-        "holding_area": {
-            **ha,
-            "layers": int(len(np.unique(np.round(slots[:, 2], 6)))),
-            "slots_bbox_min": slots.min(axis=0).tolist(),
-            "slots_bbox_max": slots.max(axis=0).tolist(),
-            "capacity": capacity,
-            "gatekeeper_floor_m": floor,
-        },
+        # One entry per holding area, in list order (a file with the older single holding_area has one).
+        "holding_areas": holding,
         "waiting_areas": waiting,
         "first_formation_targets_in_holding_area": overlap,
         # Drones the first formation doesn't use, exported on their own holding slots: not an overlap.

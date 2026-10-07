@@ -134,7 +134,7 @@ def test_validate_reports_holding_area_capacity(tmp_path, fleet, widened):
     code, events = bridge("validate", str(write(tmp_path, "show.json", data)))
     assert code == 0
     validation = first(events, "validation")
-    capacity = validation["summary"]["holding_area"]["capacity"]
+    capacity = validation["summary"]["holding_areas"][0]["capacity"]
     assert capacity["widened"] is widened
     messages = " ".join(w["message"] for w in validation["warnings"])
     assert ("Phase 1 widened it" in messages) is widened

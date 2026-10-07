@@ -576,6 +576,14 @@ def run_suggest(run_dir: Path, scenario_id: str | None, window: float | None, ru
             target_sec=(e or {}).get("target_duration_sec"), attempts=(e or {}).get("attempts"),
             farthest_drone=row["farthest_drone"], farthest_m=row["farthest_m"],
             reversed_takeoff=(e or {}).get("method") == "reversed_takeoff")
+    # With several holding areas, the suggestions name the farthest drone's home area.
+    from stage1_designer.core.holding_area import areas_from_metadata, home_areas
+
+    areas, counts = areas_from_metadata(phase1["project_metadata"])
+    home = home_areas(counts) if len(areas) > 1 else None
+    for f in facts.values():
+        if home is not None and f.farthest_drone is not None and 0 <= f.farthest_drone < len(home):
+            f.farthest_area = int(home[f.farthest_drone])
     candidates = [AbortPoint(r["formation"], r["time_sec"], r["duration_sec"]) for r in estimates["points"]]
     result = suggestions(timing, durations, abort_points(points), rule["reaction_s"], rule["margin_s"], window,
                          facts, candidates, rule)

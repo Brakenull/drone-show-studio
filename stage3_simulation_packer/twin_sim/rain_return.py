@@ -388,6 +388,7 @@ class ReturnFacts:
     attempts: int | None = None
     farthest_drone: int | None = None     # the drone with the longest way home, which sets T_min
     farthest_m: float | None = None
+    farthest_area: int | None = None      # that drone's home holding area (0-based); None with one area
     reversed_takeoff: bool = False        # the takeoff flown backwards: nothing to re-plan
 
 
@@ -515,7 +516,8 @@ def suggestions(timing: ShowTiming, durations: dict[int, float], points: list[Ab
                     attempts=f.attempts)
             else:
                 add(FASTER_RETURN, k, 0.0, estimate=False, action=None, possible=False, return_sec=f.planned_sec,
-                    farthest_drone=f.farthest_drone, farthest_m=f.farthest_m)
+                    farthest_drone=f.farthest_drone, farthest_m=f.farthest_m,
+                    farthest_area=f.farthest_area)
 
         # The formation whose own return drives the gap: how much shorter it must be (a Phase 1 change:
         # bring the formation closer to the holding area, lower it, or move it earlier in the show).
@@ -532,7 +534,8 @@ def suggestions(timing: ShowTiming, durations: dict[int, float], points: list[Ab
                 u = worst[1]
                 add(DESIGN, k, own, estimate=False, action=None, return_sec=d_k, short_sec=short,
                     return_needed_sec=d_k - short, move_sec=max(0.0, timing.arrival[k] - u), return_leg=leg,
-                    farthest_drone=f.farthest_drone, farthest_m=f.farthest_m)
+                    farthest_drone=f.farthest_drone, farthest_m=f.farthest_m,
+                    farthest_area=f.farthest_area)
 
     order = {EARLIER_TRIGGER: 3, ABORT_POINTS: 0, PLAN_RETURN: 1, FASTER_RETURN: 2, DESIGN: 4}
     items.sort(key=lambda i: (-round(i["closes_sec"], 6), order[i["kind"]]))

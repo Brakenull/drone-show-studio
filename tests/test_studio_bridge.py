@@ -307,3 +307,67 @@ def test_replay_uses_the_designs_ground_level(tmp_path):
     assert raised["ground_z_m"] == 1.0
     assert len(raised["below_ground"]) == 4  # all four start below a ground raised to 1 m
     assert all(g["min_z_m"] == pytest.approx(0.0, abs=1e-6) for g in raised["below_ground"])
+
+
+def _two_area_file():
+    """The smoke-test show with its 4 drones split over two holding areas: area 1 holds 2 (one row
+    of a 2 x 0 m area, one layer under max_height), area 2 the other 2. Its first formation is
+    the whole fleet, so no padding moves."""
+    data = build_phase1_json()
+    meta = data["project_metadata"]
+    first_area = {**meta.pop("holding_area"), "size": [2.0, 0.0], "max_height": 1.0, "show_clearance_m": 5.0}
+    meta["holding_areas"] = [{**first_area, "slot_count": 2},
+                             {**first_area, "center": [0.0, -20.0, 0.0], "slot_count": 2}]
+    meta["version"] = "1.8.0"
+    return data
+
+
+def test_validate_reports_every_holding_area(tmp_path):
+    code, events = bridge("validate", str(write(tmp_path, "two.json", _two_area_file())))
+    assert code == 0
+    validation = first(events, "validation")
+    assert validation["ok"], validation["errors"]
+    areas = validation["summary"]["holding_areas"]
+    assert [a["slot_count"] for a in areas] == [2, 2]
+    assert [a["capacity"]["capacity"] for a in areas] == [2, 2]
+    assert not any(a["capacity"]["widened"] for a in areas)
+    assert not any("apart" in w["message"] for w in validation["warnings"])
+
+    near = _two_area_file()
+    near["project_metadata"]["holding_areas"][1]["center"] = [0.0, -3.0, 0.0]  # 3 m away, 5 m needed
+    code, events = bridge("validate", str(write(tmp_path, "near.json", near)))
+    warnings = first(events, "validation")["warnings"]
+    assert any("Holding areas 1 and 2 are" in w["message"] for w in warnings)
+
+
+def test_replay_overlays_carry_every_holding_area_and_home_areas():
+    from tools.studio_bridge.stage2_job import _holding_overlay
+
+    meta = _two_area_file()["project_metadata"]
+    overlay = _holding_overlay(meta)
+    assert [len(a["slots"]) for a in overlay] == [2, 2]
+    assert overlay[1]["center"] == [0.0, -20.0, 0.0]
+
+
+def test_convert_holding_layout_adds_an_area(tmp_path):
+    sys.path.insert(0, str(REPO / "tools" / "scripts"))
+    from convert_holding_layout import convert, padding_count
+
+    from stage1_designer.core.holding_area import areas_from_metadata, compute_all_holding_positions
+
+    data = build_phase1_json()
+    meta = data["project_metadata"]
+    meta["fleet_size"] = 6
+    meta["holding_area"].update({"size": [2.0, 0.0], "max_height": 1.0, "grid_spacing_m": 2.0})
+    # A first formation of 4 points plus 2 drones parked on the first two slots.
+    pads = [[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    kf = data["keyframes"][0]
+    kf["points"] += [{"index": 4 + i, "pos": p, "color": [0, 0, 0]} for i, p in enumerate(pads)]
+    data["keyframes"] = [kf]
+    assert padding_count(np.array([p["pos"] for p in kf["points"]]), meta) == 2
+
+    convert(data, 2.0, False, None, [(0.0, -20.0, 0.0)])
+    assert "holding_area" not in meta and meta["version"] == "1.8.0"
+    assert [a["slot_count"] for a in meta["holding_areas"]] == [2, 4]  # list order: the last takes the rest
+    slots = compute_all_holding_positions(*areas_from_metadata(meta))
+    assert np.allclose([p["pos"] for p in kf["points"][-2:]], slots[:2])

@@ -180,7 +180,7 @@ def test_each_return_gets_a_replay_of_the_show_then_the_flight_home(tmp_path):
         assert back["method"] == entry["method"]
         assert header["t0"] == 0.0
         assert header["t1"] == pytest.approx(entry["abort_time_sec"] + entry["flown_duration_sec"])
-        assert header["overlays"]["holding_area"] == show_header["overlays"]["holding_area"]
+        assert header["overlays"]["holding_areas"] == show_header["overlays"]["holding_areas"]
         n, frames = header["fleet_size"], header["frames"]
         assert (returns / f"replay_{k}" / "positions.f32").stat().st_size == frames * n * 3 * 4
 

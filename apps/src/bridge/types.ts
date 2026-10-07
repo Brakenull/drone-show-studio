@@ -265,6 +265,8 @@ export interface Suggestion {
     attempts?: number | null;
     farthest_drone?: number | null;
     farthest_m?: number | null;
+    /** The farthest drone's home holding area (0-based); null with one area. */
+    farthest_area?: number | null;
     short_sec?: number;
     return_needed_sec?: number;
     move_sec?: number;
@@ -452,7 +454,8 @@ export interface ValidationSummary {
   total_duration_sec: number;
   min_distance_m: number;
   keyframes: KeyframeSummary[];
-  holding_area: {
+  /** One entry per holding area, in list order (a file with the older single holding_area has one). */
+  holding_areas: {
     center: Vec3;
     size: [number, number];
     max_height: number;
@@ -460,6 +463,8 @@ export interface ValidationSummary {
     layer_spacing_m: number;
     /** Schema 1.7.0: alternate layers shifted half a slot (absent in older files). */
     staggered_layers?: boolean;
+    /** The drones whose home area this is. */
+    slot_count: number;
     layers: number;
     /** Phase 1's layout rules applied to the declared area (tools/studio_bridge/validate.py). */
     capacity: {
@@ -475,7 +480,7 @@ export interface ValidationSummary {
       width_used_m: number;
     };
     gatekeeper_floor_m: number | null;
-  };
+  }[];
   first_formation_targets_in_holding_area: number;
   /** Drones the first formation doesn't use, left parked on their holding slots (not an overlap). */
   first_formation_parked?: number;

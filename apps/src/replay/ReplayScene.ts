@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import { locate, positionAt, referenceAt } from "./sampling";
-import type { ReplayData, V3 } from "./types";
+import type { HoldingOverlay, ReplayData, V3 } from "./types";
 import { WeatherLayer } from "./WeatherLayer";
 
 const NIGHT = 0x0f0f0f;
@@ -139,9 +139,14 @@ export class ReplayScene {
     this.scene.add(grid);
   }
 
+  /** Each holding area's slots and the outline of its lowest layer. */
   private addHoldingArea() {
-    const ha = this.data.header.overlays.holding_area;
-    if (!ha || ha.slots.length === 0) return;
+    const { holding_areas, holding_area } = this.data.header.overlays;
+    for (const ha of holding_areas ?? (holding_area ? [holding_area] : [])) this.addOneHoldingArea(ha);
+  }
+
+  private addOneHoldingArea(ha: HoldingOverlay) {
+    if (ha.slots.length === 0) return;
     const pts = ha.slots.map((s) => toThree(s));
     const pads = new THREE.Points(
       new THREE.BufferGeometry().setFromPoints(pts),

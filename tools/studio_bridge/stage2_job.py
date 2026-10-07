@@ -13,7 +13,7 @@ from .events import EXIT_CRITERION, EXIT_INPUT, EXIT_INTERNAL, EXIT_OK, emit, lo
 from .paths import REPO_ROOT, find_extension_dir, import_drone_core
 from .replay_builder import GROUND_Z_M, build_replay, join_failure_show
 from .runs import now_iso, read_run, update_run, write_json_atomic
-from .validate import holding_positions
+from .validate import holding_areas
 
 FAILURE_FILE = "failure.json"
 CONTRACT_JSON = "trajectory_splines.json"
@@ -39,6 +39,15 @@ def gatekeeper_floor(run_dir: Path) -> float | None:
         return None
 
 
+def _holding_overlay(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each holding area with its own drones' slots, for the 3D views."""
+    from stage1_designer.core.holding_area import compute_holding_positions
+
+    areas, counts = holding_areas(meta)
+    return [{"center": list(a.center), "size": list(a.size), "grid_spacing_m": a.grid_spacing_m,
+             "slots": compute_holding_positions(n, *a.args).round(4).tolist()} for a, n in zip(areas, counts)]
+
+
 def _waiting_overlay(meta: dict[str, Any]) -> list[dict[str, Any]]:
     """Each waiting area (schema 1.7.0) with its slots, for the 3D views."""
     from stage1_designer.core.waiting_area import areas_from_metadata, compute_waiting_positions
@@ -49,10 +58,14 @@ def _waiting_overlay(meta: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _overlays(run_dir: Path, failure: dict[str, Any] | None) -> dict[str, Any]:
+    from stage1_designer.core.holding_area import home_areas
+
     phase1 = _load_json(run_dir / "input" / "phase1.json")
     meta = phase1["project_metadata"]
     overlays: dict[str, Any] = {
-        "holding_area": {**meta["holding_area"], "slots": holding_positions(meta).round(4).tolist()},
+        "holding_areas": _holding_overlay(meta),
+        # Each drone's home area (drone i takes off from slot i), for the drone inspector.
+        "home_area": home_areas(holding_areas(meta)[1]).tolist(),
         "waiting_areas": _waiting_overlay(meta),
         "keyframes": [{"shape_name": kf["shape_name"], "time_sec": kf["time_sec"]} for kf in phase1["keyframes"]],
         "nominal_min_distance_m": meta["min_distance_m"],
