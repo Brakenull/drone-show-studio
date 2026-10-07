@@ -2,18 +2,83 @@
 
 All notable changes to Drone Show Studio are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## Release notes (1.2.1 — 2026-10-05)
+## Release notes (1.2.2 — 2026-10-07)
 
-**Rain return planning now tells you how to close the gaps, and the flights home travel with the show.**
+**A show can now take off from several holding areas.**
 
-- **Suggestions for uncovered moments.** When a rain window doesn't cover the whole show, the readiness panel lists what would help, most useful first: plan returns from inside a long move, start the return earlier, plan a missing return path, re-plan a slow return, or move a formation closer to the holding area. Each shows how much of the gap it closes, and one click acts on it.
-- **Return paths from inside a move.** The fleet no longer has to finish a long move before turning for home. On `200_cube`, one such return cut the rain window the show needs from 126 s to 97 s, and it flew home in the digital twin 29 s ahead of the rain limit.
-- **Flights home in the flight files.** Each drone's file now carries its planned flights home and a table saying which one to take when the return is called. This is a new file format (version 2).
-- **Fixes:** planning from a suggestion now shows its progress where you clicked, and weather values beside the timeline can be cleared while typing.
+- **Several holding areas.** In the Blender add-on, a fleet too big for one holding area no longer has to widen it: add a second area (or more) anywhere on the field. The fleet fills them in list order, every area launches its rows together, and the drones land on the nearest free pads of any area.
+- **Shorter rain returns with two areas.** Landing in whichever area is nearest, rather than the area a drone took off from, kept the two groups from crossing on the way home: on a 300-drone show with areas north and south of the show, the longest rain return went from 119 s to 83 s.
+- **What you check is what you export.** The add-on samples every pass with one seed (Preview Sample picks a new one), keeps a passed Check Kinematics until something changes, and Export writes exactly that result.
+- **Fixes:** Check Kinematics no longer flags a false over-speed when a formation has fewer points than the fleet, and waiting areas that are too small now grow evenly instead of only the last one.
+- **In the desktop app:** one capacity gauge and one replay outline per holding area, a warning when two areas are too close, and rain suggestions that name the area a drone lands in.
 
-**Before you upgrade:** anything that reads flight files must handle version 2. No drone firmware does yet, and the command that tells the fleet to return isn't built, so the flights home can be planned, simulated and packed but not flown by real drones.
+**Before you upgrade:** files exported by add-on 1.8.0 (schema 1.8.0) need this version of Stage 2 and the desktop app; older versions can't read them. Files from older add-ons still work everywhere. On the 300-drone test show with two areas, the stress test failed: 5 of 100 flights crashed, all the same two drones flying side by side during the takeoff.
 
 ## [Unreleased]
+
+## [1.2.2] — 2026-10-07
+
+A show can now take off from several holding areas. A fleet too big for one area used to make the add-on widen it (a 40 × 10 m area became 46 m wide for 500 drones); now the designer adds a second area anywhere on the field. Stage 2 launches every area's rows together, keeps drones out of every area they don't take off from or land in, and lands each drone on the nearest free pad of any area. The add-on also samples every pass with one seed and exports exactly the result Check Kinematics passed, and its speed check no longer reports a false over-speed when a formation has fewer points than the fleet.
+
+### Added
+
+#### Several holding areas (Blender add-on 1.8.0, schema 1.8.0)
+
+- **A list of holding areas** with add and remove, each with its own center, size, max height, slot spacing, layer gap, shifted layers and safe distance to show. A scene saved with one holding area opens as before; clicking + turns it into the first item and adds a copy beside it, far enough away not to lock Export.
+- **How the fleet is split:** the areas fill in list order, each taking as many drones as its layers under its max height hold; only the last one widens if the fleet still doesn't fit. Drone *i* takes off from slot *i* of all the areas' slots in list order. The panel shows each area's drones and layers, or "no drones" when the areas before it hold the fleet.
+- **Scene objects per area:** `DSS_HoldingArea_<n>_Volume`, `_Slots` and `_Clearance`; grab an area's box to move that area. The old unnumbered objects are replaced.
+- **Checks that lock Export:** the safe distance to the show, the layer gap and the ground level, each per area; two holding areas closer than the larger of their safe distances (new); waiting areas against every holding area.
+- **Export:** `project_metadata.holding_areas`, each with its `slot_count`, replaces `holding_area`. The validator checks that the counts add up to the fleet and that the first formation's spare drones sit on holding slots.
+
+#### Several holding areas (path planning, desktop app)
+
+- **Path planning** reads both formats: `holding_areas`, or the older single `holding_area` as one area of the whole fleet.
+  - Row *r* of every area takes off in the same wave.
+  - On the return leg, mid-show stops on a pad and every rain return, a drone lands on any free pad of any area. The assignment picks the nearest, so every area gets back as many drones as took off from it, not necessarily the same ones.
+  - Each area has its own keep-out zone. A drone may enter only the zone of the area it takes off from, lands in or parks in, during that move; it keeps out of every other area's zone, during takeoff and landing too.
+  - The result's metadata gains `holding_areas` and `takeoff_area` (per drone); `holding_clearance_m` is the largest safe distance.
+- **Desktop app:**
+  - The Input page shows one capacity gauge per holding area and warns per area (widened, launch grid tighter than the safety check), plus when two areas are too close to each other.
+  - The replay draws each area's pads. With more than one area, a selected drone's line says which area it took off from.
+  - The rain return suggestions name the area the farthest drone lands in, for example "move *formation* closer to holding area 2".
+- **Tools:** `convert_holding_layout.py` reads both formats, writes schema 1.8.0 and can add areas to an existing export (`--area X,Y,Z`, repeatable); `convert_waiting_areas.py` reads both formats.
+
+#### One sampling for preview, check and export (Blender add-on)
+
+- **Sample Seed** (Source & Fleet box): Preview Sample, the live preview, Check Kinematics, Auto-Fix and Export all sample with it, so the export is the sampling you previewed. Preview Sample picks a new seed on every click; keep clicking until the layout looks right.
+- **A passed check is kept:** after Check Kinematics passes, it is disabled ("Passed, nothing changed since: Export writes this result") until anything that changes the show changes: an object, a mesh, an animation, a setting, a timeline marker, undo or a file load. Export then writes exactly those keyframes without sampling again.
+
+### Changed
+
+- **Waiting areas that are too small grow evenly:** every area grows by the same number of slots, instead of only the last one. A 500-drone show's two 10 × 10 m areas for 396 spare drones now get 198 slots each (28 × 26 m), not 36 + 360 (the second 36 × 36 m). Files exported before keep their slot counts until exported again.
+- **Keep-out zones in path planning** (they apply to every show whose holding area has a safe distance):
+  - Paths now plan to 0.25 m beyond the safe distance; the safety check still requires the safe distance itself.
+  - Where a long move is split into parts, a part boundary inside a zone is moved out and spread from its neighbours in turns, and it passes along the zone instead of heading into it.
+  - Before this, two drones side by side could be moved onto the same spot of a zone's edge (0.29 m apart), and a returning drone could cut through another area's zone.
+- **The validation summary's `holding_area` is now `holding_areas`** (a list, one entry per area, each with `slot_count`, capacity and region), and the replay overlay's `holding_area` is now `holding_areas` plus `takeoff_area`. Replays built before still draw.
+- The clearance error of path planning now also gives the position where a drone came too close.
+
+### Fixed
+
+- **Check Kinematics reported a false over-speed** when two formations had a different number of points and the fleet was larger than the shape: it compared a formation point with a parking slot no drone flies between. Drones staying in the formation are now compared point to point, joining or leaving drones are matched to the nearest parking slots, and parked drones are left out. A cube growing 1.5× while moving 10 m in 10 s read 5.0–5.6 m/s; it now reads 3.5–3.7 m/s.
+
+### Verified
+
+- 373 automated Python tests pass (357 in 1.2.1). New ones cover the area split and layout (and that the add-on and path planning lay out the same slots for two areas), a two-area show planned end to end (rows launch together, every pad used once, keep-out per area, a planned return path), validation and conversion with two areas. Headless Blender checks cover adding and removing areas, their scene objects, the too-close lock and a two-area export, and the passed-check lock.
+- **One-area shows re-planned with the keep-out changes:** `200_cone` and `300_cube` keep every transition on its first attempt with the same durations and show length; worst gaps 1.486 m or more.
+- **A 300-drone show with two areas,** one south and one north of the show (166 + 134 drones), from Blender:
+  - Every transition passed its first attempt (worst gap 1.493 m); the show is 301.7 s.
+  - No drone came within 21 m of an area it didn't use, against a 10 m safe distance.
+  - Return paths from Shape_550 took 56.5 s, from Shape_1200 66.7 s and from Shape_1700 82.6 s. With each drone tied to the area it took off from they took 60.8, 78.6 and 118.9 s, because the two groups crossed on the way home.
+
+### Known issues
+
+- **The 300-drone two-area show fails the stress test:** 5 of 100 flights crash, all the same two drones, which the plan flies side by side about 1.6 m apart for some 25 s during the takeoff. The planner accepts that spacing, but even in still air the simulated drones stray up to 0.86 m from their paths. An earlier plan of the same file, which paired the drones differently, had no crash.
+- **A far holding area lengthens the takeoff:** the first formation's spare drones stay on the first pads in list order, so the other areas send all their drones. On the 300-drone show the takeoff took 57.9 s against 35.1 s with one area.
+- **Mid-show stops without waiting areas** use the first pads in list order, wherever they are, not the free pads nearest the formation.
+- **The add-on's return-leg estimate** matches the last formation against every slot; it is a lower bound.
+- The desktop app's new holding-area views were checked through their data and the type checker, not on screen.
+- The other known issues of 1.2.1 remain, except the false over-speed of Check Kinematics.
 
 ## [1.2.1] — 2026-10-05
 
