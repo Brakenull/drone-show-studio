@@ -1179,6 +1179,13 @@ input[type="radio"]:focus-visible {
 .mc-flights {
   width: 8.5rem;
 }
+.mc-show-start {
+  width: 13.5rem;
+}
+.mc-weather-hint {
+  max-width: 62ch;
+  margin: 0.75rem 0 0;
+}
 .mc-running {
   flex-wrap: wrap;
   padding: 1rem 1.5rem;

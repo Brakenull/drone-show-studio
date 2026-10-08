@@ -29,3 +29,4 @@ runs/
 DESIGN.md
 .mcp.json
 skills-lock.json
+.env

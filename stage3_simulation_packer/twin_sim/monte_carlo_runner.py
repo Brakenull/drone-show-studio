@@ -16,6 +16,12 @@ Usage:
     python -m stage3_simulation_packer.twin_sim.monte_carlo_runner trajectory_splines.json
         [--profile my_drone.json] [--runs 100] [--device auto|gpu|cpu|opencl:P:D] [--batch 0]
         [--report out/monte_carlo_report.json] [--nominal-only]
+        [--forecast --site LAT,LON | --project project_intermediate.json --show-start YYYY-MM-DDTHH:MM
+         [--model ecmwf_ifs025] [--api-key KEY] [--forecast-file forecast.json]]
+
+With --forecast, each run flies one member of an Open-Meteo ensemble forecast for the show's site and
+time (run i flies member i mod M) instead of a random weather draw; hardware, RTK and launch spread
+are drawn as before. The raw forecast is saved next to the report as forecast.json.
 
 Runs are simulated in batches on the OpenCL device (`DigitalTwin.run_batch`);
 a run's result does not depend on the batch size.
@@ -38,6 +44,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .devices import DeviceNotFoundError
+from .forecast import DEFAULT_MODEL, ForecastError, ForecastSource
 from .loaders.arrow_loader import TrajectoryContractError, load_trajectories
 from .profile import DroneProfile, load_profile
 
@@ -189,6 +196,8 @@ def summarize(runs: list[dict[str, Any]], nominal: dict[str, Any] | None) -> dic
         "worst_tracking_error_m": max(r["max_tracking_error_m"] for r in runs) if runs else None,
         "mean_realtime_factor": float(np.mean([r["realtime_factor"] for r in runs])) if runs else None,
     }
+    if runs and "rain_alert" in runs[0]:
+        summary["rain_alert_runs"] = [r["run"] for r in runs if r["rain_alert"]]
     if nominal is not None:
         summary["nominal"] = nominal
     return summary
@@ -205,17 +214,27 @@ def auto_batch_size(fleet_size: int, runs: int) -> int:
 def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: StressConfig | None = None,
                     device: str | None = None, batch: int = 0, nominal_only: bool = False,
                     progress: bool = False,
-                    on_record: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+                    on_record: Callable[[dict[str, Any]], None] | None = None,
+                    forecast: ForecastSource | None = None) -> dict[str, Any]:
     """`batch` is the number of runs simulated together (0 = `auto_batch_size`). `progress` prints one line
     per run (for the CLI). `on_record` is called with a copy of each finished
     record: the nominal one first (run = -1), then runs 0..N-1 in order, one batch at a time. An exception
-    it raises stops the test (later batches are not started) and propagates."""
+    it raises stops the test (later batches are not started) and propagates. With `forecast`, run i flies
+    member i mod M of that ensemble forecast instead of a random weather draw."""
     from .simulator import DigitalTwin, Disturbances, SimConfig
 
     cfg = cfg or StressConfig()
     profile = load_profile(profile_path)
     show = load_trajectories(source)
     twin = DigitalTwin(show, profile, device=device)
+    duration = twin.pw.end_time_sec - twin.pw.start_time_sec
+    fc = None
+    if forecast is not None and not nominal_only and cfg.runs > 0:
+        from . import forecast as fcm
+        from .scenario_runner import field_center
+        fc = fcm.prepare(forecast, profile, twin.pw, duration)
+        center = field_center(twin.pw)
+        alert = fc.members[0].scenario.rain_rule["alert_mm_h"]
 
     started = time.perf_counter()
     nominal_dist = Disturbances.nominal(profile, twin.n, seed=cfg.base_seed)
@@ -229,13 +248,25 @@ def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: Stress
     runs: list[dict[str, Any]] = []
     batch = batch if batch > 0 else auto_batch_size(twin.n, cfg.runs)
     if not nominal_only and cfg.runs > 0:
-        duration = twin.pw.end_time_sec - twin.pw.start_time_sec
         for first in range(0, cfg.runs, batch):
             indices = range(first, min(first + batch, cfg.runs))
-            dists = [sample_disturbances(profile, twin.n, duration, i, cfg) for i in indices]
+            if fc is None:
+                dists = [sample_disturbances(profile, twin.n, duration, i, cfg) for i in indices]
+            else:
+                flights = [_forecast_flight(fc, i, profile, twin.n, duration, cfg, center) for i in indices]
+                dists = [d for _, _, d in flights]
             results = twin.run_batch(dists, SimConfig(tail_sec=cfg.tail_sec))
-            for i, dist, result in zip(indices, dists, results):
+            for k, (i, dist, result) in enumerate(zip(indices, dists, results)):
                 record = evaluate_run(i, dist, result)
+                if fc is not None:
+                    member, scenario, _ = flights[k]
+                    record["member"] = member.index
+                    record["scenario"] = {"mean_wind_mps": round(member.wind_mean_mps, 3),
+                                          "max_wind_mps": round(member.wind_max_mps, 3),
+                                          "gust_peak_mps": round(scenario.gusts[0]["peak_mps"], 3),
+                                          "ambient_c": round(member.ambient_c, 2),
+                                          "rain_max_mm_h": round(member.rain_max_mm_h, 3)}
+                    record["rain_alert"] = member.rain_max_mm_h >= alert
                 runs.append(record)
                 if progress:
                     status = "PASS" if record["passed"] else "FAIL"
@@ -251,16 +282,37 @@ def run_monte_carlo(source: Any, profile_path: str | None = None, *, cfg: Stress
         "device": twin.device.label,
         "batch_size": batch,
         "fleet_size": twin.n,
-        "show_duration_sec": round(twin.pw.end_time_sec - twin.pw.start_time_sec, 3),
+        "show_duration_sec": round(duration, 3),
         "criteria": {"d_crash_m": D_CRASH_M, "d_warning_m": D_WARNING_M, "min_landing_soc": MIN_LANDING_SOC},
         "config": asdict(cfg),
         "summary": summarize(runs, nominal),
         "wall_time_sec": round(time.perf_counter() - started, 3),
         "runs": runs,
     }
+    if fc is not None:
+        report["weather_source"] = {
+            "provider": "open-meteo", "model": forecast.model, "members": len(fc.members),
+            "site": list(forecast.site) if forecast.site else None, "show_start": forecast.show_start,
+            "fetched_at": fc.fetched_at, "forecast_file": forecast.forecast_file or forecast.save_to,
+            "show_height_m": round(fc.show_height_m, 2), "levels_m": fc.levels_m,
+            "peak_factor": forecast.peak_factor}
+        report["summary"]["rain_alert_members"] = round(
+            sum(m.rain_max_mm_h >= alert for m in fc.members) / len(fc.members), 4)
     if nominal_only:
         report["summary"]["passed"] = nominal["passed"]
     return report
+
+
+def _forecast_flight(fc, i: int, profile: DroneProfile, n: int, duration: float, cfg: StressConfig, center):
+    """(member, scenario, disturbances) of run i: member i mod M, this run's seed."""
+    from .forecast import flight_scenario
+    from .weather import scenario_disturbances
+
+    member = fc.members[i % len(fc.members)]
+    scenario = flight_scenario(member, cfg.base_seed + 7919 * i, duration)
+    dist = scenario_disturbances(scenario, profile, n, duration + cfg.tail_sec, center)
+    dist.ambient_c = member.ambient_c
+    return member, scenario, dist
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -276,13 +328,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gust-max", type=float, default=StressConfig.gust_peak_max_mps)
     parser.add_argument("--nominal-only", action="store_true", help="Only fly the undisturbed nominal case")
     parser.add_argument("--report", default="monte_carlo_report.json", help="Where to write the JSON report")
+    fc = parser.add_argument_group("forecast weather (Open-Meteo ensemble)")
+    fc.add_argument("--forecast", action="store_true", help="Fly ensemble forecast members instead of random weather")
+    fc.add_argument("--site", default=None, help="LAT,LON of the show")
+    fc.add_argument("--project", default=None, help="project_intermediate.json: the site from its origin_gps")
+    fc.add_argument("--show-start", default=None, help="YYYY-MM-DDTHH:MM, local time at the site")
+    fc.add_argument("--model", default=DEFAULT_MODEL,
+                    help=f"Ensemble model (default {DEFAULT_MODEL}; set OPEN_METEO_MODEL to change it)")
+    fc.add_argument("--api-key", default=None, help="Open-Meteo customer API key (else OPEN_METEO_API_KEY from the "
+                                                    "environment or the repo's .env; none = free, non-commercial API)")
+    fc.add_argument("--forecast-file", default=None, help="Reuse a saved forecast.json instead of fetching")
     args = parser.parse_args(argv)
 
     cfg = StressConfig(runs=args.runs, base_seed=args.seed, wind_mean_max_mps=args.wind_max,
                        gust_peak_max_mps=args.gust_max)
     try:
+        forecast = _forecast_source(args) if args.forecast or args.forecast_file else None
         report = run_monte_carlo(args.input, args.profile, cfg=cfg, device=args.device, batch=max(0, args.batch),
-                                 nominal_only=args.nominal_only, progress=True)
+                                 nominal_only=args.nominal_only, progress=True, forecast=forecast)
     except (TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -298,8 +361,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Buffer Breach Warning in run(s): {s['warning_runs']}")
     if s["brownout_runs"]:
         print(f"  Brownout Risk in run(s): {s['brownout_runs']}")
+    if "rain_alert_members" in s:
+        print(f"  Rain reaches the alert level in {s['rain_alert_members'] * 100:.0f} % of forecast members")
     print(f"Report: {args.report}")
     return 0 if s["passed"] else 1
+
+
+def _forecast_source(args) -> ForecastSource:
+    if not args.show_start:
+        raise ForecastError("--show-start is required with --forecast")
+    site = None
+    if args.site:
+        try:
+            lat, lon = (float(v) for v in args.site.split(","))
+        except ValueError:
+            raise ForecastError(f"--site {args.site!r}: use LAT,LON") from None
+        site = (lat, lon)
+    elif args.project:
+        with open(args.project, encoding="utf-8") as fh:
+            gps = (json.load(fh).get("project_metadata") or {}).get("origin_gps") or {}
+        if "latitude" not in gps or "longitude" not in gps:
+            raise ForecastError(f"{args.project} has no origin_gps latitude/longitude")
+        site = (float(gps["latitude"]), float(gps["longitude"]))
+    elif not args.forecast_file:
+        raise ForecastError("give the show's site: --site LAT,LON or --project project_intermediate.json")
+    return ForecastSource(show_start=args.show_start, site=site, model=args.model, api_key=args.api_key,
+                          forecast_file=args.forecast_file,
+                          save_to=None if args.forecast_file else str(Path(args.report).with_name("forecast.json")))
 
 
 if __name__ == "__main__":

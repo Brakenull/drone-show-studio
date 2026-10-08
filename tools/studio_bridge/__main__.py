@@ -187,7 +187,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_monte_carlo(args: argparse.Namespace) -> int:
     from .stage3_job import run_monte_carlo_job
 
-    return run_monte_carlo_job(Path(args.run_dir), args.runs, args.device, args.batch, args.seed)
+    return run_monte_carlo_job(Path(args.run_dir), args.runs, args.device, args.batch, args.seed,
+                               weather=args.weather, show_start=args.show_start, model=args.model)
 
 
 def cmd_pack(args: argparse.Namespace) -> int:
@@ -283,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
     # the device instead, so this is accepted and ignored.
     p.add_argument("--workers", type=int, default=None, help=argparse.SUPPRESS)
     p.add_argument("--seed", type=int, default=None, help="Base seed (default: the runner's)")
+    p.add_argument("--weather", choices=("forecast", "random"), default="random",
+                   help="forecast: Open-Meteo ensemble for the show's site and --show-start "
+                        "(API key from OPEN_METEO_API_KEY or the repo's .env); random: drawn weather")
+    p.add_argument("--show-start", default=None, help="YYYY-MM-DDTHH:MM, local time at the site")
+    p.add_argument("--model", default=None, help="Ensemble model (default: OPEN_METEO_MODEL, else ecmwf_ifs025)")
     p.set_defaults(fn=cmd_monte_carlo)
     p = sub.add_parser("pack")
     p.add_argument("run_dir")

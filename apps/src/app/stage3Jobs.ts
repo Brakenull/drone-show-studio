@@ -3,7 +3,13 @@
 
 import { useSyncExternalStore } from "react";
 import { cancelJob, startJob } from "../bridge/api";
-import type { BridgeEvent, JobExit, McRecord, PackSummary } from "../bridge/types";
+import type {
+  BridgeEvent,
+  JobExit,
+  McRecord,
+  McWeather,
+  PackSummary,
+} from "../bridge/types";
 
 export type Stage3Part = "monte_carlo" | "pack";
 
@@ -12,7 +18,7 @@ export interface Stage3Job {
   startedAt: number; // ms epoch
   phase: string;
   /** Monte Carlo: the planned run count and the flights finished so far (nominal first, run -1). */
-  planned: { runs: number; device: string } | null;
+  planned: { runs: number; device: string; weather: McWeather } | null;
   records: McRecord[];
   /** When the calm-air (nominal) flight landed, ms epoch: the scenario flights start after it. */
   nominalAt: number | null;
@@ -39,14 +45,28 @@ function onEvent(k: string, e: BridgeEvent) {
   const job = jobs[k];
   if (!job) return;
   if (e.type === "phase") set(k, { phase: e.name });
-  else if (e.type === "mc_start") set(k, { planned: { runs: e.runs, device: e.device } });
+  else if (e.type === "mc_start")
+    set(k, {
+      planned: {
+        runs: e.runs,
+        device: e.device,
+        weather: e.weather ?? "random",
+      },
+    });
   else if (e.type === "mc_run") {
     const { type: _type, ...record } = e;
-    set(k, { records: [...job.records, record], ...(record.run < 0 ? { nominalAt: Date.now() } : {}) });
+    set(k, {
+      records: [...job.records, record],
+      ...(record.run < 0 ? { nominalAt: Date.now() } : {}),
+    });
   } else if (e.type === "pack_result") {
     const { type: _type, ...result } = e;
     set(k, { pack: result });
-  } else if (e.type === "error") set(k, { errors: [...job.errors, e.message], log: [...job.log, e.message] });
+  } else if (e.type === "error")
+    set(k, {
+      errors: [...job.errors, e.message],
+      log: [...job.log, e.message],
+    });
 }
 
 /** Starts `monte_carlo` or `pack` on a run; `args` are the command's options after the run folder. */
@@ -81,7 +101,8 @@ export async function startStage3(
     job = await startJob([part, runDir, ...args], {
       run: { dir: runDir, section: part },
       onEvent: (e) => onEvent(k, e),
-      onLog: (line) => set(k, { log: [...(jobs[k]?.log ?? []), line].slice(-MAX_LOG) }),
+      onLog: (line) =>
+        set(k, { log: [...(jobs[k]?.log ?? []), line].slice(-MAX_LOG) }),
     });
   } catch (err) {
     const exit = { code: null, cancelled: false };
@@ -95,7 +116,10 @@ export async function startStage3(
   onFinished(exit);
 }
 
-export async function cancelStage3(runId: string, part: Stage3Part): Promise<void> {
+export async function cancelStage3(
+  runId: string,
+  part: Stage3Part,
+): Promise<void> {
   const k = key(runId, part);
   const job = jobs[k];
   if (!job || job.exit || job.jobId < 0) return;
@@ -114,10 +138,15 @@ export function isStage3PartRunning(runId: string, part: Stage3Part): boolean {
 }
 
 export function isStage3Running(runId: string): boolean {
-  return (["monte_carlo", "pack"] as const).some((p) => isStage3PartRunning(runId, p));
+  return (["monte_carlo", "pack"] as const).some((p) =>
+    isStage3PartRunning(runId, p),
+  );
 }
 
-export function useStage3Job(runId: string | null, part: Stage3Part): Stage3Job | null {
+export function useStage3Job(
+  runId: string | null,
+  part: Stage3Part,
+): Stage3Job | null {
   return useSyncExternalStore(
     (fn) => {
       subscribers.add(fn);
@@ -132,5 +161,8 @@ export function useStage3Job(runId: string | null, part: Stage3Part): Stage3Job 
 export function secondsLeft(job: Stage3Job, now: number): number | null {
   const done = job.records.filter((r) => r.run >= 0).length;
   if (!job.planned || !job.nominalAt || done === 0) return null;
-  return (((now - job.nominalAt) / 1000) * Math.max(0, job.planned.runs - done)) / done;
+  return (
+    (((now - job.nominalAt) / 1000) * Math.max(0, job.planned.runs - done)) /
+    done
+  );
 }

@@ -38,7 +38,17 @@ export interface Stage3Part {
 
 export interface MonteCarloPart extends Stage3Part {
   /** `batch` since the OpenCL twin; `workers` in runs made before it (one process per CPU core). */
-  config?: { runs: number; device: string; seed: number; batch?: number; workers?: number };
+  config?: {
+    runs: number;
+    device: string;
+    seed: number;
+    batch?: number;
+    workers?: number;
+    /** Absent in runs made before the forecast test: random. */
+    weather?: McWeather;
+    show_start?: string;
+    model?: string;
+  };
   passed?: boolean;
   crash_rate?: number;
   worst_min_separation_m?: number | null;
@@ -81,7 +91,12 @@ export interface RunRecord {
   run_id: string;
   run_dir: string;
   created_at: string;
-  input: { source_path: string; sha256: string; fleet_size: number; keyframes: string[] };
+  input: {
+    source_path: string;
+    sha256: string;
+    fleet_size: number;
+    keyframes: string[];
+  };
   stage2: {
     status: RunStatus;
     started_at?: string;
@@ -158,7 +173,12 @@ export interface ScenarioResult {
   realtime_factor: number;
   criteria: { d_crash_m: number; d_warning_m: number; min_landing_soc: number };
   passed: boolean;
-  closest: { distance_m: number; a: number; b: number; time_sec: number } | null;
+  closest: {
+    distance_m: number;
+    a: number;
+    b: number;
+    time_sec: number;
+  } | null;
   largest_deviation: { distance_m: number; drone: number; time_sec: number };
   lowest_battery: { soc: number; drone: number };
   crash_pairs: McPair[];
@@ -190,7 +210,13 @@ export interface RainReturn {
   formation: number;
   formation_name: string | null;
   /** "abort_point": a return planned from a moment inside the move into the formation. */
-  method: "return_path" | "abort_point" | "return_leg" | "rest_of_show" | "none" | "landed";
+  method:
+    | "return_path"
+    | "abort_point"
+    | "return_leg"
+    | "rest_of_show"
+    | "none"
+    | "landed";
   start_sec: number;
   planned_home_sec: number | null;
   last_landing_sec: number | null;
@@ -231,15 +257,31 @@ export interface Readiness {
   error: string | null;
   end_sec: number;
   pieces: HomePiece[];
-  formations: { index: number; name: string; start_sec?: number; arrival_sec: number; return_sec: number | null }[];
+  formations: {
+    index: number;
+    name: string;
+    start_sec?: number;
+    arrival_sec: number;
+    return_sec: number | null;
+  }[];
   points?: PlannedAbortPoint[];
   return_leg_sec: number | null;
-  returns: { planned: boolean; stale: boolean; entries: ReturnEntry[]; points?: ReturnEntry[] };
+  returns: {
+    planned: boolean;
+    stale: boolean;
+    entries: ReturnEntry[];
+    points?: ReturnEntry[];
+  };
 }
 
 /** One option of the `suggest` command (twin_sim/rain_return.py `suggestions()`). */
 export interface Suggestion {
-  kind: "earlier_trigger" | "abort_points" | "plan_return" | "faster_return" | "design";
+  kind:
+    | "earlier_trigger"
+    | "abort_points"
+    | "plan_return"
+    | "faster_return"
+    | "design";
   formation: number | null;
   formation_name: string | null;
   /** Uncovered alert time this option closes on its own, in seconds. */
@@ -302,11 +344,18 @@ export interface ConditionsInfo {
     duration_sec: number;
     keyframes: string[];
     transitions: ShowTransition[];
-    legs: { takeoff?: { start_time_sec: number; end_time_sec: number } | null; return?: { start_time_sec: number; end_time_sec: number } | null };
+    legs: {
+      takeoff?: { start_time_sec: number; end_time_sec: number } | null;
+      return?: { start_time_sec: number; end_time_sec: number } | null;
+    };
   };
   scenarios: ScenarioEntry[];
   readiness: Readiness;
-  defaults: { rain_rule: RainRule; rtk_states: RtkState[]; limits: Record<string, [number, number]> };
+  defaults: {
+    rain_rule: RainRule;
+    rtk_states: RtkState[];
+    limits: Record<string, [number, number]>;
+  };
 }
 
 /** One formation's return path in stage2/returns/index.json (or, with `id`, an abort point's). */
@@ -365,7 +414,9 @@ export interface ConfigWarning {
 }
 
 /** optional_config_overrides: a nested object shaped like core_config.json. */
-export type Overrides = { [key: string]: Overrides | number | boolean | string };
+export type Overrides = {
+  [key: string]: Overrides | number | boolean | string;
+};
 
 /** Two drones' closest approach in one simulated flight. */
 export interface McPair {
@@ -376,11 +427,21 @@ export interface McPair {
 }
 
 /** One Monte Carlo flight (monte_carlo_runner.evaluate_run); run -1 is the undisturbed nominal flight. */
+export type McWeather = "forecast" | "random";
+
 export interface McRecord {
   run: number;
   seed: number;
   passed: boolean;
-  scenario: { mean_wind_mps: number; gust_peak_mps: number; ambient_c: number };
+  scenario: {
+    mean_wind_mps: number;
+    gust_peak_mps: number;
+    ambient_c: number;
+    rain_max_mm_h?: number;
+  };
+  /** Forecast test: the ensemble member this flight flew (0 = control). */
+  member?: number;
+  rain_alert?: boolean;
   min_separation_m: number | null;
   crash_pairs: McPair[];
   warning_pairs: McPair[];
@@ -407,6 +468,9 @@ export interface McSummary {
   worst_tracking_error_m: number | null;
   mean_realtime_factor: number | null;
   nominal?: McRecord;
+  /** Forecast test: flights / share of members whose rain reaches the alert level. */
+  rain_alert_runs?: number[];
+  rain_alert_members?: number;
 }
 
 /** stage3/monte_carlo_report.json (the part the UI reads). */
@@ -418,6 +482,17 @@ export interface McReport {
   summary: McSummary;
   wall_time_sec: number;
   runs: McRecord[];
+  /** Forecast test only. */
+  weather_source?: {
+    provider: string;
+    model: string;
+    members: number;
+    site: [number, number] | null;
+    show_start: string;
+    fetched_at: string | null;
+    show_height_m: number;
+    levels_m: number[];
+  };
 }
 
 /** stage3/bin/manifest.json, written by pack_to_binary. */
@@ -425,13 +500,25 @@ export interface PackManifest {
   source: string;
   file_version?: number;
   pack_id?: string;
-  tracks?: { id: string; kind: "show" | "return" | "abort_point"; formation: number | null; start_ms: number; records: number }[];
+  tracks?: {
+    id: string;
+    kind: "show" | "return" | "abort_point";
+    formation: number | null;
+    start_ms: number;
+    records: number;
+  }[];
   return_entries?: number;
   fleet_size: number;
   sampling_dt_ms: number;
   records_per_file: number;
   file_size_bytes: number;
-  files: { drone_id: number; file: string; size_bytes: number; crc32: string; verified: boolean }[];
+  files: {
+    drone_id: number;
+    file: string;
+    size_bytes: number;
+    crc32: string;
+    verified: boolean;
+  }[];
 }
 
 export interface Issue {
@@ -566,7 +653,10 @@ interface SolveAttempt extends SolveTransition {
 
 /** drone_core progress_callback events, forwarded as `solve_progress`. */
 export type SolveProgress =
-  | (SolveTransition & { event: "transition_start" | "transition_end"; show_time_sec: number })
+  | (SolveTransition & {
+      event: "transition_start" | "transition_end";
+      show_time_sec: number;
+    })
   | (SolveAttempt & { event: "attempt_start" })
   | (SolveAttempt & {
       event: "scp_iteration";
@@ -590,7 +680,13 @@ export type BridgeEvent =
   | { type: "phase"; name: string; detail: string }
   | { type: "progress"; stage: string; done: number; total: number }
   | ({ type: "solve_progress" } & SolveProgress)
-  | { type: "validation"; ok: boolean; errors: Issue[]; warnings: Issue[]; summary: ValidationSummary | null }
+  | {
+      type: "validation";
+      ok: boolean;
+      errors: Issue[];
+      warnings: Issue[];
+      summary: ValidationSummary | null;
+    }
   | {
       type: "doctor";
       repo_root: string;
@@ -600,14 +696,39 @@ export type BridgeEvent =
       device_info?: SimDevice[];
     }
   | { type: "run_created"; run_id: string; run_dir: string }
-  | { type: "stage2_result"; wall_time_sec: number; total_duration_sec: number; fleet_size: number }
-  | ({ type: "stage2_failure"; message: string; wall_time_sec: number } & Omit<FailureSummary, "violations">)
+  | {
+      type: "stage2_result";
+      wall_time_sec: number;
+      total_duration_sec: number;
+      fleet_size: number;
+    }
+  | ({ type: "stage2_failure"; message: string; wall_time_sec: number } & Omit<
+      FailureSummary,
+      "violations"
+    >)
   | { type: "replay_ready"; frames: number; fleet_size: number }
-  | { type: "mc_start"; runs: number; device: string; batch: number; seed: number }
+  | {
+      type: "mc_start";
+      runs: number;
+      device: string;
+      batch: number;
+      seed: number;
+      weather?: McWeather;
+    }
   | ({ type: "mc_run" } & McRecord)
-  | { type: "mc_result"; summary: McSummary; device: string; wall_time_sec: number }
+  | {
+      type: "mc_result";
+      summary: McSummary;
+      device: string;
+      wall_time_sec: number;
+    }
   | ({ type: "pack_result"; ok: boolean } & PackSummary)
-  | { type: "config"; fields: ConfigField[]; overrides: Overrides; warnings: ConfigWarning[] }
+  | {
+      type: "config";
+      fields: ConfigField[];
+      overrides: Overrides;
+      warnings: ConfigWarning[];
+    }
   | { type: "config_warnings"; warnings: ConfigWarning[] }
   | ({ type: "return_result" } & ReturnEntry)
   | ({ type: "conditions" } & ConditionsInfo)

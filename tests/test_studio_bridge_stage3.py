@@ -82,7 +82,7 @@ def test_monte_carlo_streams_runs_and_matches_the_cli(passed_run, tmp_path):
     mc = record(passed_run)["stage3"]["monte_carlo"]
     assert mc["status"] == "succeeded" and mc["pid"] is None
     assert mc["stage2_ended_at"] == record(passed_run)["stage2"]["ended_at"]
-    assert mc["config"] == {"runs": 2, "device": "auto", "batch": 1, "seed": start["seed"]}
+    assert mc["config"] == {"runs": 2, "device": "auto", "batch": 1, "seed": start["seed"], "weather": "random"}
 
     source = passed_run / "stage2" / "trajectory_splines.json"
     cli_report = tmp_path / "cli_report.json"

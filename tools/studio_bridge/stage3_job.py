@@ -22,6 +22,7 @@ from .runs import now_iso, read_run, update_stage3, write_json_atomic
 from .stage2_job import CONTRACT_JSON
 
 MC_REPORT = "monte_carlo_report.json"
+FORECAST = "forecast.json"
 BIN_DIR = "bin"
 MANIFEST = "manifest.json"
 # Console programs started from the (windowless) bridge would otherwise flash a console window.
@@ -61,22 +62,47 @@ def _job(run_dir: Path, part: str, body: Callable[[Path, dict[str, Any], Callabl
         return finish("failed_error", EXIT_INTERNAL, message=f"{type(exc).__name__}: {exc}")
 
 
-def run_monte_carlo_job(run_dir: Path, runs: int, device: str, batch: int, seed: int | None) -> int:
+def _site(run_dir: Path) -> tuple[float, float]:
+    """The show's site: the Phase 1 export's GPS origin."""
+    phase1 = json.loads((run_dir / "input" / "phase1.json").read_text(encoding="utf-8"))
+    gps = (phase1.get("project_metadata") or {}).get("origin_gps") or {}
+    if "latitude" not in gps or "longitude" not in gps:
+        raise ValueError("the Phase 1 export has no GPS origin, so there is no site to fetch a forecast for")
+    return float(gps["latitude"]), float(gps["longitude"])
+
+
+def run_monte_carlo_job(run_dir: Path, runs: int, device: str, batch: int, seed: int | None,
+                        weather: str = "random", show_start: str | None = None, model: str | None = None) -> int:
+    """`weather` "forecast" flies Open-Meteo ensemble members for the show's site and `show_start`
+    (the API key, if any, comes from OPEN_METEO_API_KEY); "random" draws the weather."""
     def body(source: Path, _record: dict[str, Any], finish: Callable[..., int]) -> int:
         from stage3_simulation_packer.twin_sim.devices import DeviceNotFoundError
+        from stage3_simulation_packer.twin_sim.forecast import DEFAULT_MODEL, ForecastSource
         from stage3_simulation_packer.twin_sim.loaders.arrow_loader import TrajectoryContractError
         from stage3_simulation_packer.twin_sim.monte_carlo_runner import StressConfig, run_monte_carlo
 
         report_path = run_dir / "stage3" / MC_REPORT
         report_path.unlink(missing_ok=True)
+        forecast_path = run_dir / "stage3" / FORECAST
+        forecast_path.unlink(missing_ok=True)
         cfg = StressConfig(runs=max(0, runs)) if seed is None else StressConfig(runs=max(0, runs), base_seed=seed)
-        update_stage3(run_dir, "monte_carlo", config={"runs": cfg.runs, "device": device, "batch": max(0, batch),
-                                                      "seed": cfg.base_seed})
-        emit("phase", name="simulating", detail="starting the digital twin")
-        emit("mc_start", runs=cfg.runs, device=device, batch=max(0, batch), seed=cfg.base_seed)
+        config = {"runs": cfg.runs, "device": device, "batch": max(0, batch), "seed": cfg.base_seed,
+                  "weather": weather}
+        if weather == "forecast":
+            config |= {"show_start": show_start, "model": model or DEFAULT_MODEL}
+        update_stage3(run_dir, "monte_carlo", config=config)
         try:
+            forecast = None
+            if weather == "forecast":
+                if not show_start:
+                    raise ValueError("a forecast test needs the show's start time")
+                forecast = ForecastSource(show_start=show_start, site=_site(run_dir), model=model or DEFAULT_MODEL,
+                                          save_to=str(forecast_path))
+            emit("mc_start", runs=cfg.runs, device=device, batch=max(0, batch), seed=cfg.base_seed, weather=weather)
+            emit("phase", name="simulating",
+                 detail="fetching the forecast, then starting the digital twin" if forecast else "starting the digital twin")
             report = run_monte_carlo(str(source), cfg=cfg, device=device, batch=max(0, batch),
-                                     on_record=lambda r: emit("mc_run", **r))
+                                     on_record=lambda r: emit("mc_run", **r), forecast=forecast)
         except (TrajectoryContractError, FileNotFoundError, ValueError, DeviceNotFoundError) as exc:
             emit("error", code="input", message=str(exc))
             return finish("failed_input", EXIT_INPUT, message=str(exc))

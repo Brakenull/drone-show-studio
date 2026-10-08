@@ -2,7 +2,12 @@
 // files, as three sections of one tab.
 
 import type { JobExit, RunRecord, SimDevice } from "../bridge/types";
-import { conditionsState, packState, stressState, type StageState } from "../app/stages";
+import {
+  conditionsState,
+  packState,
+  stressState,
+  type StageState,
+} from "../app/stages";
 import { Stage3View } from "./Stage3View";
 import { ConditionsView } from "./ConditionsView";
 
@@ -18,7 +23,12 @@ interface Props {
   onConditionsFinished: () => void;
   onShowInReplay: (time: number, drones: number[], note: string) => void;
   /** Play a simulated weather scenario in the Replay tab. */
-  onPlayScenario: (id: string, name: string, time: number, drones: number[]) => void;
+  onPlayScenario: (
+    id: string,
+    name: string,
+    time: number,
+    drones: number[],
+  ) => void;
   /** The weather scenario to show first. */
   scenarioId: string | null;
 }
@@ -35,7 +45,7 @@ export function Stage3Tab({
   scenarioId,
 }: Props) {
   const sections: [Stage3Section, string, StageState][] = [
-    ["stress", "Random weather (stress test)", stressState(run)],
+    ["stress", "Stress test", stressState(run)],
     ["conditions", "Weather scenarios", conditionsState(run)],
     ["pack", "Flight files", packState(run)],
   ];
@@ -57,7 +67,12 @@ export function Stage3Tab({
         ))}
       </div>
       {section === "conditions" ? (
-        <ConditionsView run={run} onFinished={onConditionsFinished} onPlay={onPlayScenario} scenarioId={scenarioId} />
+        <ConditionsView
+          run={run}
+          onFinished={onConditionsFinished}
+          onPlay={onPlayScenario}
+          scenarioId={scenarioId}
+        />
       ) : (
         <Stage3View
           run={run}
