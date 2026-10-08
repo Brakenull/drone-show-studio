@@ -2,12 +2,12 @@
 // passed, a checked flight from each formation straight back to the holding area.
 
 import { useEffect, useState } from "react";
-import { Alert, Button, Modal, Table, type TableColumnsType } from "antd";
+import { Alert, Button, Modal, Table, Typography, type TableColumnsType } from "antd";
 import { readRunJson, readRunText, runJob } from "../bridge/api";
 import type { JobExit, ReturnEntry, ReturnIndex, RunRecord } from "../bridge/types";
 import { cancelReturns, startReturns, useReturnsJob, type ReturnsJob } from "../app/returnsJobs";
 import { solveFraction } from "../app/stage2Jobs";
-import { clock, duration, STATUS } from "../app/format";
+import { clock, duration, STATUS, TONE_TEXT, type Tone } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
 import { JobProgress } from "./JobOutput";
 
@@ -31,12 +31,9 @@ const ROW_STATUS: Record<string, string> = {
 
 const dash = "–";
 
-/** A status light and its words. */
-const Lit = ({ tone, children }: { tone: string; children: React.ReactNode }) => (
-  <>
-    <span className={`light light-${tone}`} aria-hidden="true" />
-    {children}
-  </>
+/** Status words in their tone's colour. */
+const Lit = ({ tone, children }: { tone: Tone; children: React.ReactNode }) => (
+  <Typography.Text type={TONE_TEXT[tone]}>{children}</Typography.Text>
 );
 
 export function ReturnPaths({ run, onChanged, onView }: Props) {

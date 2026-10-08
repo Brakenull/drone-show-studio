@@ -2,7 +2,7 @@
 // dialog over the current page.
 
 import { useState } from "react";
-import { Badge, Button, Form, Input, Modal, Space, Table, Typography } from "antd";
+import { Button, Form, Input, Modal, Space, Table, Typography } from "antd";
 import { saveSettings } from "../bridge/api";
 import type { DoctorCheck, Settings } from "../bridge/types";
 
@@ -62,7 +62,7 @@ export function SettingsView({ settings, checks, onSaved, onRecheck, onClose }: 
         columns={[
           {
             key: "name",
-            render: (_, c) => <Badge status={c.ok ? "success" : "error"} text={c.name} style={{ whiteSpace: "nowrap" }} />,
+            render: (_, c) => <Typography.Text type={c.ok ? "success" : "danger"} style={{ whiteSpace: "nowrap" }}>{c.name}</Typography.Text>,
           },
           { dataIndex: "required_for", className: "muted" },
           {

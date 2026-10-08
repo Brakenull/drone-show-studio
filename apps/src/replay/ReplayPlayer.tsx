@@ -265,15 +265,17 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
               <ol className="formation-jumps">
                 {formations.map((f) => (
                   <li key={f.index}>
-                    <button
-                      className={atFormation === f ? "is-current" : undefined}
+                    <Button
+                      block
+                      color={atFormation === f ? "primary" : "default"}
+                      variant={atFormation === f ? "filled" : "text"}
                       title={formationDetail(f)}
                       onClick={() => jumpTo(f.reached_sec)}
                     >
                       <span className={f.rejected ? "tone-bad" : undefined}>{f.name}</span>
                       <span className="clock-small">{formatTime(f.reached_sec)}</span>
                       <span className="muted">{formationDelay(f) ?? ""}</span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ol>
@@ -296,13 +298,13 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
               <ol className="violations">
                 {failure.violations.slice(0, 50).map((v) => (
                   <li key={`${v.drone_a}-${v.drone_b}`}>
-                    <button onClick={() => seekTo(v.time_sec, [v.drone_a, v.drone_b])}>
+                    <Button type="text" block onClick={() => seekTo(v.time_sec, [v.drone_a, v.drone_b])}>
                       <span>
                         {v.drone_a} and {v.drone_b}
                       </span>
                       <span className="tone-bad">{metres(v.distance_m, 2)}</span>
                       <span className="muted">{formatTime(v.time_sec)}</span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ol>
@@ -320,11 +322,11 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
               <ol className="violations">
                 {header.below_ground.slice(0, 20).map((g) => (
                   <li key={g.drone}>
-                    <button onClick={() => seekTo(g.time_sec, [g.drone])}>
+                    <Button type="text" block onClick={() => seekTo(g.time_sec, [g.drone])}>
                       <span>Drone {g.drone}</span>
                       <span className="tone-warn">{metres(g.min_z_m, 2)}</span>
                       <span className="muted">{formatTime(g.time_sec)}</span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ol>
@@ -334,18 +336,25 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
       </div>
 
       <div className="transport">
-        <button className="play" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
-          {playing ? (
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <rect x="3" y="2" width="3.5" height="12" />
-              <rect x="9.5" y="2" width="3.5" height="12" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M4 2 L14 8 L4 14 Z" />
-            </svg>
-          )}
-        </button>
+        <Button
+          type="primary"
+          shape="circle"
+          size="large"
+          onClick={togglePlay}
+          aria-label={playing ? "Pause" : "Play"}
+          icon={
+            playing ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <rect x="3" y="2" width="3.5" height="12" />
+                <rect x="9.5" y="2" width="3.5" height="12" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="M4 2 L14 8 L4 14 Z" />
+              </svg>
+            )
+          }
+        />
         <Select
           aria-label="Playback speed"
           className="speed"

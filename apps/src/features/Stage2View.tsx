@@ -267,25 +267,27 @@ function Passed({
     readRunJson<Separation>(run.run_id, "stage2/replay/separation.json").then(setSep).catch(() => setSep(null));
   }, [run.run_id, run.stage2.ended_at]);
   return (
-    <section className="outcome">
-      <VerdictCard tone="ok" title="Stage 2 planned the whole show">
-        <p>Every pair of drones stayed at or above the required distance for the full show.</p>
-        <dl className="stat-cards">
-          <div>
-            <dt>Show length</dt>
-            <dd>{duration(run.stage2.total_duration_sec)}</dd>
-          </div>
-          <div>
-            <dt>Closest approach</dt>
-            <dd>{sep ? metres(sep.worst.distance_m, 3) : "n/a"}</dd>
-          </div>
-          <div>
-            <dt>Planning time</dt>
-            <dd>{duration(run.stage2.wall_time_sec)}</dd>
-          </div>
-        </dl>
-      </VerdictCard>
-      <ReturnPaths run={run} onChanged={onChanged} onView={onViewReturn} />
+    <section className="outcome split">
+      <div>
+        <VerdictCard tone="ok" title="Stage 2 planned the whole show">
+          <p>Every pair of drones stayed at or above the required distance for the full show.</p>
+          <dl className="stat-cards">
+            <div>
+              <dt>Show length</dt>
+              <dd>{duration(run.stage2.total_duration_sec)}</dd>
+            </div>
+            <div>
+              <dt>Closest approach</dt>
+              <dd>{sep ? metres(sep.worst.distance_m, 3) : "n/a"}</dd>
+            </div>
+            <div>
+              <dt>Planning time</dt>
+              <dd>{duration(run.stage2.wall_time_sec)}</dd>
+            </div>
+          </dl>
+        </VerdictCard>
+        <ReturnPaths run={run} onChanged={onChanged} onView={onViewReturn} />
+      </div>
       {again}
     </section>
   );
@@ -313,7 +315,7 @@ function Rejected({
   const t = failure.transition;
   const where = (name: string) => (name === "holding_area" ? "the holding area" : name);
   return (
-    <section className="outcome">
+    <section className="outcome split">
       <VerdictCard tone="bad" title="Stage 2 rejected this show">
         <p className="verdict-detail">
           Flying from {where(t.from_keyframe)} to {where(t.to_keyframe)}, two drones come within{" "}
@@ -429,7 +431,7 @@ function Stopped({
 
   const cancelled = status === "cancelled";
   return (
-    <section className="outcome">
+    <section className="outcome split">
       <VerdictCard
         tone={cancelled ? "idle" : STATUS[status].tone === "bad" ? "bad" : "warn"}
         title={cancelled ? "This run was cancelled" : "Stage 2 stopped with an error"}

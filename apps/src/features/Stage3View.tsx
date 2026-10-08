@@ -320,74 +320,78 @@ function MonteCarlo({
   );
 
   return (
-    <section className="card" aria-labelledby="mc-title">
-      <h2 id="mc-title" className="stage3-title">
-        Stress test in simulated weather
-      </h2>
-      <p className="muted stage3-about">
-        Each flight gets its own wind, gusts, temperature, GPS drift and small
-        differences between drones. The show passes when no two drones come
-        within {metres(D_CRASH_M, 1)} and every drone lands with at least{" "}
-        {soc(MIN_LANDING_SOC)} battery.
-      </p>
+    <section className="card split" aria-labelledby="mc-title">
+      <div>
+        <h2 id="mc-title" className="stage3-title">
+          Stress test in simulated weather
+        </h2>
+        <p className="muted stage3-about">
+          Each flight gets its own wind, gusts, temperature, GPS drift and small
+          differences between drones. The show passes when no two drones come
+          within {metres(D_CRASH_M, 1)} and every drone lands with at least{" "}
+          {soc(MIN_LANDING_SOC)} battery.
+        </p>
 
-      {startError && (
-        <Alert
-          type="error"
-          showIcon
-          title={`Could not start the stress test: ${startError}`}
-        />
-      )}
-      {!running && noDevice && (
-        <Alert
-          type="error"
-          showIcon
-          title="No device to simulate on."
-          description="The stress test runs on the graphics chip through its OpenCL driver, or on the processor with a CPU OpenCL runtime. Install either one, then use Check again on the Settings page."
-        />
-      )}
-      {!running && isStale(run, part) && (
-        <Alert
-          type="warning"
-          showIcon
-          title="These results are from an earlier Stage 2 result. Run the stress test again to test the current paths."
-        />
-      )}
-
-      {running ? (
-        <McRunning job={job!} runId={run.run_id} devices={devices ?? []} />
-      ) : (
-        settings
-      )}
-
-      {(running || report) && (
-        <McResults
-          records={records}
-          planned={planned}
-          report={running ? null : report}
-          onShowInReplay={onShowInReplay}
-        />
-      )}
-      {!running &&
-        (status === "failed_error" ||
-          status === "failed_input" ||
-          status === "cancelled") && (
-          <Stopped
-            runId={run.run_id}
-            part="monte_carlo"
-            status={status}
-            message={part?.message}
-            job={job}
+        {startError && (
+          <Alert
+            type="error"
+            showIcon
+            title={`Could not start the stress test: ${startError}`}
           />
         )}
-      {!running &&
-        status === "failed_input" &&
-        part?.config?.weather === "forecast" && (
-          <p className="muted small">
-            If the forecast can't be fetched, switch Weather to Random to test
-            without it.
-          </p>
+        {!running && noDevice && (
+          <Alert
+            type="error"
+            showIcon
+            title="No device to simulate on."
+            description="The stress test runs on the graphics chip through its OpenCL driver, or on the processor with a CPU OpenCL runtime. Install either one, then use Check again on the Settings page."
+          />
         )}
+        {!running && isStale(run, part) && (
+          <Alert
+            type="warning"
+            showIcon
+            title="These results are from an earlier Stage 2 result. Run the stress test again to test the current paths."
+          />
+        )}
+
+        {running ? (
+          <McRunning job={job!} runId={run.run_id} devices={devices ?? []} />
+        ) : (
+          settings
+        )}
+      </div>
+
+      <div>
+        {(running || report) && (
+          <McResults
+            records={records}
+            planned={planned}
+            report={running ? null : report}
+            onShowInReplay={onShowInReplay}
+          />
+        )}
+        {!running &&
+          (status === "failed_error" ||
+            status === "failed_input" ||
+            status === "cancelled") && (
+            <Stopped
+              runId={run.run_id}
+              part="monte_carlo"
+              status={status}
+              message={part?.message}
+              job={job}
+            />
+          )}
+        {!running &&
+          status === "failed_input" &&
+          part?.config?.weather === "forecast" && (
+            <p className="muted small">
+              If the forecast can't be fetched, switch Weather to Random to test
+              without it.
+            </p>
+          )}
+      </div>
     </section>
   );
 }

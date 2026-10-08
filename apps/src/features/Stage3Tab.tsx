@@ -1,7 +1,9 @@
 // Stage 3, the digital twin: the Monte Carlo stress test, weather scenarios (Conditions) and the flight
 // files, as three sections of one tab.
 
+import { Flex, Segmented, Typography } from "antd";
 import type { JobExit, RunRecord, SimDevice } from "../bridge/types";
+import { TONE_TEXT } from "../app/format";
 import {
   conditionsState,
   packState,
@@ -51,20 +53,26 @@ export function Stage3Tab({
   ];
   return (
     <>
-      <div className="subtabs" role="tablist" aria-label="Stage 3">
-        {sections.map(([id, label, st]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={section === id}
-            className={`subtab ${section === id ? "is-current" : ""}`}
-            onClick={() => onSection(id)}
-          >
-            <span className={`light light-${st.tone}`} aria-hidden="true" />
-            <span className="subtab-label">{label}</span>
-            <span className={`subtab-status tone-${st.tone}`}>{st.text}</span>
-          </button>
-        ))}
+      <div className="subtabs">
+        <Segmented<Stage3Section>
+          aria-label="Stage 3"
+          size="large"
+          value={section}
+          onChange={onSection}
+          options={sections.map(([id, label, st]) => ({
+            value: id,
+            label: (
+              <Flex align="center" gap={8}>
+                <Typography.Text strong style={{ color: "inherit" }}>
+                  {label}
+                </Typography.Text>
+                <Typography.Text type={TONE_TEXT[st.tone]} style={{ fontSize: 12 }}>
+                  {st.text}
+                </Typography.Text>
+              </Flex>
+            ),
+          }))}
+        />
       </div>
       {section === "conditions" ? (
         <ConditionsView

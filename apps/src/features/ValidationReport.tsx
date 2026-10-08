@@ -86,80 +86,88 @@ function WaitingAreas({ summary }: { summary: NonNullable<Validation["summary"]>
 export function ValidationReport({ validation }: { validation: Validation }) {
   const { ok, errors, warnings, summary } = validation;
   return (
-    <div className="validation">
-      {!ok && (
-        <section className="issues issues-bad">
-          <h3>
-            {errors.length} {errors.length === 1 ? "problem" : "problems"} to fix in the file
-          </h3>
-          <p className="muted">Stage 2 can't read this file until these are fixed in the Blender export.</p>
-          <ul>
-            {errors.map((e, i) => (
-              <li key={i}>
-                <code>{e.path}</code>
-                <span>{e.message}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {warnings.length > 0 && (
-        <section className="issues issues-warn">
-          <h3>{warnings.length === 1 ? "One thing to check" : `${warnings.length} things to check`}</h3>
-          <ul>
-            {warnings.map((w, i) => (
-              <li key={i}>
-                <code>{w.path}</code>
-                <span>{w.message}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {summary && (
-        <>
-          <dl className="stat-cards">
-            <div>
-              <dt>Drones</dt>
-              <dd>{summary.fleet_size}</dd>
-            </div>
-            <div>
-              <dt>Formations</dt>
-              <dd>{summary.keyframes.length}</dd>
-            </div>
-            <div>
-              <dt>Designed length</dt>
-              <dd>{fmt(summary.total_duration_sec)} s</dd>
-            </div>
-            <div>
-              <dt>Minimum spacing</dt>
-              <dd>{summary.min_distance_m} m</dd>
-            </div>
-          </dl>
-          {summary.holding_areas.map((ha, i) => (
-            <Capacity key={i} ha={ha} index={i} count={summary.holding_areas.length} />
-          ))}
-          <WaitingAreas summary={summary} />
-          <h3>Formations, in show order</h3>
-          <ol className="formation-cards">
-            {summary.keyframes.map((k, i) => {
-              const tight = k.min_spacing_m < summary.min_distance_m - 1e-6;
-              return (
+    <div className="validation split">
+      <div>
+        {!ok && (
+          <section className="issues issues-bad">
+            <h3>
+              {errors.length} {errors.length === 1 ? "problem" : "problems"} to fix in the file
+            </h3>
+            <p className="muted">Stage 2 can't read this file until these are fixed in the Blender export.</p>
+            <ul>
+              {errors.map((e, i) => (
                 <li key={i}>
-                  <span className="formation-num">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="formation-name">{k.shape_name}</span>
-                  <span className="muted small">
-                    {k.points} points at {fmt(k.time_sec)} s
-                  </span>
-                  <span className={`small ${tight ? "tone-bad" : "muted"}`}>Closest points {fmt(k.min_spacing_m, 2)} m</span>
+                  <code>{e.path}</code>
+                  <span>{e.message}</span>
                 </li>
-              );
-            })}
-          </ol>
-        </>
-      )}
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {warnings.length > 0 && (
+          <section className="issues issues-warn">
+            <h3>{warnings.length === 1 ? "One thing to check" : `${warnings.length} things to check`}</h3>
+            <ul>
+              {warnings.map((w, i) => (
+                <li key={i}>
+                  <code>{w.path}</code>
+                  <span>{w.message}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {summary && (
+          <>
+            <dl className="stat-cards">
+              <div>
+                <dt>Drones</dt>
+                <dd>{summary.fleet_size}</dd>
+              </div>
+              <div>
+                <dt>Formations</dt>
+                <dd>{summary.keyframes.length}</dd>
+              </div>
+              <div>
+                <dt>Designed length</dt>
+                <dd>{fmt(summary.total_duration_sec)} s</dd>
+              </div>
+              <div>
+                <dt>Minimum spacing</dt>
+                <dd>{summary.min_distance_m} m</dd>
+              </div>
+            </dl>
+            {summary.holding_areas.map((ha, i) => (
+              <Capacity key={i} ha={ha} index={i} count={summary.holding_areas.length} />
+            ))}
+            <WaitingAreas summary={summary} />
+          </>
+        )}
+      </div>
+      <div>
+        {summary && (
+          <>
+            <h3>Formations, in show order</h3>
+            <ol className="formation-cards">
+              {summary.keyframes.map((k, i) => {
+                const tight = k.min_spacing_m < summary.min_distance_m - 1e-6;
+                return (
+                  <li key={i}>
+                    <span className="formation-num">{String(i + 1).padStart(2, "0")}</span>
+                    <span className="formation-name">{k.shape_name}</span>
+                    <span className="muted small">
+                      {k.points} points at {fmt(k.time_sec)} s
+                    </span>
+                    <span className={`small ${tight ? "tone-bad" : "muted"}`}>Closest points {fmt(k.min_spacing_m, 2)} m</span>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        )}
+      </div>
     </div>
   );
 }

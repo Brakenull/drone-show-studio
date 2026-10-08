@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button } from "antd";
+import { Alert, Button, Flex, Tabs, Tag, Typography } from "antd";
 import { getSettings, listRuns, runJob } from "./bridge/api";
 import type { DoctorCheck, RunRecord, Settings, SimDevice } from "./bridge/types";
-import { STATUS, runCreated, runName } from "./app/format";
+import { STATUS, TONE_TAG, TONE_TEXT, runCreated, runName } from "./app/format";
 import { useStage3Job } from "./app/stage3Jobs";
 import { useSimulateJob } from "./app/simulateJobs";
 import { useReturnsJob } from "./app/returnsJobs";
@@ -152,54 +152,63 @@ export default function App() {
         {view === "run" && run && (
           <div className="run-view">
             <header className="run-head">
-              <div className="run-title">
-                {/* Busy while any of the run's jobs is live; otherwise Stage 2's verdict. */}
-                <span
-                  className={`light light-${TABS.some((t) => t.state(run, runs).tone === "busy") ? "busy" : stage2State(run).tone}`}
-                  aria-hidden="true"
-                />
-                <h1>{runName(run)}</h1>
-                <span className={`pill pill-lg pill-${stage2State(run).tone}`}>
+              <Flex align="center" gap={12} style={{ minWidth: 0 }}>
+                <Typography.Title level={3} ellipsis style={{ margin: 0 }}>
+                  {runName(run)}
+                </Typography.Title>
+                <Tag color={TONE_TAG[stage2State(run).tone]} variant="filled">
                   {stage2State(run).tone === "busy" ? "Running" : STATUS[run.stage2.status].label}
-                </span>
-              </div>
-              <div className="run-meta-line">
-                <span>
+                </Tag>
+              </Flex>
+              <Flex wrap gap="4px 20px">
+                <Typography.Text type="secondary">
                   {run.input.fleet_size} drones, {run.input.keyframes.length}{" "}
                   {run.input.keyframes.length === 1 ? "formation" : "formations"}
-                </span>
-                <span>Created {runCreated(run)}</span>
-                {run.copied_from && <span>Copy of {runName({ run_id: run.copied_from })}</span>}
-                <span className="path">{run.run_id}</span>
-              </div>
-              <div className="stage-cards" role="tablist">
-                {TABS.map((t, i) => {
+                </Typography.Text>
+                <Typography.Text type="secondary">Created {runCreated(run)}</Typography.Text>
+                {run.copied_from && <Typography.Text type="secondary">Copy of {runName({ run_id: run.copied_from })}</Typography.Text>}
+                <Typography.Text type="secondary" copyable>
+                  {run.run_id}
+                </Typography.Text>
+              </Flex>
+              <Tabs
+                className="run-tabs"
+                activeKey={tab}
+                tabBarStyle={{ marginBottom: 0 }}
+                // onTabClick, not onChange: clicking Replay again still resets it to the show.
+                onTabClick={(key) => {
+                  // The Replay tab itself always opens the show; a return path is opened from Stage 2.
+                  if (key === "replay") {
+                    setReplaySource({ kind: "show" });
+                    setFocus(null);
+                  }
+                  setTab(key as Tab);
+                }}
+                items={TABS.map((t, i) => {
                   const st = t.state(run, runs);
-                  return (
-                    <button
-                      key={t.id}
-                      role="tab"
-                      aria-selected={tab === t.id}
-                      className={`stage-card ${tab === t.id ? "is-current" : ""}`}
-                      onClick={() => {
-                        // The Replay tab itself always opens the show; a return path is opened from Stage 2.
-                        if (t.id === "replay") {
-                          setReplaySource({ kind: "show" });
-                          setFocus(null);
-                        }
-                        setTab(t.id);
-                      }}
-                    >
-                      <span className="stage-card-top">
-                        <span className="stage-num">{String(i + 1).padStart(2, "0")}</span>
-                        <span className={`light light-${st.tone}`} aria-hidden="true" />
-                      </span>
-                      <span className="stage-label">{t.label}</span>
-                      <span className={`stage-status tone-${st.tone}`}>{st.text}</span>
-                    </button>
-                  );
+                  return {
+                    key: t.id,
+                    label: (
+                      <Flex vertical align="start" style={{ minWidth: 120, lineHeight: 1.4 }}>
+                        <Typography.Text type="secondary" code>
+                          {String(i + 1).padStart(2, "0")}
+                        </Typography.Text>
+                        <Typography.Text strong style={{ color: "inherit" }}>
+                          {t.label}
+                        </Typography.Text>
+                        <Typography.Text
+                          type={TONE_TEXT[st.tone]}
+                          ellipsis
+                          className="run-tab-status"
+                          style={{ fontSize: 12, maxWidth: 160 }}
+                        >
+                          {st.text}
+                        </Typography.Text>
+                      </Flex>
+                    ),
+                  };
                 })}
-              </div>
+              />
             </header>
             <div className="run-body">
               {tab === "input" && <InputView run={run} />}

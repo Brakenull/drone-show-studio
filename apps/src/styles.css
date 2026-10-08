@@ -178,15 +178,6 @@ kbd {
   flex: none;
   background: var(--idle);
 }
-.light-ok {
-  background: var(--success);
-}
-.light-bad {
-  background: var(--danger);
-}
-.light-warn {
-  background: var(--warning);
-}
 /* Pulsing-dot loading variant. */
 .light-busy {
   background: var(--accent);
@@ -240,153 +231,22 @@ button:not([class]):active:not(:disabled) {
   height: 100vh;
 }
 
-.sidebar {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+/* The pipeline bar under a run shows only on hover (or keyboard focus), and so does the status line
+   under each stage tab other than the selected one, to keep the list and the header quiet. The tab
+   line keeps its space, so the tab bar and the page below it don't jump as the pointer moves. */
+.run-menu .ant-menu-item:not(:hover):not(:focus-visible) .run-pipe {
+  display: none;
 }
-.sidebar-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 1.5rem 1.25rem 0.75rem;
+.run-tabs .ant-tabs-tab:not(.ant-tabs-tab-active):not(:hover):not(:has(:focus-visible)) .run-tab-status {
+  visibility: hidden;
 }
-.sidebar-title {
-  display: grid;
-}
-.sidebar-title > span {
-  font-size: var(--step--1);
-  color: var(--text-muted);
-}
-.sidebar-title h2 {
-  font-size: var(--step-2);
-}
-.sidebar-tools {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.count-pill {
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-hover);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.icon-button {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--text-muted);
-}
-.icon-button:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--primary);
-}
-.settings-button {
-  margin-right: -8px;
-}
-.settings-button:hover:not(:disabled) {
-  transform: rotate(30deg);
-}
-.settings-button.is-current {
-  color: var(--primary);
-}
-.sidebar-empty {
-  flex: 1;
-  padding: 0 1.25rem;
-  color: var(--text-muted);
-  font-size: var(--step--1);
-}
-/* Bottom padding leaves room for the floating New run button. */
-.run-list {
-  list-style: none;
-  margin: 0;
-  padding: 0.25rem 0.75rem 6rem;
-  overflow-y: auto;
-  flex: 1;
-  display: grid;
-  align-content: start;
-  gap: 6px;
-}
-.run-card {
-  display: grid;
-  gap: 6px;
-  width: 100%;
-  text-align: left;
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  padding: 0.75rem 0.875rem;
+/* Run list rows hold several lines, taller than antd's fixed menu item height. */
+.run-menu .ant-menu-item {
+  height: auto;
   line-height: 1.4;
-  transition:
-    background-color var(--fast) ease,
-    border-color var(--fast) ease,
-    transform var(--base) var(--bounce);
+  padding-block: 10px;
 }
-.run-card:hover:not(:disabled) {
-  background: var(--surface-hover);
-  transform: translateY(-2px);
-}
-.run-card.is-current {
-  background: var(--primary-tint);
-  border-color: var(--primary-line);
-}
-.run-card-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.run-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-.run-meta {
-  padding-left: 18px;
-  color: var(--text-muted);
-  font-size: var(--step--1);
-}
-/* Pipeline bar: Stage 2, stress test, flight files. */
-.run-pipe {
-  display: flex;
-  gap: 4px;
-  padding-left: 18px;
-}
-.run-pipe > span {
-  flex: 1;
-  height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--border);
-}
-.run-pipe > .pipe-ok {
-  background: var(--success);
-}
-.run-pipe > .pipe-warn {
-  background: var(--warning);
-}
-.run-pipe > .pipe-bad {
-  background: var(--danger);
-}
-.run-pipe > .pipe-busy {
-  background: var(--accent);
-  animation: pulse 1.2s ease-in-out infinite alternate;
-}
+
 /* Status pill: the status word on a tint of its colour. */
 .pill {
   padding: 1px 8px;
@@ -415,35 +275,6 @@ button:not([class]):active:not(:disabled) {
 .pill-busy {
   background: var(--busy-tint);
 }
-/* New run: a floating action button over the bottom of the run list. */
-button.fab {
-  position: absolute;
-  left: 1.25rem;
-  bottom: 1.25rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 52px;
-  padding: 0 1.5rem 0 1.125rem;
-  border: 1px solid var(--primary);
-  border-radius: var(--radius-pill);
-  background: var(--primary);
-  color: var(--on-primary);
-  font-weight: 600;
-  line-height: 1;
-}
-button.fab:hover:not(:disabled) {
-  background: var(--primary-hover);
-  border-color: var(--primary-hover);
-  transform: scale(1.05);
-}
-button.fab:active:not(:disabled) {
-  transform: scale(0.98);
-}
-button.fab.is-current {
-  outline: 2px solid var(--primary-line);
-  outline-offset: 2px;
-}
 
 .main {
   display: flex;
@@ -459,98 +290,17 @@ button.fab.is-current {
   min-height: 0;
 }
 .run-head {
-  padding: 1.25rem 2rem 0.5rem;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 4px;
+  padding: 1.25rem 2rem 0;
   background: var(--background);
 }
-.run-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem 1rem;
-  min-width: 0;
+/* Stage tabs share the header's width equally. */
+.run-tabs .ant-tabs-nav-list {
+  flex: 1;
 }
-.run-title h1 {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.run-meta-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.25rem;
-  margin-top: 0.25rem;
-  color: var(--text-muted);
-  font-size: var(--step--1);
-}
-.run-meta-line .path {
-  word-break: normal;
-}
-/* Stage cards: the tabs, numbered in pipeline order, each with its part's state. */
-.stage-cards {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(132px, 1fr);
-  gap: 0.5rem;
-  margin: 1rem -2rem 0;
-  padding: 6px 2rem 0.5rem;
-  overflow-x: auto;
-}
-.stage-card {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  text-align: left;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  line-height: 1.3;
-  transition:
-    border-color var(--fast) ease,
-    transform var(--base) var(--bounce);
-}
-.stage-card:hover:not(:disabled) {
-  background: var(--surface);
-  transform: translateY(-4px);
-}
-.stage-card:active:not(:disabled) {
-  transform: translateY(-1px);
-}
-.stage-card.is-current,
-.stage-card.is-current:hover:not(:disabled) {
-  border-color: var(--primary);
-  background: var(--primary-wash);
-}
-.stage-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-.stage-num {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.stage-label {
-  font-weight: 600;
-}
-.stage-card.is-current .stage-num,
-.stage-card.is-current .stage-label {
-  color: var(--primary);
-}
-.stage-status,
-.subtab-status {
-  font-size: var(--step--1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.run-tabs .ant-tabs-tab {
+  flex: 1;
 }
 .run-body {
   flex: 1;
@@ -761,11 +511,6 @@ button.fab.is-current {
   white-space: normal;
   text-align: left;
 }
-.table .light,
-.ant-table .light {
-  vertical-align: middle;
-  margin-right: 0.25rem;
-}
 
 /* Stage 2 */
 .running {
@@ -940,30 +685,31 @@ input[type="radio"]:focus-visible {
 .hint {
   margin-top: 1rem;
 }
+/* Replay panel lists: formations to jump to, too-close pairs, drones below ground. Each row is a
+   button laid out as columns: name, value, time. */
+.formation-jumps,
 .violations {
+  display: grid;
+  gap: 2px;
   list-style: none;
   margin: 0.5rem 0 0;
   padding: 0;
 }
-.violations button {
+.formation-jumps .ant-btn,
+.violations .ant-btn {
   display: grid;
   grid-template-columns: 1fr auto auto;
   gap: 0.75rem;
-  width: 100%;
-  border: 0;
-  border-left: 4px solid var(--danger);
-  border-radius: var(--radius-sm);
-  background: none;
-  margin-bottom: 0.25rem;
-  padding: 0.375rem 0.5rem;
+  height: auto;
+  padding: 6px 8px;
   text-align: left;
   font-variant-numeric: tabular-nums;
 }
-.warn-block .violations button {
-  border-left-color: var(--warning);
+.formation-jumps .ant-btn {
+  grid-template-columns: 1fr auto 4.5rem;
 }
-.violations button:hover:not(:disabled) {
-  background: var(--border);
+.formation-jumps .ant-btn > span:last-child {
+  text-align: right;
 }
 
 .transport {
@@ -973,29 +719,6 @@ input[type="radio"]:focus-visible {
   padding: 0.5rem 2rem;
   border-top: 1px solid var(--border);
   background: var(--surface);
-}
-.play {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--primary);
-  border-color: var(--primary);
-}
-.play:hover:not(:disabled) {
-  background: var(--primary-hover);
-  border-color: var(--primary-hover);
-  transform: scale(1.05);
-}
-.play:active:not(:disabled) {
-  transform: scale(0.98);
-}
-.play svg {
-  width: 16px;
-  height: 16px;
-  fill: var(--on-primary);
 }
 .clock {
   font-size: var(--step-1);
@@ -2005,6 +1728,7 @@ input[type="radio"]:focus-visible {
   margin-top: 0;
 }
 .outcome > .card,
+.outcome > div > .card,
 .outcome-controls > .card {
   margin-top: 2rem;
 }
@@ -2041,32 +1765,6 @@ input[type="radio"]:focus-visible {
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.03em;
-}
-.verdict-icon {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-}
-.verdict-icon .light {
-  width: 14px;
-  height: 14px;
-}
-.verdict-card-ok .verdict-icon {
-  background: var(--ok-tint);
-  border-color: var(--ok-line);
-}
-.verdict-card-bad .verdict-icon {
-  background: var(--bad-tint);
-  border-color: var(--bad-line);
-}
-.verdict-card-warn .verdict-icon {
-  background: var(--warn-tint);
-  border-color: var(--warn-line);
 }
 /* A verdict inside a card (Stage 3): flat, smaller headline. */
 .verdict-card-inner {
@@ -2158,42 +1856,33 @@ input[type="radio"]:focus-visible {
 
 /* Stage 3 sections: stress test, conditions, flight files. */
 .subtabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
   padding: 1rem 2.5rem 0;
 }
-.subtab {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 44px;
-  max-width: 22rem;
-  padding: 0.5rem 1rem;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--surface);
-}
-.subtab:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-.subtab.is-current,
-.subtab.is-current:hover:not(:disabled) {
-  border-color: var(--primary);
-  background: var(--primary-tint);
-}
-.subtab-label {
-  font-weight: 600;
-  white-space: nowrap;
-}
-.subtab.is-current .subtab-label {
-  color: var(--primary);
-}
-.subtab-status.tone-idle,
-.subtab-status.tone-busy,
-.stage-status.tone-idle,
-.stage-status.tone-busy {
-  color: var(--text-muted);
+/* Two columns on wide windows (a full-screen window on a 1920 px display): the main content on the
+   left, the side content on the right. Narrower, the columns stack in order. A column with nothing in
+   it takes no space, so a split with one filled column stays one column wide. */
+@media (min-width: 1600px) {
+  .page:not(.page-wide) {
+    max-width: 120rem;
+  }
+  .split {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+    align-items: start;
+  }
+  .split > :empty {
+    display: none;
+  }
+  .split > * > :first-child,
+  .split > .outcome-controls > .card {
+    margin-top: 0;
+  }
+  .outcome.split,
+  .card.split {
+    max-width: none;
+  }
 }
 
 /* Monospace path inputs in Settings. */
@@ -2233,35 +1922,6 @@ input[type="radio"]:focus-visible {
 }
 .strip-readout > span {
   white-space: nowrap;
-}
-.formation-jumps {
-  list-style: none;
-  margin: 0.5rem 0;
-  padding: 0;
-}
-.formation-jumps button {
-  display: grid;
-  grid-template-columns: 1fr auto 4.5rem;
-  gap: 0.75rem;
-  width: 100%;
-  border: 0;
-  border-left: 3px solid transparent;
-  border-radius: var(--radius-sm);
-  background: none;
-  margin-bottom: 0.125rem;
-  padding: 0.375rem 0.5rem;
-  text-align: left;
-  font-variant-numeric: tabular-nums;
-}
-.formation-jumps button > span:last-child {
-  text-align: right;
-}
-.formation-jumps button:hover:not(:disabled) {
-  background: var(--border);
-}
-.formation-jumps button.is-current {
-  border-left-color: var(--primary);
-  background: var(--primary-tint);
 }
 .clock-small {
   font-family: var(--font-mono);
@@ -2352,13 +2012,6 @@ input[type="radio"]:focus-visible {
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
-}
-.scenario-chip {
-  max-width: 20rem;
-}
-.scenario-chip .subtab-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .scenario-ops {
   display: flex;

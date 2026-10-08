@@ -4,7 +4,7 @@
 // paths. This page holds the inputs and the results; the playback is in the Replay tab.
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Input, InputNumber, Popconfirm, Select, Table, Tooltip } from "antd";
+import { Alert, Button, Input, InputNumber, Popconfirm, Select, Table, Tag, Tooltip } from "antd";
 import { runJob } from "../bridge/api";
 import type {
   ConditionsInfo,
@@ -248,23 +248,24 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
       </header>
 
       <section className="scenario-toolbar" aria-label="Scenarios">
-        <div className="scenario-list" role="tablist" aria-label="Scenario">
+        <div className="scenario-list" aria-label="Scenario">
           {info.scenarios.length === 0 && <span className="muted">No scenarios yet</span>}
           {info.scenarios.map((s) => {
-            const tone = !s.result ? "idle" : s.result.passed ? "ok" : "bad";
             return (
-              <button
+              <Tooltip
                 key={s.id}
-                role="tab"
-                aria-selected={s.id === currentId}
-                className={`subtab scenario-chip ${s.id === currentId ? "is-current" : ""}`}
-                disabled={busy || running}
                 title={`${s.scenario.name}: ${!s.result ? "not flown yet" : s.result.passed ? "held up" : "failed"}`}
-                onClick={() => setCurrentId(s.id)}
               >
-                <span className={`light light-${tone}`} aria-hidden="true" />
-                <span className="subtab-label">{s.scenario.name}</span>
-              </button>
+                <Tag.CheckableTag
+                  checked={s.id === currentId}
+                  disabled={busy || running}
+                  // A click on the current scenario keeps it selected.
+                  onChange={() => setCurrentId(s.id)}
+                  style={{ maxWidth: "20rem", marginInlineEnd: 0, padding: "4px 12px" }}
+                >
+                  {s.scenario.name}
+                </Tag.CheckableTag>
+              </Tooltip>
             );
           })}
         </div>

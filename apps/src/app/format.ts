@@ -2,6 +2,16 @@ import type { RunRecord, RunStatus } from "../bridge/types";
 
 export type Tone = "ok" | "bad" | "warn" | "idle" | "busy";
 
+/** Each tone as antd's Tag colour and Typography.Text type. */
+export const TONE_TAG: Record<Tone, string | undefined> = {
+  ok: "success",
+  bad: "error",
+  warn: "warning",
+  busy: "processing",
+  idle: undefined,
+};
+export const TONE_TEXT = { ok: "success", bad: "danger", warn: "warning", busy: "secondary", idle: "secondary" } as const;
+
 export const STATUS: Record<RunStatus, { label: string; tone: Tone }> = {
   not_run: { label: "Not run", tone: "idle" },
   running: { label: "Running", tone: "busy" },
