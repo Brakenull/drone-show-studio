@@ -1,44 +1,42 @@
-/* Drone Show Studio, on the SkySync design system (DESIGN.md).
-   Dark-first night sky; orange primary for actions, selection and the playhead; cyan accent for
-   links, highlights and work in progress. Status colours mean the same thing everywhere:
-   green = safe, yellow = caution, red = violation. */
+/* Drone Show Studio, on antd's default dark theme. Every colour, radius and font below is an alias
+   of an antd token (--ant-*), so src/theme.ts is the only place the theme is set. Status colours
+   mean the same thing everywhere: green = safe, yellow = caution, red = violation. */
 
-:root {
-  /* SkySync tokens */
-  --primary: #ffa34d;
-  --primary-hover: #ff8c1a;
-  --on-primary: #1a1a1a;
-  --background: #0f0f0f;
-  --surface: #1a1a1a;
-  --border: #2d2d2d;
-  --text: #f5f5f5;
-  --text-muted: #a0a0a0;
-  --accent: #00d9ff;
-  --success: #4ade80;
-  --warning: #facc15;
-  --danger: #ef4444;
+/* antd sets its --ant-* variables on every element with the theme class (the AntApp wrapper and
+   each antd component, popups included), so the aliases live there too. */
+.app-theme {
+  --primary: var(--ant-color-primary);
+  --primary-hover: var(--ant-color-primary-hover);
+  --on-primary: var(--ant-color-text-light-solid);
+  --background: var(--ant-color-bg-layout);
+  --surface: var(--ant-color-bg-container);
+  --border: var(--ant-color-border);
+  --text: var(--ant-color-text);
+  --text-muted: var(--ant-color-text-secondary);
+  --accent: var(--ant-color-info);
+  --success: var(--ant-color-success);
+  --warning: var(--ant-color-warning);
+  --danger: var(--ant-color-error);
 
   /* Derived */
-  --surface-hover: #252525;
-  --border-soft: #222222;
-  --idle: #5c5c5c;
-  /* Flat and solid: every tint is an opaque colour (the old translucent tint as it looked on the
-     surface), and nothing casts a shadow or glows. */
-  --primary-tint: #3c2f22;
-  --primary-wash: #31281f;
-  --primary-line: #8d5f34;
-  --row-stripe: #231f1c;
-  --surface-raised: #212121;
-  --ok-tint: #203226;
-  --bad-tint: #341f1f;
-  --warn-tint: #352f19;
-  --busy-tint: #173136;
-  --ok-wash: #1d2620;
-  --bad-wash: #291d1d;
-  --warn-wash: #27251a;
-  --ok-line: #285539;
-  --bad-line: #652929;
-  --warn-line: #5d4f19;
+  --surface-hover: var(--ant-color-bg-elevated);
+  --border-soft: var(--ant-color-border-secondary);
+  --idle: var(--ant-color-text-quaternary);
+  --primary-tint: var(--ant-color-primary-bg-hover);
+  --primary-wash: var(--ant-color-primary-bg);
+  --primary-line: var(--ant-color-primary-border-hover);
+  --row-stripe: var(--ant-color-fill-quaternary);
+  --surface-raised: var(--ant-color-fill-alter);
+  --ok-tint: var(--ant-color-success-bg-hover);
+  --bad-tint: var(--ant-color-error-bg-hover);
+  --warn-tint: var(--ant-color-warning-bg-hover);
+  --busy-tint: var(--ant-color-info-bg-hover);
+  --ok-wash: var(--ant-color-success-bg);
+  --bad-wash: var(--ant-color-error-bg);
+  --warn-wash: var(--ant-color-warning-bg);
+  --ok-line: var(--ant-color-success-border);
+  --bad-line: var(--ant-color-error-border);
+  --warn-line: var(--ant-color-warning-border);
 
   /* Legacy aliases, kept so every rule below reads in one vocabulary */
   --night: var(--background);
@@ -51,37 +49,36 @@
   --warn: var(--warning);
   --bad: var(--danger);
 
-  --font-heading: "Sohne", "Inter", system-ui, sans-serif;
-  --font: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "Fira Code", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
-  --step--1: 0.8125rem; /* 13px: labels, mono */
-  --step-0: 0.9375rem; /* 15px: body */
-  --step-1: 1.125rem;
-  --step-2: 1.5rem;
-  --step-3: 2rem; /* 32px: heading */
+  --font-heading: var(--ant-font-family);
+  --font: var(--ant-font-family);
+  --font-mono: var(--ant-font-family-code);
+  --step--1: var(--ant-font-size-sm);
+  --step-0: var(--ant-font-size);
+  --step-1: var(--ant-font-size-lg);
+  --step-2: var(--ant-font-size-heading-3);
+  --step-3: var(--ant-font-size-heading-2);
 
-  /* Squared-off corners: nothing rounder than 8px except true circles (status lights, round icons). */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 8px;
-  --radius-pill: 8px;
+  --radius-sm: var(--ant-border-radius-sm);
+  --radius-md: var(--ant-border-radius);
+  --radius-lg: var(--ant-border-radius-lg);
+  --radius-xl: var(--ant-border-radius-lg);
+  --radius-pill: var(--ant-border-radius-lg);
+}
 
-
+:root {
   --fast: 150ms;
   --base: 300ms;
   --slow: 500ms;
   --bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   color-scheme: dark;
-  font-family: var(--font);
-  font-size: 16px;
-  line-height: 1.65;
-  letter-spacing: -0.01em;
-  color: var(--text);
-  background: var(--background);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
+}
+
+/* The page itself: antd's App already sets its text colour, font and size. */
+.ant-app {
+  background: var(--background);
 }
 
 * {
@@ -90,8 +87,6 @@
 
 body {
   margin: 0;
-  font-size: var(--step-0);
-  background: var(--background);
   overflow: hidden;
 }
 
@@ -627,7 +622,7 @@ button.fab.is-current {
   gap: 6px;
   min-height: 280px;
   padding: 3rem;
-  border: 1.5px dashed #3a3a3a;
+  border: 1.5px dashed var(--border);
   border-radius: var(--radius-xl);
   background: var(--surface);
   cursor: pointer;
@@ -1595,7 +1590,7 @@ input[type="radio"]:focus-visible {
   fill: var(--danger);
 }
 .tl-hold {
-  fill: #3a3a3a;
+  fill: var(--border);
 }
 .tl-transition {
   fill: var(--text-muted);
@@ -2099,11 +2094,11 @@ input[type="radio"]:focus-visible {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  background: #141414;
+  background: var(--surface);
 }
 .table.data thead th {
   padding: 0.5rem 1rem;
-  background: #1f1f1f;
+  background: var(--surface-hover);
   color: var(--text-muted);
   font-weight: 500;
   font-size: 12px;

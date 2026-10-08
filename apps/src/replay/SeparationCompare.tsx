@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatTime, metres, nearestFrame } from "./sampling";
+import { tokens } from "../theme";
 import type { Separation } from "./types";
 
 export interface CompareSeries {
@@ -17,8 +18,15 @@ interface Props {
 }
 
 // Series colours stay out of the status palette: this run in the primary orange, the other in the cyan accent.
-export const SERIES_COLORS = ["#ffa34d", "#00d9ff"] as const;
-const COLORS = { bg: "#0f0f0f", grid: "#222222", axis: "#a0a0a0", floor: "#facc15", bad: "#ef4444" };
+// The first series wears the replay highlight, kept apart from the UI theme.
+export const SERIES_COLORS = ["#ffa34d", tokens.colorInfo] as const;
+const COLORS = {
+  bg: tokens.colorBgLayout,
+  grid: tokens.colorBorderSecondary,
+  axis: tokens.colorTextSecondary,
+  floor: tokens.colorWarning,
+  bad: tokens.colorError,
+};
 const PAD = { left: 56, right: 16, top: 14, bottom: 22 };
 
 function niceStep(span: number, target: number): number {

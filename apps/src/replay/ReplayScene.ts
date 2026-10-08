@@ -7,14 +7,15 @@ import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer
 import { locate, positionAt, referenceAt } from "./sampling";
 import type { HoldingOverlay, ReplayData, V3 } from "./types";
 import { WeatherLayer } from "./WeatherLayer";
+import { tokens } from "../theme";
 
-const NIGHT = 0x0f0f0f;
-const GRID_MAJOR = 0x2d2d2d;
+const NIGHT = new THREE.Color(tokens.colorBgLayout);
+const GRID_MAJOR = new THREE.Color(tokens.colorBorder);
 const GRID_MINOR = 0x1c1c1c;
 const PAD = 0x4a4a4a;
 const WAITING = 0x3a6b66; // waiting areas: muted teal, apart from the grey pads
-const AMBER = 0xffa34d; // SkySync primary: selection and the closest pair
-const RED = 0xef4444;
+const AMBER = 0xffa34d; // replay highlight, kept apart from the UI theme: selection and the closest pair
+const RED = new THREE.Color(tokens.colorError);
 const LED_OFF = new THREE.Color(0x5c5c5c); // drone body when its LEDs are dark
 const PLANNED = 0x8a8a8a; // a simulated drone's planned position
 const GAP_M = 0.5; // a simulated drone this far from its plan gets a red line to it

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatTime, metres, nearestFrame } from "./sampling";
+import { tokens } from "../theme";
 import { formationDetail } from "./formations";
 import type { FormationMark, Separation, ShowTimeline } from "./types";
 
@@ -26,21 +27,22 @@ interface Props {
 }
 
 const COLORS = {
-  bg: "#0f0f0f",
-  grid: "#222222",
-  axis: "#a0a0a0",
-  line: "#4ade80",
-  bad: "#ef4444",
-  floor: "#facc15",
-  span: "rgba(239, 68, 68, 0.07)",
-  spanInfo: "rgba(0, 217, 255, 0.08)",
-  playhead: "#ffa34d",
-  deviation: "#00d9ff",
-  warn: "#facc15",
-  formation: "#a0a0a0",
-  formationLine: "rgba(160, 160, 160, 0.35)",
-  formationHover: "#f5f5f5",
-  leg: "rgba(255, 255, 255, 0.035)",
+  bg: tokens.colorBgLayout,
+  grid: tokens.colorBorderSecondary,
+  axis: tokens.colorTextSecondary,
+  line: tokens.colorSuccess,
+  bad: tokens.colorError,
+  floor: tokens.colorWarning,
+  // Hex colour plus a two-digit alpha.
+  span: `${tokens.colorError}12`,
+  spanInfo: `${tokens.colorInfo}14`,
+  playhead: "#ffa34d", // replay highlight, kept apart from the UI theme
+  deviation: tokens.colorInfo,
+  warn: tokens.colorWarning,
+  formation: tokens.colorTextSecondary,
+  formationLine: tokens.colorTextQuaternary,
+  formationHover: tokens.colorText,
+  leg: tokens.colorFillQuaternary,
 };
 
 /** Pointer within this many pixels of a formation mark picks it. */
