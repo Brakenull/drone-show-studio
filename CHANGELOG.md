@@ -2,19 +2,74 @@
 
 All notable changes to Drone Show Studio are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## Release notes (1.2.2 — 2026-10-07)
+## Release notes (1.2.3 — 2026-10-08)
 
-**A show can now take off from several holding areas.**
+**Stress test a show against the weather forecast for its day, in a desktop app rebuilt on Ant Design.**
 
-- **Several holding areas.** In the Blender add-on, a fleet too big for one holding area no longer has to widen it: add a second area (or more) anywhere on the field. The fleet fills them in list order, every area launches its rows together, and the drones land on the nearest free pads of any area.
-- **Shorter rain returns with two areas.** Landing in whichever area is nearest, rather than the area a drone took off from, kept the two groups from crossing on the way home: on a 300-drone show with areas north and south of the show, the longest rain return went from 119 s to 83 s.
-- **What you check is what you export.** The add-on samples every pass with one seed (Preview Sample picks a new one), keeps a passed Check Kinematics until something changes, and Export writes exactly that result.
-- **Fixes:** Check Kinematics no longer flags a false over-speed when a formation has fewer points than the fleet, and waiting areas that are too small now grow evenly instead of only the last one.
-- **In the desktop app:** one capacity gauge and one replay outline per holding area, a warning when two areas are too close, and rain suggestions that name the area a drone lands in.
+- **Forecast stress test.** Each simulated flight flies one member of an Open-Meteo ensemble forecast for the show's site and start time, instead of random weather. In the app it is the default: pick the show's start time and run. Random weather is still there as a backup and is marked when used.
+- **New look.** Every control in the desktop app is now an Ant Design component on its default dark theme: blue instead of orange, the system font, and one place that sets every colour.
+- **Quieter screens.** The status dots are gone (status now shows as coloured text and tags). A run's pipeline bar and the status lines under the stage tabs show on hover; the selected tab always shows its line.
+- **Full-screen layout.** On a wide window, Input, Stage 2 and the stress test use two columns instead of one narrow column.
 
-**Before you upgrade:** files exported by add-on 1.8.0 (schema 1.8.0) need this version of Stage 2 and the desktop app; older versions can't read them. Files from older add-ons still work everywhere. On the 300-drone test show with two areas, the stress test failed: 5 of 100 flights crashed, all the same two drones flying side by side during the takeoff.
+**Before you upgrade:** the forecast needs an internet connection and the show's GPS origin in the Phase 1 export. The free Open-Meteo API is for non-commercial use; for commercial work, put a customer key in `OPEN_METEO_API_KEY` (or the repository's `.env`). The 300-drone two-area show still fails the stress test.
 
 ## [Unreleased]
+
+## [1.2.3] — 2026-10-08
+
+The stress test can now fly the weather forecast for the show's day: each simulated flight takes one member of an Open-Meteo ensemble forecast for the site and start time, so a few days before a show you see how it holds up in the weather actually expected. The desktop app was rebuilt on Ant Design: every native control, the sidebar, the run header and the stage tabs are Ant Design components on its default dark theme, the old SkySync colours are gone, and wide windows get a two-column layout.
+
+### Added
+
+#### Forecast stress test (digital twin)
+
+- **`--forecast`** in the Monte Carlo runner: run *i* flies member *i* mod *M* of an ensemble forecast (51 members with the default `ecmwf_ifs025`) instead of a random weather draw. Hardware, RTK and launch spread are still drawn per flight as before. The site comes from `--site LAT,LON` or from the project file's GPS origin (`--project`), the time from `--show-start` (local time at the site). `--forecast-file` replays a saved forecast without fetching.
+- **Each member becomes a weather scenario** over the show window:
+  - the mean wind at the show's height, interpolated from the levels the model returns (10, 80, 100, 120 m: logarithmic between levels, a power law above the top one);
+  - turbulence from the gust factor, and one gust front per flight at a random time and direction near the wind's;
+  - the member's rain and temperature.
+- **The raw forecast is saved** next to the report as `forecast.json`.
+- **Settings** come from the environment or from `<repo>/.env` (a variable already set wins; see `.env.example`):
+  - `OPEN_METEO_API_KEY` (or `--api-key`) switches to the customer endpoint; without it the free, non-commercial API is used;
+  - `OPEN_METEO_MODEL` picks another ensemble, such as `gfs_seamless` or `gem_global`.
+- **Desktop app:**
+  - The stress test has a Weather switch, **Forecast** (the default each time the tab opens) or **Random**, and a **Show starts** field.
+  - When Random is used, the settings row, the running panel and the result say so in a warning colour ("Weather: random, not the forecast for the show").
+  - There is no automatic fallback to Random when the forecast can't be fetched; the error says to switch.
+
+#### Desktop app
+
+- **Two columns on wide windows** (1600 px and wider, such as full screen on a 1920 px display), stacking back to one column below that:
+  - **Input:** the checks, stats, holding and waiting areas on the left, the formations on the right.
+  - **Stage 2:** the verdict and return paths on the left, the planner settings on the right.
+  - **Stress test:** the settings form on the left, the result, run grid and flights table on the right.
+- **Run ID copy button** in the run header.
+
+### Changed
+
+#### Desktop app on Ant Design 6
+
+- **Every control is an Ant Design component.** Forms, tables, dialogs, selects, number fields, sliders, alerts, collapsible log panes and progress bars were converted first; then the sidebar (`Layout.Sider`, a `Menu` of runs with keyboard navigation), the run header (title, `Tag`, stage `Tabs` stretched across the header), the Stage 3 sections (`Segmented`), the weather scenario chips (checkable tags), the replay's play button and its formation, too-close and below-ground lists. Only the Stage 3 run grid and the hidden file input stay native.
+- **Default dark theme, one source of colour.** The SkySync palette (orange primary, cyan accent, solid hand-mixed tints) is retired. The theme is set once, and the app's own styles, the separation charts and the 3D replay all read it. The replay keeps its amber highlight for the selection, the playhead and the first Compare series, so it still stands out over the dark scene.
+- **No status dots.** The dots on runs, the run title, the stage tabs, the Stage 3 sections, the scenario chips, the verdict cards, the return paths table and the Settings checks are gone. Status shows as tags and as text in its colour. The pulsing dot on a running job stays.
+- **Shown on hover:**
+  - a run's pipeline bar (Stage 2, stress test, flight files) in the sidebar;
+  - the status line under each stage tab except the selected one, whose line always shows. Hidden lines keep their space, so the page doesn't jump.
+- **New run** is a full-width button at the bottom of the sidebar instead of a floating one.
+- **Text and spacing** follow the theme: the system font at 14 px instead of Inter at 15 px.
+
+### Verified
+
+- 380 automated Python tests pass (373 in 1.2.2). The new ones check the wind at height against hand values, members against a stored forecast, that a flight's scenario is seeded and bounded, that bad forecasts are reported, that the customer endpoint is used only with a key, that a forecast run is reproducible, and how `.env` is read.
+- The desktop app type-checks and builds. The sidebar, run header, stage tabs, Stage 3 sections, scenario chips, replay panel and the two-column layout were checked on screen at 1440 × 900 and 1920 × 1080.
+
+### Known issues
+
+- **The 300-drone two-area show still fails the stress test** (5 of 100 crashes in random weather; see 1.2.2).
+- **Narrow columns on wide windows:** the stress test's flights table scrolls sideways in its column, and its last column (the replay links) is cut off until scrolled.
+- **Scenario chips** no longer show whether a scenario held up; hover a chip or open it to see.
+- **Not checked on screen:** the too-close and below-ground lists in the replay, and Stage 2's rejected view, since every test run passed.
+- The `@fontsource` Inter and Fira Code packages are still listed in `apps/package.json` but no longer used.
 
 ## [1.2.2] — 2026-10-07
 
