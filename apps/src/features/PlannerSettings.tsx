@@ -1,7 +1,9 @@
 // Planner settings for a Stage 2 run, and the buttons that run it.
 
 import { useEffect, useMemo, useState } from "react";
+import { Alert, Button, Checkbox, Collapse, InputNumber, Select, Table } from "antd";
 import { runJob } from "../bridge/api";
+import { LogPane } from "./JobOutput";
 import type { ConfigField, Overrides, RunRecord } from "../bridge/types";
 import { changed, flatten, nest, parse, warningsFor, type Value, type Values } from "../app/overrides";
 
@@ -19,6 +21,9 @@ interface Props {
 const MAIN_GROUPS = new Set(["Safety check", "Motion limits", "Takeoff and landing"]);
 
 const show = (v: Value) => (typeof v === "boolean" ? (v ? "On" : "Off") : v === "disabled" ? "Off" : String(v));
+
+// Flush headers and bodies, so the tables line up with the card's edge.
+const FLUSH = { header: { paddingInline: 0 }, body: { paddingInline: 0 } };
 
 export function PlannerSettings({ run, runLabel, primary, blocked, onRun, onCopy }: Props) {
   const [fields, setFields] = useState<ConfigField[] | null>(null);
@@ -101,155 +106,198 @@ export function PlannerSettings({ run, runLabel, primary, blocked, onRun, onCopy
 
   const input = (f: ConfigField) => {
     const current = f.path in values ? values[f.path] : f.baseline;
-    const worse = warnings.some((w) => w.path === f.path);
+    const status = errors[f.path] || warnings.some((w) => w.path === f.path) ? "error" : undefined;
     if (f.kind === "boolean" || f.kind === "choice") {
       const options = f.kind === "boolean" ? ["true", "false"] : (f.choices ?? []);
       return (
-        <select
+        <Select
           aria-label={f.label}
+          className="setting-input"
           value={String(current)}
-          className={worse ? "is-worse" : undefined}
-          onChange={(e) => set(f, e.target.value)}
-        >
-          {options.map((o) => (
-            <option key={o} value={o}>
-              {f.kind === "boolean" ? (o === "true" ? "On" : "Off") : o === "4_sector_discrete" ? "On (4 sectors)" : "Off"}
-            </option>
-          ))}
-        </select>
+          status={status}
+          onChange={(v) => set(f, v)}
+          options={options.map((o) => ({
+            value: o,
+            label: f.kind === "boolean" ? (o === "true" ? "On" : "Off") : o === "4_sector_discrete" ? "On (4 sectors)" : "Off",
+          }))}
+        />
       );
     }
+    // No min here: clamping on blur would hide the "At least" message.
     return (
-      <input
-        type="number"
+      <InputNumber<string>
+        stringMode
+        controls={false}
         aria-label={f.label}
-        aria-invalid={!!errors[f.path]}
-        className={worse ? "is-worse" : undefined}
-        min={f.min ?? undefined}
-        step="any"
+        className="setting-input"
+        status={status}
         value={drafts[f.path] ?? String(current)}
-        onChange={(e) => set(f, e.target.value)}
+        onChange={(v) => set(f, v ?? "")}
       />
     );
   };
 
   const table = (group: string, gf: ConfigField[]) => (
-    <table key={group} className="table data settings-table">
-      <caption>{group}</caption>
-      <thead>
-        <tr>
-          <th scope="col">Setting</th>
-          <th scope="col" className="num">Default</th>
-          <th scope="col">This run</th>
-          <th scope="col">
-            <span className="visually-hidden">Undo</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {gf.map((f) => {
-          const isChanged = f.path in overrides;
-          return (
-            <tr key={f.path} className={isChanged ? "is-changed" : undefined}>
-              <th scope="row">
-                {f.label}
-                {f.help && <span className="setting-help">{f.help}</span>}
-              </th>
-              <td className="num muted">
-                {show(f.baseline)}
-                {f.baseline !== f.default && <span className="setting-help">from the show file</span>}
-              </td>
-              <td>
-                {input(f)}
-                {errors[f.path] && <span className="setting-help tone-bad">{errors[f.path]}</span>}
-              </td>
-              <td>
-                {(isChanged || errors[f.path]) && (
-                  <button className="link" onClick={() => revert(f.path)}>
-                    Undo
-                  </button>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <Table<ConfigField>
+      key={group}
+      className="settings-table"
+      size="small"
+      pagination={false}
+      rowKey="path"
+      title={() => <strong>{group}</strong>}
+      dataSource={gf}
+      rowClassName={(f) => (f.path in overrides ? "is-changed" : "")}
+      columns={[
+        {
+          title: "Setting",
+          key: "label",
+          width: "45%",
+          render: (_, f) => (
+            <>
+              {f.label}
+              {f.help && <span className="setting-help">{f.help}</span>}
+            </>
+          ),
+        },
+        {
+          title: "Default",
+          key: "default",
+          align: "right",
+          className: "num muted",
+          render: (_, f) => (
+            <>
+              {show(f.baseline)}
+              {f.baseline !== f.default && <span className="setting-help">from the show file</span>}
+            </>
+          ),
+        },
+        {
+          title: "This run",
+          key: "value",
+          render: (_, f) => (
+            <>
+              {input(f)}
+              {errors[f.path] && <span className="setting-help tone-bad">{errors[f.path]}</span>}
+            </>
+          ),
+        },
+        {
+          title: <span className="visually-hidden">Undo</span>,
+          key: "undo",
+          width: "4.5rem",
+          render: (_, f) =>
+            (f.path in overrides || errors[f.path]) && (
+              <Button type="link" size="small" onClick={() => revert(f.path)}>
+                Undo
+              </Button>
+            ),
+        },
+      ]}
+    />
   );
+
+  const main = groups.filter(([g]) => MAIN_GROUPS.has(g));
+  const tuning = groups.filter(([g]) => !MAIN_GROUPS.has(g));
 
   return (
     <section className="planner card planner-card" aria-label="Run Stage 2">
-      {loadError && <p className="notice notice-bad">{loadError}</p>}
+      {loadError && <Alert type="error" showIcon title={loadError} />}
       {fields && (
-        <details className="planner-settings" open={count > 0 || undefined}>
-          <summary>
-            Planner settings{" "}
-            <span className="muted">{count ? `${count} changed from the defaults` : "all at their defaults"}</span>
-          </summary>
-          <p className="muted small planner-about">
-            Defaults come from the planner's configuration file; motion limits can come from the show file. Only the
-            settings you change are sent to Stage 2.
-          </p>
-          {groups.filter(([g]) => MAIN_GROUPS.has(g)).map(([group, gf]) => table(group, gf))}
-          <details
-            className="settings-advanced"
-            open={groups.some(([g, gf]) => !MAIN_GROUPS.has(g) && gf.some((f) => f.path in overrides)) || undefined}
-          >
-            <summary>
-              Solver tuning{" "}
-              <span className="muted">
-                ({groups.filter(([g]) => !MAIN_GROUPS.has(g)).reduce((n, [, gf]) => n + gf.length, 0)} settings)
-              </span>
-            </summary>
-            {groups.filter(([g]) => !MAIN_GROUPS.has(g)).map(([group, gf]) => table(group, gf))}
-          </details>
-          <div className="actions">
-            <button onClick={resetAll} disabled={!count && !invalid}>
-              Reset all to defaults
-            </button>
-          </div>
-          <details className="log">
-            <summary>What Stage 2 receives</summary>
-            <pre>{count ? JSON.stringify(nest(overrides), null, 2) : "{}  (no changes: the defaults apply)"}</pre>
-          </details>
-        </details>
+        <Collapse
+          ghost
+          styles={FLUSH}
+          classNames={{ title: "planner-settings-title" }}
+          defaultActiveKey={count > 0 ? ["settings"] : []}
+          items={[
+            {
+              key: "settings",
+              label: (
+                <>
+                  Planner settings{" "}
+                  <span className="muted">{count ? `${count} changed from the defaults` : "all at their defaults"}</span>
+                </>
+              ),
+              children: (
+                <>
+                  <p className="muted small planner-about">
+                    Defaults come from the planner's configuration file; motion limits can come from the show file. Only
+                    the settings you change are sent to Stage 2.
+                  </p>
+                  {main.map(([group, gf]) => table(group, gf))}
+                  <Collapse
+                    ghost
+                    styles={FLUSH}
+                    className="settings-advanced"
+                    defaultActiveKey={tuning.some(([, gf]) => gf.some((f) => f.path in overrides)) ? ["tuning"] : []}
+                    items={[
+                      {
+                        key: "tuning",
+                        label: (
+                          <>
+                            <strong>Solver tuning</strong>{" "}
+                            <span className="muted">({tuning.reduce((n, [, gf]) => n + gf.length, 0)} settings)</span>
+                          </>
+                        ),
+                        children: tuning.map(([group, gf]) => table(group, gf)),
+                      },
+                    ]}
+                  />
+                  <div className="actions">
+                    <Button onClick={resetAll} disabled={!count && !invalid}>
+                      Reset all to defaults
+                    </Button>
+                  </div>
+                  <LogPane
+                    title="What Stage 2 receives"
+                    text={count ? JSON.stringify(nest(overrides), null, 2) : "{}  (no changes: the defaults apply)"}
+                  />
+                </>
+              ),
+            },
+          ]}
+        />
       )}
 
       {warnings.length > 0 && (
-        <div className="notice notice-bad planner-warnings" role="alert">
-          <p>
-            <strong>These settings make the safety check weaker than the defaults.</strong> A show that passes with
-            them may not be safe to fly.
-          </p>
-          <ul>
-            {warnings.map((w, i) => (
-              <li key={i}>{w.message}</li>
-            ))}
-          </ul>
-          <label className="check">
-            <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} /> Run with these
-            settings anyway
-          </label>
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          className="planner-warnings"
+          title="These settings make the safety check weaker than the defaults."
+          description={
+            <>
+              <p>A show that passes with them may not be safe to fly.</p>
+              <ul>
+                {warnings.map((w, i) => (
+                  <li key={i}>{w.message}</li>
+                ))}
+              </ul>
+              <Checkbox checked={accepted} onChange={(e) => setAccepted(e.target.checked)}>
+                Run with these settings anyway
+              </Checkbox>
+            </>
+          }
+        />
       )}
 
       <div className="actions">
-        <button
-          className={primary ? "primary" : ""}
+        <Button
+          type={primary ? "primary" : "default"}
+          size="large"
           disabled={!fields || invalid || (warnings.length > 0 && !accepted) || !!blocked}
           onClick={() => onRun(nest(overrides))}
         >
           {runLabel}
-        </button>
+        </Button>
         {run.stage2.status !== "not_run" && (
-          <button onClick={copy} disabled={!fields || invalid || copying}>
-            {copying ? "Copying…" : "Try these settings in a new run"}
-          </button>
+          <Button size="large" onClick={copy} disabled={!fields || invalid} loading={copying}>
+            Try these settings in a new run
+          </Button>
         )}
         {blocked && <span className="muted small">{blocked}</span>}
         {invalid && <span className="tone-bad small">Fix the highlighted settings first.</span>}
       </div>
-      {copyError && <p className="notice notice-bad">{copyError}</p>}
+      {copyError && <Alert type="error" showIcon title={copyError} />}
       {run.stage2.status !== "not_run" && (
         <p className="muted small">
           Running again here replaces this run's result. A new run keeps it, so you can compare the two.

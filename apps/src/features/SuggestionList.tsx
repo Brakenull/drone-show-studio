@@ -3,6 +3,7 @@
 // never applies one by itself; each leads to an explicit action.
 
 import type { ReactNode } from "react";
+import { Button } from "antd";
 import type { Suggestion, Suggestions } from "../bridge/types";
 import { formatTime } from "../replay/sampling";
 
@@ -161,21 +162,21 @@ function Action({
   if (!a) return null;
   if (a.kind === "plan_points") {
     return (
-      <button onClick={() => onPlanPoints(a.points)} disabled={disabled}>
+      <Button onClick={() => onPlanPoints(a.points)} disabled={disabled}>
         Plan {plural(a.points.length, "it", "them")}
-      </button>
+      </Button>
     );
   }
   if (a.kind === "set_alert") {
     return (
-      <button onClick={() => onSetAlert(a.alert_mm_h)} disabled={disabled}>
+      <Button onClick={() => onSetAlert(a.alert_mm_h)} disabled={disabled}>
         Use {a.alert_mm_h} mm/h
-      </button>
+      </Button>
     );
   }
   return (
-    <button onClick={() => onPlanReturn(a.formation)} disabled={disabled}>
+    <Button onClick={() => onPlanReturn(a.formation)} disabled={disabled}>
       {a.kind === "plan_return" ? "Plan it" : "Plan again"}
-    </button>
+    </Button>
   );
 }

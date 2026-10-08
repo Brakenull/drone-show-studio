@@ -1,5 +1,6 @@
 CLAUDE.md
 .claude/**
+.agents
 
 # Python
 __pycache__/
@@ -26,3 +27,5 @@ CMakeCache.txt
 runs/
 
 DESIGN.md
+.mcp.json
+skills-lock.json

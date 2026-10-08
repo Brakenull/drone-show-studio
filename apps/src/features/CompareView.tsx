@@ -2,6 +2,7 @@
 // overlaid, the headline numbers side by side, and the planner settings that differ.
 
 import { useEffect, useMemo, useState } from "react";
+import { Alert, Select, Table } from "antd";
 import { readRunJson, runJob } from "../bridge/api";
 import type { ConfigField, Overrides, RunRecord } from "../bridge/types";
 import { duration, runCreated, runName, STATUS } from "../app/format";
@@ -15,6 +16,12 @@ interface Loaded {
   floor: number | null;
   settings: Map<string, Value>; // every field's effective value
   fields: ConfigField[];
+}
+
+/** A row of the side-by-side table: a measure and its value in each run. */
+interface Measure {
+  label: string;
+  cells: { text: string; className?: string }[];
 }
 
 const hasResult = (r: RunRecord) => r.stage2.status === "succeeded" || r.stage2.status === "failed_safety";
@@ -104,21 +111,24 @@ export function CompareView({ run, runs }: { run: RunRecord; runs: RunRecord[] }
         <>
           <label className="field compare-pick">
             <span className="field-label">Compare with</span>
-            <select value={otherId ?? ""} onChange={(e) => setOtherId(e.target.value)}>
-              {candidates.map((r) => (
-                <option key={r.run_id} value={r.run_id}>
-                  {runName(r)}, {runCreated(r)} ({STATUS[r.stage2.status].label.toLowerCase()}
-                  {r.input.sha256 === run.input.sha256 ? ", same show" : ""})
-                </option>
-              ))}
-            </select>
+            <Select
+              style={{ width: "min(36rem, 100%)" }}
+              value={otherId ?? undefined}
+              onChange={setOtherId}
+              options={candidates.map((r) => ({
+                value: r.run_id,
+                label: `${runName(r)}, ${runCreated(r)} (${STATUS[r.stage2.status].label.toLowerCase()}${r.input.sha256 === run.input.sha256 ? ", same show" : ""})`,
+              }))}
+            />
           </label>
           {other && !sameShow && (
-            <p className="notice notice-warn">
-              These runs plan different show files, so their formations and timing differ too, not only the settings.
-            </p>
+            <Alert
+              type="warning"
+              showIcon
+              title="These runs plan different show files, so their formations and timing differ too, not only the settings."
+            />
           )}
-          {error && <p className="notice notice-bad">{error}</p>}
+          {error && <Alert type="error" showIcon title={error} />}
           {!data && !error && <p className="status-line">Loading both runs…</p>}
 
           {data && other && (
@@ -129,104 +139,105 @@ export function CompareView({ run, runs }: { run: RunRecord; runs: RunRecord[] }
                   b={{ label: nameB, separation: data.b.separation, floor: data.b.floor }}
                 />
               ) : (
-                <p className="notice">
-                  {data.a.separation ? nameB : nameA} has no replay data yet. Build it on that run's Replay tab.
-                </p>
+                <Alert
+                  type="info"
+                  showIcon
+                  title={`${data.a.separation ? nameB : nameA} has no replay data yet. Build it on that run's Replay tab.`}
+                />
               )}
 
-              <table className="table data compare-table">
-                <thead>
-                  <tr>
-                    <th scope="col">
-                      <span className="visually-hidden">Measure</span>
-                    </th>
-                    {[nameA, nameB].map((n, i) => (
-                      <th key={i} scope="col">
-                        <span className="series-swatch" style={{ background: SERIES_COLORS[i] }} aria-hidden="true" />
-                        {n}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <th scope="row">Stage 2</th>
-                    {[run, other].map((r) => (
-                      <td key={r.run_id} className={`tone-${STATUS[r.stage2.status].tone}`}>
-                        {STATUS[r.stage2.status].label}
-                      </td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th scope="row">Closest approach (sampled)</th>
-                    {[data.a, data.b].map((d, i) => {
+              <Table<Measure>
+                className="compare-table"
+                size="small"
+                pagination={false}
+                rowKey="label"
+                dataSource={[
+                  {
+                    label: "Stage 2",
+                    cells: [run, other].map((r) => ({
+                      text: STATUS[r.stage2.status].label,
+                      className: `tone-${STATUS[r.stage2.status].tone}`,
+                    })),
+                  },
+                  {
+                    label: "Closest approach (sampled)",
+                    cells: [data.a, data.b].map((d) => {
                       const w = d.separation?.worst;
                       const below = w && d.floor !== null && (w.distance_m ?? Infinity) < d.floor;
-                      return (
-                        <td key={i} className={below ? "tone-bad" : undefined}>
-                          {w ? `${metres(w.distance_m, 2)} at ${formatTime(w.time_sec)}` : "n/a"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr>
-                    <th scope="row">Required distance</th>
-                    {[data.a, data.b].map((d, i) => (
-                      <td key={i}>{metres(d.floor, 2)}</td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th scope="row">Show length</th>
-                    {[data.a, data.b].map((d, i) => {
+                      return {
+                        text: w ? `${metres(w.distance_m, 2)} at ${formatTime(w.time_sec)}` : "n/a",
+                        className: below ? "tone-bad" : undefined,
+                      };
+                    }),
+                  },
+                  { label: "Required distance", cells: [data.a, data.b].map((d) => ({ text: metres(d.floor, 2) })) },
+                  {
+                    label: "Show length",
+                    cells: [data.a, data.b].map((d) => {
                       const s = d.separation;
-                      return <td key={i}>{s ? duration(s.times[s.times.length - 1] - s.times[0]) : "n/a"}</td>;
-                    })}
-                  </tr>
-                  <tr>
-                    <th scope="row">Planning time</th>
-                    {[run, other].map((r) => (
-                      <td key={r.run_id}>{duration(r.stage2.wall_time_sec)}</td>
-                    ))}
-                  </tr>
-                  {(run.stage2.status === "failed_safety" || other.stage2.status === "failed_safety") && (
-                    <tr>
-                      <th scope="row">Rejected at</th>
-                      {[run, other].map((r) => (
-                        <td key={r.run_id}>
-                          {r.stage2.transition
-                            ? `${r.stage2.transition.from_keyframe.replace("holding_area", "holding area")} to ${r.stage2.transition.to_keyframe.replace("holding_area", "holding area")}`
-                            : "n/a"}
-                        </td>
-                      ))}
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                      return { text: s ? duration(s.times[s.times.length - 1] - s.times[0]) : "n/a" };
+                    }),
+                  },
+                  { label: "Planning time", cells: [run, other].map((r) => ({ text: duration(r.stage2.wall_time_sec) })) },
+                  ...(run.stage2.status === "failed_safety" || other.stage2.status === "failed_safety"
+                    ? [
+                        {
+                          label: "Rejected at",
+                          cells: [run, other].map((r) => ({
+                            text: r.stage2.transition
+                              ? `${r.stage2.transition.from_keyframe.replace("holding_area", "holding area")} to ${r.stage2.transition.to_keyframe.replace("holding_area", "holding area")}`
+                              : "n/a",
+                          })),
+                        },
+                      ]
+                    : []),
+                ]}
+                columns={[
+                  {
+                    title: <span className="visually-hidden">Measure</span>,
+                    dataIndex: "label",
+                    className: "measure",
+                    onCell: () => ({ scope: "row" }),
+                  },
+                  ...[nameA, nameB].map((n, i) => ({
+                    title: (
+                      <>
+                        <span className="series-swatch" style={{ background: SERIES_COLORS[i] }} aria-hidden="true" />
+                        {n}
+                      </>
+                    ),
+                    key: String(i),
+                    onCell: (m: Measure) => ({ className: m.cells[i].className }),
+                    render: (_: unknown, m: Measure) => m.cells[i].text,
+                  })),
+                ]}
+              />
 
               <h3>Planner settings that differ</h3>
               {differences.length === 0 ? (
                 <p className="muted">Both runs used the same planner settings.</p>
               ) : (
-                <table className="table data compare-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Setting</th>
-                      <th scope="col">{nameA}</th>
-                      <th scope="col">{nameB}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {differences.map((f) => (
-                      <tr key={f.path}>
-                        <th scope="row">
+                <Table<ConfigField>
+                  className="compare-table"
+                  size="small"
+                  pagination={false}
+                  rowKey="path"
+                  dataSource={differences}
+                  columns={[
+                    {
+                      title: "Setting",
+                      key: "setting",
+                      className: "measure",
+                      render: (_, f) => (
+                        <>
                           {f.label} <span className="setting-help">{f.group}</span>
-                        </th>
-                        <td>{show(data.a.settings.get(f.path))}</td>
-                        <td>{show(data.b.settings.get(f.path))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </>
+                      ),
+                    },
+                    { title: nameA, key: "a", render: (_, f) => show(data.a.settings.get(f.path)) },
+                    { title: nameB, key: "b", render: (_, f) => show(data.b.settings.get(f.path)) },
+                  ]}
+                />
               )}
             </>
           )}

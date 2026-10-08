@@ -1,6 +1,7 @@
 // The run's own copy of the Phase 1 file, re-validated on open.
 
 import { useEffect, useState } from "react";
+import { Alert, Button } from "antd";
 import { openRunFolder, runJob } from "../bridge/api";
 import type { RunRecord, Validation } from "../bridge/types";
 import { ValidationReport } from "./ValidationReport";
@@ -38,11 +39,13 @@ export function InputView({ run }: { run: RunRecord }) {
           The Phase 1 export this run uses. Source: <span className="path">{run.input.source_path}</span>
         </p>
       </header>
-      {error && <p className="notice notice-bad">{error}</p>}
+      {error && <Alert type="error" showIcon title={error} />}
       {!validation && !error && <p className="status-line">Checking the file…</p>}
       {validation && <ValidationReport validation={validation} />}
       <div className="actions">
-        <button onClick={() => openRunFolder(run.run_id)}>Open run folder</button>
+        <Button size="large" onClick={() => openRunFolder(run.run_id)}>
+          Open run folder
+        </Button>
       </div>
     </div>
   );

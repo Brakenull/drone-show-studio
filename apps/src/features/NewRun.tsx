@@ -1,6 +1,7 @@
 // Pick a Phase 1 export, validate it, create a run folder.
 
 import { useEffect, useRef, useState } from "react";
+import { Alert, Button } from "antd";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { runJob, stashImport } from "../bridge/api";
 import type { Validation } from "../bridge/types";
@@ -123,19 +124,21 @@ export function NewRun({ runsDir, onCreated }: Props) {
       </div>
 
       {busy === "validating" && <p className="status-line">Checking the file…</p>}
-      {error && (
-        <p className="notice notice-bad" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <Alert type="error" showIcon title={error} />}
 
       {validation && (
         <>
           <ValidationReport validation={validation} />
           <div className="actions">
-            <button className="primary" disabled={!validation.ok || busy !== null} onClick={create}>
+            <Button
+              type="primary"
+              size="large"
+              disabled={!validation.ok || busy === "validating"}
+              loading={busy === "creating"}
+              onClick={create}
+            >
               {busy === "creating" ? "Creating run…" : "Create run"}
-            </button>
+            </Button>
             {!validation.ok && <span className="muted">Fix the problems above, then export again.</span>}
           </div>
         </>

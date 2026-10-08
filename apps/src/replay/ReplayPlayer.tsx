@@ -1,6 +1,7 @@
 // 3D replay with the separation timeline as scrubber.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Select } from "antd";
 import { ReplayScene } from "./ReplayScene";
 import { SeparationStrip } from "./SeparationStrip";
 import { distanceAt, formatTime, metres, nearestTo, positionAt } from "./sampling";
@@ -219,17 +220,18 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
               </div>
             )}
           </dl>
-          <button
-            className="link"
+          <Button
+            type="link"
+            className="panel-link"
             onClick={() => seekTo(worst.time_sec, [worst.a, worst.b])}
             disabled={worst.distance_m === null}
           >
             Go to closest approach ({formatTime(worst.time_sec)}, drones {worst.a} and {worst.b})
-          </button>
+          </Button>
           {furthest && (
-            <button className="link" onClick={() => seekTo(furthest.time, [furthest.drone])}>
+            <Button type="link" className="panel-link" onClick={() => seekTo(furthest.time, [furthest.drone])}>
               Go to the furthest from plan ({formatTime(furthest.time)}, drone {furthest.drone})
-            </button>
+            </Button>
           )}
           {sim && (
             <p className="muted hint">
@@ -251,9 +253,9 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
                 Drone {pair[0]} at {positionAt(data, pair[0], time).map((v) => v.toFixed(1)).join(", ")} m
                 {takeoffName(pair[0]) && `, took off from ${takeoffName(pair[0])}`}
               </p>
-              <button className="link" onClick={() => setHighlight([])}>
+              <Button type="link" className="panel-link" onClick={() => setHighlight([])}>
                 Clear selection
-              </button>
+              </Button>
             </section>
           )}
           {!pair && <p className="muted hint">Click a drone to see its nearest neighbour.</p>}
@@ -282,9 +284,9 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
             <section className="panel-block">
               <h3>Formations</h3>
               <p className="muted small">This replay was built before formation marks existed.</p>
-              <button className="link" onClick={onRebuild} disabled={rebuilding}>
+              <Button type="link" className="panel-link" onClick={onRebuild} loading={rebuilding}>
                 {rebuilding ? "Rebuilding the replay…" : "Rebuild the replay to show them"}
-              </button>
+              </Button>
             </section>
           )}
 
@@ -344,22 +346,19 @@ export function ReplayPlayer({ data, focus, label, onRebuild, rebuilding }: Prop
             </svg>
           )}
         </button>
-        <label className="speed">
-          <span className="visually-hidden">Playback speed</span>
-          <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
-            {SPEEDS.map((s) => (
-              <option key={s} value={s}>
-                {s}×
-              </option>
-            ))}
-          </select>
-        </label>
+        <Select
+          aria-label="Playback speed"
+          className="speed"
+          value={speed}
+          onChange={setSpeed}
+          options={SPEEDS.map((s) => ({ value: s, label: `${s}×` }))}
+        />
         <span className="clock">
           {formatTime(time)} <span className="muted">of {formatTime(header.t1)}</span>
         </span>
-        <button className="link" onClick={() => sceneRef.current?.frameAll()}>
+        <Button type="link" onClick={() => sceneRef.current?.frameAll()}>
           Reset view
-        </button>
+        </Button>
       </div>
       <SeparationStrip
         separation={separation}

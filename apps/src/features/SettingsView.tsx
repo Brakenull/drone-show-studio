@@ -1,7 +1,8 @@
 // Where Studio finds the repo, its Python and the run folders, in a modal
 // dialog over the current page.
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { Badge, Button, Form, Input, Modal, Space, Table, Typography } from "antd";
 import { saveSettings } from "../bridge/api";
 import type { DoctorCheck, Settings } from "../bridge/types";
 
@@ -20,95 +21,60 @@ const FIELDS: { key: keyof Settings; label: string; help: string }[] = [
 ];
 
 export function SettingsView({ settings, checks, onSaved, onRecheck, onClose }: Props) {
-  const [draft, setDraft] = useState(settings);
-  const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
-  const ref = useRef<HTMLDialogElement>(null);
+  const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
 
-  useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-    // Start in the first field rather than on the close button.
-    d?.querySelector("input")?.focus();
-  }, []);
-
-  async function save() {
+  async function save(values: Settings) {
     try {
-      const saved = await saveSettings(draft);
+      const saved = await saveSettings(values);
       onSaved(saved);
-      setMessage({ tone: "ok", text: "Settings saved." });
+      setMessage({ tone: "success", text: "Settings saved." });
     } catch (e) {
-      setMessage({ tone: "bad", text: String(e) });
+      setMessage({ tone: "danger", text: String(e) });
     }
   }
 
   return (
-    <dialog
-      ref={ref}
-      className="modal"
-      aria-labelledby="settings-title"
-      // Escape closes the dialog natively; keep React's state in step.
-      onClose={onClose}
-      onClick={(e) => e.target === e.currentTarget && ref.current?.close()}
-    >
-      <button className="icon-button modal-close" aria-label="Close settings" onClick={() => ref.current?.close()}>
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-          <path d="M4 4l10 10M14 4L4 14" />
-        </svg>
-      </button>
-      <header className="page-head">
-        <h1 id="settings-title">Settings</h1>
-      </header>
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void save();
-        }}
-      >
-        {FIELDS.map((f) => (
-          <label key={f.key} className="field">
-            <span className="field-label">{f.label}</span>
-            <input
-              className="mono-input"
-              value={draft[f.key]}
-              spellCheck={false}
-              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-            />
-            <span className="muted small">{f.help}</span>
-          </label>
+    <Modal open title="Settings" onCancel={onClose} footer={null} width={760} centered>
+      <Form layout="vertical" initialValues={settings} onFinish={save} requiredMark={false}>
+        {FIELDS.map((f, i) => (
+          <Form.Item key={f.key} name={f.key} label={f.label} extra={f.help}>
+            {/* Start in the first field rather than on the close button. */}
+            <Input className="mono-input" spellCheck={false} autoFocus={i === 0} />
+          </Form.Item>
         ))}
-        <div className="actions">
-          <button className="primary" type="submit">
+        <Space size="middle">
+          <Button type="primary" htmlType="submit">
             Save settings
-          </button>
-          {message && <span className={`tone-${message.tone}`}>{message.text}</span>}
-        </div>
-      </form>
+          </Button>
+          {message && <Typography.Text type={message.tone}>{message.text}</Typography.Text>}
+        </Space>
+      </Form>
 
       <h2 className="section-title">Components</h2>
       <p className="muted">What Studio found when it started. Missing pieces disable the steps that need them.</p>
-      {checks ? (
-        <table className="table data checks-table">
-          <tbody>
-            {checks.map((c) => (
-              <tr key={c.name}>
-                <td>
-                  <span className="check-name">
-                    <span className={`light light-${c.ok ? "ok" : "bad"}`} aria-hidden="true" /> {c.name}
-                  </span>
-                </td>
-                <td className="muted">{c.required_for}</td>
-                <td className="path">{c.ok ? c.detail : <span className="tone-bad">{c.detail}</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p className="status-line">Checking…</p>
-      )}
+      <Table<DoctorCheck>
+        size="small"
+        showHeader={false}
+        pagination={false}
+        rowKey="name"
+        loading={!checks}
+        dataSource={checks ?? []}
+        columns={[
+          {
+            key: "name",
+            render: (_, c) => <Badge status={c.ok ? "success" : "error"} text={c.name} style={{ whiteSpace: "nowrap" }} />,
+          },
+          { dataIndex: "required_for", className: "muted" },
+          {
+            key: "detail",
+            className: "path",
+            render: (_, c) => (c.ok ? c.detail : <Typography.Text type="danger">{c.detail}</Typography.Text>),
+          },
+        ]}
+      />
       <div className="actions">
-        <button onClick={onRecheck}>Check again</button>
+        <Button onClick={onRecheck}>Check again</Button>
       </div>
-    </dialog>
+    </Modal>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Alert, Button } from "antd";
 import { getSettings, listRuns, runJob } from "./bridge/api";
 import type { DoctorCheck, RunRecord, Settings, SimDevice } from "./bridge/types";
 import { STATUS, runCreated, runName } from "./app/format";
@@ -106,18 +107,22 @@ export default function App() {
       />
       <main className="main">
         {(doctorError || (missing && missing.length > 0)) && (
-          <div className="banner" role="alert">
-            {doctorError ? (
-              <>Studio can't start its Python helper: {doctorError}. Check the Python path in Settings.</>
-            ) : (
-              <>
-                Missing: {missing!.map((c) => c.name).join(", ")}. Steps that need them won't work.{" "}
-                <button className="link" onClick={() => setSettingsOpen(true)}>
+          <Alert
+            banner
+            type={doctorError ? "error" : "warning"}
+            title={
+              doctorError
+                ? `Studio can't start its Python helper: ${doctorError}. Check the Python path in Settings.`
+                : `Missing: ${missing!.map((c) => c.name).join(", ")}. Steps that need them won't work.`
+            }
+            action={
+              !doctorError && (
+                <Button type="link" size="small" onClick={() => setSettingsOpen(true)}>
                   See details
-                </button>
-              </>
-            )}
-          </div>
+                </Button>
+              )
+            }
+          />
         )}
 
         {settingsOpen && settings && (

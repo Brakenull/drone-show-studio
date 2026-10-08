@@ -3,6 +3,7 @@
 // the timeline's time axis.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Slider } from "antd";
 import type { Readiness, RunRecord, Scenario, Suggestions } from "../bridge/types";
 import { runJob } from "../bridge/api";
 import { coverage, spans } from "../app/readiness";
@@ -157,7 +158,7 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
       </p>
 
       {readiness.returns.stale && (
-        <p className="notice notice-warn">The return paths were planned from an earlier Stage 2 result. Plan them again.</p>
+        <Alert type="warning" showIcon title="The return paths were planned from an earlier Stage 2 result. Plan them again." />
       )}
       {planning && planFrom === null ? (
         <div className="running-head readiness-planning">
@@ -170,28 +171,37 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
             </p>
             <p className="muted small">Each one is planned like a show transition; this can take several minutes each.</p>
           </div>
-          <button className="danger" disabled={job!.cancelling} onClick={() => cancelReturns(run.run_id)}>
+          <Button danger size="large" loading={job!.cancelling} onClick={() => cancelReturns(run.run_id)}>
             {job!.cancelling ? "Cancelling…" : "Cancel"}
-          </button>
+          </Button>
         </div>
       ) : (
         !planning &&
         (!readiness.returns.planned || missing.length > 0) && (
-          <div className="notice readiness-plan">
-            <p>
-              {!readiness.returns.planned
+          <Alert
+            type="info"
+            showIcon
+            className="readiness-plan"
+            title={
+              !readiness.returns.planned
                 ? "No return paths are planned yet. Without them the fleet can only fly the rest of the show to its own return leg."
-                : `No return path from ${missing.map((f) => f.name).join(", ")}${failed.length ? " (planning failed)" : ""}: from there the fleet flies the rest of the show.`}{" "}
-              Each return is planned like a show transition, so it takes about as long as one (on the 150-drone
-              cone, about 7 minutes each).
-            </p>
-            <div className="actions">
-              <button className="primary" onClick={() => plan()} disabled={disabled}>
-                Plan return paths
-              </button>
-            </div>
-            {planError && <p className="tone-bad">{planError}</p>}
-          </div>
+                : `No return path from ${missing.map((f) => f.name).join(", ")}${failed.length ? " (planning failed)" : ""}: from there the fleet flies the rest of the show.`
+            }
+            description={
+              <>
+                <p>
+                  Each return is planned like a show transition, so it takes about as long as one (on the 150-drone
+                  cone, about 7 minutes each).
+                </p>
+                <div className="actions">
+                  <Button type="primary" size="large" onClick={() => plan()} disabled={disabled}>
+                    Plan return paths
+                  </Button>
+                </div>
+                {planError && <p className="tone-bad">{planError}</p>}
+              </>
+            }
+          />
         )
       )}
 
@@ -238,25 +248,33 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
       </p>
 
       <div className="readiness-controls">
-        <label className="field readiness-window">
-          <span className="field-label">
+        <div className="field readiness-window">
+          <span className="field-label" id="rain-window-label">
             Rain goes from alert to limit in <span className="num">{seconds(rainWindow)}</span>
             {scenarioWindow !== null && Math.abs(scenarioWindow - rainWindow) > 0.05 && (
-              <button className="link" onClick={() => setRainWindow(Math.round(scenarioWindow * 10) / 10)}>
-                {" "}
+              <Button type="link" size="small" onClick={() => setRainWindow(Math.round(scenarioWindow * 10) / 10)}>
                 (this scenario: {seconds(scenarioWindow)})
-              </button>
+              </Button>
             )}
           </span>
-          <input type="range" min={5} max={sliderMax} step={1} value={Math.min(rainWindow, sliderMax)} onChange={(e) => setRainWindow(Number(e.target.value))} />
-        </label>
-        <button
+          <Slider
+            min={5}
+            max={sliderMax}
+            step={1}
+            value={Math.min(rainWindow, sliderMax)}
+            tooltip={{ formatter: (v) => seconds(v ?? 0) }}
+            ariaLabelledByForHandle="rain-window-label"
+            onChange={setRainWindow}
+          />
+        </div>
+        <Button
+          size="large"
           onClick={() => picked !== null && onFlyThis(picked, rainWindow)}
           disabled={disabled || picked === null}
           title={picked === null ? "Click the chart to pick the moment the rain reaches the alert level" : undefined}
         >
           {picked === null ? "Fly this" : `Fly this: alert at ${formatTime(picked)}`}
-        </button>
+        </Button>
       </div>
 
       <dl className="facts facts-wide">
@@ -285,9 +303,9 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
         <div className="readiness-suggest">
           <div className="readiness-suggest-head">
             <h3>What would close the gap</h3>
-            <button onClick={() => void suggest()} disabled={disabled || suggesting || planning}>
+            <Button onClick={() => void suggest()} disabled={disabled || planning} loading={suggesting}>
               {suggesting ? "Working it out…" : suggested ? "Suggest again" : `Suggest for ${seconds(rainWindow)}`}
-            </button>
+            </Button>
           </div>
           {!suggested && !suggesting && (
             <p className="muted small">
@@ -296,12 +314,13 @@ export function ReadinessPanel({ run, readiness, scenario, duration, scenarioWin
             </p>
           )}
           {suggested && suggested.key !== suggestKey && (
-            <p className="notice notice-warn small">
-              These were worked out for a {seconds(suggested.result.window_sec)} window and the return paths planned
-              then. Suggest again to bring them up to date.
-            </p>
+            <Alert
+              type="warning"
+              showIcon
+              title={`These were worked out for a ${seconds(suggested.result.window_sec)} window and the return paths planned then. Suggest again to bring them up to date.`}
+            />
           )}
-          {suggestError && <p className="notice notice-bad">Could not work out suggestions: {suggestError}</p>}
+          {suggestError && <Alert type="error" showIcon title={`Could not work out suggestions: ${suggestError}`} />}
           {suggested && (
             <SuggestionList
               result={suggested.result}

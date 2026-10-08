@@ -22,8 +22,23 @@
   --surface-hover: #252525;
   --border-soft: #222222;
   --idle: #5c5c5c;
-  --primary-tint: rgb(255 163 77 / 0.15);
-  --row-stripe: rgb(255 163 77 / 0.04);
+  /* Flat and solid: every tint is an opaque colour (the old translucent tint as it looked on the
+     surface), and nothing casts a shadow or glows. */
+  --primary-tint: #3c2f22;
+  --primary-wash: #31281f;
+  --primary-line: #8d5f34;
+  --row-stripe: #231f1c;
+  --surface-raised: #212121;
+  --ok-tint: #203226;
+  --bad-tint: #341f1f;
+  --warn-tint: #352f19;
+  --busy-tint: #173136;
+  --ok-wash: #1d2620;
+  --bad-wash: #291d1d;
+  --warn-wash: #27251a;
+  --ok-line: #285539;
+  --bad-line: #652929;
+  --warn-line: #5d4f19;
 
   /* Legacy aliases, kept so every rule below reads in one vocabulary */
   --night: var(--background);
@@ -45,16 +60,13 @@
   --step-2: 1.5rem;
   --step-3: 2rem; /* 32px: heading */
 
+  /* Squared-off corners: nothing rounder than 8px except true circles (status lights, round icons). */
   --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-pill: 9999px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
+  --radius-pill: 8px;
 
-  --shadow-card: 0 4px 12px rgb(0 0 0 / 0.4);
-  --shadow-card-hover: 0 8px 20px rgb(0 0 0 / 0.5);
-  --shadow-elevated: 0 12px 32px rgb(0 0 0 / 0.6);
-  --shadow-focus: 0 0 0 3px rgb(255 163 77 / 0.25);
 
   --fast: 150ms;
   --base: 300ms;
@@ -173,20 +185,16 @@ kbd {
 }
 .light-ok {
   background: var(--success);
-  box-shadow: 0 0 8px rgb(74 222 128 / 0.6);
 }
 .light-bad {
   background: var(--danger);
-  box-shadow: 0 0 8px rgb(239 68 68 / 0.6);
 }
 .light-warn {
   background: var(--warning);
-  box-shadow: 0 0 8px rgb(250 204 21 / 0.55);
 }
 /* Pulsing-dot loading variant. */
 .light-busy {
   background: var(--accent);
-  box-shadow: 0 0 8px rgb(0 217 255 / 0.55);
   animation: pulse 1.2s ease-in-out infinite alternate;
 }
 @keyframes pulse {
@@ -210,7 +218,6 @@ button {
     background-color var(--fast) ease,
     border-color var(--fast) ease,
     color var(--fast) ease,
-    box-shadow var(--fast) ease,
     transform var(--fast) var(--bounce);
 }
 button:hover:not(:disabled) {
@@ -222,59 +229,13 @@ button:disabled {
   border-color: var(--border);
   color: var(--text-muted);
 }
-button.primary {
-  min-height: 44px;
-  padding: 0.875rem 1.5rem;
-  background: var(--primary);
-  border-color: var(--primary);
-  color: var(--on-primary);
-  font-weight: 600;
-}
-button.primary:hover:not(:disabled) {
-  background: var(--primary-hover);
-  border-color: var(--primary-hover);
-  box-shadow: var(--shadow-card);
-}
-button.primary:active:not(:disabled) {
-  background: var(--primary-hover);
-  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.4);
-}
-button.primary:disabled {
-  background: var(--border);
-  border-color: var(--border);
-  color: var(--text-muted);
-}
-button.danger {
-  border-color: rgb(239 68 68 / 0.5);
-  color: var(--danger);
-  background: transparent;
-}
-button.danger:hover:not(:disabled) {
-  background: rgb(239 68 68 / 0.12);
-}
 /* Playful lift on the standalone buttons; list rows, tabs and cells stay still. */
-button.primary:hover:not(:disabled),
-button.danger:hover:not(:disabled),
 button:not([class]):hover:not(:disabled) {
   transform: scale(1.05);
 }
-button.primary:active:not(:disabled),
-button.danger:active:not(:disabled),
 button:not([class]):active:not(:disabled) {
   transform: scale(0.98);
   transition-duration: 100ms;
-}
-button.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--accent);
-  text-align: left;
-}
-button.link:hover:not(:disabled) {
-  background: none;
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 /* Layout */
@@ -385,7 +346,7 @@ button.link:hover:not(:disabled) {
 }
 .run-card.is-current {
   background: var(--primary-tint);
-  border-color: rgb(255 163 77 / 0.5);
+  border-color: var(--primary-line);
 }
 .run-card-top {
   display: flex;
@@ -445,19 +406,19 @@ button.link:hover:not(:disabled) {
   padding: 4px 12px;
 }
 .pill-ok {
-  background: rgb(74 222 128 / 0.12);
+  background: var(--ok-tint);
   color: var(--success);
 }
 .pill-bad {
-  background: rgb(239 68 68 / 0.12);
+  background: var(--bad-tint);
   color: var(--danger);
 }
 .pill-warn {
-  background: rgb(250 204 21 / 0.12);
+  background: var(--warn-tint);
   color: var(--warning);
 }
 .pill-busy {
-  background: rgb(0 217 255 / 0.12);
+  background: var(--busy-tint);
 }
 /* New run: a floating action button over the bottom of the run list. */
 button.fab {
@@ -475,9 +436,6 @@ button.fab {
   color: var(--on-primary);
   font-weight: 600;
   line-height: 1;
-  box-shadow:
-    var(--shadow-elevated),
-    0 0 24px rgb(255 163 77 / 0.35);
 }
 button.fab:hover:not(:disabled) {
   background: var(--primary-hover);
@@ -486,12 +444,10 @@ button.fab:hover:not(:disabled) {
 }
 button.fab:active:not(:disabled) {
   transform: scale(0.98);
-  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.4);
 }
 button.fab.is-current {
-  box-shadow:
-    var(--shadow-elevated),
-    0 0 0 3px rgb(255 163 77 / 0.35);
+  outline: 2px solid var(--primary-line);
+  outline-offset: 2px;
 }
 
 .main {
@@ -500,12 +456,6 @@ button.fab.is-current {
   min-width: 0;
   min-height: 0;
 }
-.banner {
-  padding: 0.75rem 2rem;
-  background: rgb(250 204 21 / 0.1);
-  border-bottom: 1px solid rgb(250 204 21 / 0.35);
-  color: var(--warning);
-}
 
 .run-view {
   display: flex;
@@ -513,13 +463,10 @@ button.fab.is-current {
   flex: 1;
   min-height: 0;
 }
-/* Run header: on a faint dot grid, the launch field seen from above. */
 .run-head {
   padding: 1.25rem 2rem 0.5rem;
   border-bottom: 1px solid var(--border);
-  background-color: var(--background);
-  background-image: radial-gradient(rgb(255 255 255 / 0.07) 1px, transparent 1.2px);
-  background-size: 18px 18px;
+  background: var(--background);
 }
 .run-title {
   display: flex;
@@ -568,17 +515,14 @@ button.fab.is-current {
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: var(--shadow-card);
   line-height: 1.3;
   transition:
     border-color var(--fast) ease,
-    box-shadow var(--base) ease,
     transform var(--base) var(--bounce);
 }
 .stage-card:hover:not(:disabled) {
   background: var(--surface);
   transform: translateY(-4px);
-  box-shadow: var(--shadow-card-hover);
 }
 .stage-card:active:not(:disabled) {
   transform: translateY(-1px);
@@ -586,8 +530,7 @@ button.fab.is-current {
 .stage-card.is-current,
 .stage-card.is-current:hover:not(:disabled) {
   border-color: var(--primary);
-  background: rgb(255 163 77 / 0.1);
-  box-shadow: var(--shadow-focus);
+  background: var(--primary-wash);
 }
 .stage-card-top {
   display: flex;
@@ -687,18 +630,15 @@ button.fab.is-current {
   border: 1.5px dashed #3a3a3a;
   border-radius: var(--radius-xl);
   background: var(--surface);
-  box-shadow: var(--shadow-card);
   cursor: pointer;
   max-width: 56rem;
   transition:
     border-color var(--fast) ease,
-    box-shadow var(--base) ease,
     transform var(--base) var(--bounce);
 }
 .dropzone:hover,
 .dropzone.is-over {
   border-color: var(--primary);
-  box-shadow: var(--shadow-card-hover);
   transform: translateY(-4px);
 }
 .dropzone-art {
@@ -755,7 +695,6 @@ button.fab.is-current {
   background: var(--surface);
   border-left: 4px solid var(--border);
   border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-sm);
-  box-shadow: var(--shadow-card);
   max-width: 56rem;
 }
 .issues h3 {
@@ -821,7 +760,14 @@ button.fab.is-current {
 .row-action {
   text-align: right;
 }
-.table .light {
+.panel-link.ant-btn {
+  height: auto;
+  padding-inline: 0;
+  white-space: normal;
+  text-align: left;
+}
+.table .light,
+.ant-table .light {
   vertical-align: middle;
   margin-right: 0.25rem;
 }
@@ -833,7 +779,6 @@ button.fab.is-current {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
 }
 .running-head {
   display: flex;
@@ -854,40 +799,12 @@ button.fab.is-current {
 .solve-status .notice {
   margin: 0.75rem 0 0;
 }
-/* Progress: 4px, orange into cyan. */
-.bar {
-  position: relative;
-  height: 4px;
+/* A job's progress: a solid orange bar, or a spinner while it starts. */
+.job-progress {
   margin: 1rem 0 0.75rem;
-  background: var(--border);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-}
-.bar > span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary), var(--accent));
-  transition: width var(--base) ease;
-}
-.bar-indeterminate > span {
-  width: 30%;
-  animation: sweep 1.8s ease-in-out infinite;
-}
-@keyframes sweep {
-  from {
-    left: -30%;
-  }
-  to {
-    left: 100%;
-  }
 }
 .log {
   margin-top: 1rem;
-}
-.log summary {
-  cursor: pointer;
-  color: var(--text-muted);
 }
 .log pre {
   max-height: 18rem;
@@ -933,42 +850,6 @@ button.fab.is-current {
   font-weight: 500;
   color: var(--text);
 }
-.field input,
-.field select,
-.settings-table input,
-.settings-table select,
-.speed select,
-.compare-pick select {
-  min-height: 44px;
-  padding: 0.75rem 1rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  line-height: 1.2;
-  transition:
-    background-color var(--fast) ease,
-    border-color var(--fast) ease,
-    box-shadow var(--fast) ease;
-}
-.field input:hover:not(:disabled),
-.field select:hover:not(:disabled),
-.settings-table input:hover:not(:disabled),
-.settings-table select:hover:not(:disabled),
-.speed select:hover,
-.compare-pick select:hover {
-  border-color: var(--accent);
-  background: var(--surface-hover);
-}
-.field input:focus-visible,
-.field select:focus-visible,
-.settings-table input:focus-visible,
-.settings-table select:focus-visible,
-.speed select:focus-visible,
-.compare-pick select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-  background: var(--border);
-}
 input::placeholder {
   color: var(--text-muted);
 }
@@ -1011,7 +892,7 @@ input[type="radio"]:focus-visible {
 .replay-pair-label {
   padding: 0.125rem 0.5rem;
   border-radius: var(--radius-sm);
-  background: rgb(15 15 15 / 0.85);
+  background: var(--background);
   border: 1px solid var(--primary);
   color: var(--primary);
   font-family: var(--font-mono);
@@ -1031,11 +912,9 @@ input[type="radio"]:focus-visible {
   width: 19rem;
   overflow-y: auto;
   padding: 1.25rem 1.5rem;
-  background: rgb(26 26 26 / 0.92);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-elevated);
-  backdrop-filter: blur(8px);
 }
 .replay-kind {
   color: var(--text-muted);
@@ -1123,10 +1002,6 @@ input[type="radio"]:focus-visible {
   height: 16px;
   fill: var(--on-primary);
 }
-.speed select {
-  min-height: 36px;
-  padding: 0.375rem 0.75rem;
-}
 .clock {
   font-size: var(--step-1);
   flex: 1;
@@ -1170,74 +1045,44 @@ input[type="radio"]:focus-visible {
 .planner {
   max-width: 56rem;
 }
-.planner-settings {
-  border-top: 1px solid var(--border);
-  padding-top: 1rem;
-}
-.planner-settings > summary {
-  cursor: pointer;
+.planner-settings-title {
   font-family: var(--font-heading);
   font-size: var(--step-1);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
-.planner-settings > summary .muted {
+.planner-settings-title .muted {
   font-family: var(--font);
   font-size: var(--step-0);
   font-weight: 400;
   letter-spacing: -0.01em;
 }
 .planner-about {
-  margin: 0.5rem 0 0.25rem;
+  margin: 0 0 0.25rem;
   max-width: 62ch;
 }
 .settings-table {
   margin-top: 1rem;
 }
-.settings-table caption {
-  text-align: left;
-  font-weight: 600;
-  padding: 0.5rem 0;
-  color: var(--text);
-}
-.settings-table th[scope="row"] {
-  font-weight: 400;
-  width: 45%;
-  padding-left: 0.75rem;
-  border-left: 4px solid transparent;
-}
-.settings-table tr.is-changed th[scope="row"] {
-  border-left-color: var(--primary);
-}
-.settings-table td:last-child {
-  width: 3.5rem;
+/* A changed setting gets an orange bar on its row. */
+.settings-table tr.is-changed > td:first-child {
+  box-shadow: inset 4px 0 var(--primary);
 }
 .setting-help {
   display: block;
   color: var(--text-muted);
   font-size: var(--step--1);
 }
-.settings-table input,
-.settings-table select {
+.setting-input {
   width: 9rem;
-  min-height: 40px;
-  padding: 0.5rem 0.75rem;
-}
-.settings-table input[aria-invalid="true"],
-.settings-table .is-worse {
-  border-color: var(--danger);
 }
 .settings-advanced {
-  margin-top: 1.5rem;
+  margin-top: 1rem;
 }
-.settings-advanced > summary {
-  cursor: pointer;
-  font-weight: 600;
+.page .ant-alert {
+  margin: 1rem 0;
 }
-.settings-advanced > summary .muted {
-  font-weight: 400;
-}
-.planner-warnings ul {
+.ant-alert ul {
   margin: 0.5rem 0 0.75rem;
   padding-left: 1.25rem;
 }
@@ -1245,24 +1090,13 @@ input[type="radio"]:focus-visible {
   margin: 0.25rem 0 0;
   padding-left: 1.25rem;
 }
-.check {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 44px;
-  cursor: pointer;
-}
 
 /* Compare */
-.compare-pick select {
-  width: min(32rem, 100%);
-}
 .compare-chart {
   max-width: 56rem;
   margin: 1.5rem 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 .compare-readout {
@@ -1286,13 +1120,13 @@ input[type="radio"]:focus-visible {
   height: 3px;
   margin-right: 0.5rem;
   vertical-align: middle;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 .compare-table {
   max-width: 56rem;
   margin-top: 0.5rem;
 }
-.compare-table th[scope="row"] {
+.compare-table .measure {
   font-weight: 400;
   color: var(--text-muted);
   width: 30%;
@@ -1342,22 +1176,8 @@ input[type="radio"]:focus-visible {
   align-items: end;
   gap: 1rem 1.5rem;
 }
-.mc-settings .field input,
-.mc-settings .field select {
+.mc-flights {
   width: 8.5rem;
-}
-.mc-settings .field-device select {
-  width: auto;
-  min-width: 8.5rem;
-  max-width: 100%;
-}
-.mc-settings button {
-  min-height: 44px;
-}
-.field input:disabled,
-.field select:disabled {
-  color: var(--text-muted);
-  cursor: default;
 }
 .mc-running {
   flex-wrap: wrap;
@@ -1365,7 +1185,6 @@ input[type="radio"]:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
 }
 
 /* The run grid: one LED per simulated flight, lit as each one lands. */
@@ -1400,21 +1219,18 @@ input[type="radio"]:focus-visible {
 .tone-cell-ok:hover:not(:disabled) {
   background: var(--success);
   border-color: var(--success);
-  box-shadow: 0 0 6px rgb(74 222 128 / 0.45);
 }
 .tone-cell-warn,
 .tone-cell-warn:disabled,
 .tone-cell-warn:hover:not(:disabled) {
   background: var(--warning);
   border-color: var(--warning);
-  box-shadow: 0 0 6px rgb(250 204 21 / 0.45);
 }
 .tone-cell-bad,
 .tone-cell-bad:disabled,
 .tone-cell-bad:hover:not(:disabled) {
   background: var(--danger);
   border-color: var(--danger);
-  box-shadow: 0 0 8px rgb(239 68 68 / 0.6);
 }
 /* Calm air: a ring around the LED so it reads as the reference, not one of the numbered flights. */
 .run-cell-nominal {
@@ -1447,21 +1263,6 @@ input[type="radio"]:focus-visible {
   margin-right: 0;
 }
 
-.table-scroll {
-  max-height: 24rem;
-  overflow-y: auto;
-  max-width: 56rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.table-scroll .table {
-  max-width: none;
-}
-.table-scroll thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
 .mc-table tbody tr {
   cursor: pointer;
 }
@@ -1473,11 +1274,6 @@ input[type="radio"]:focus-visible {
 }
 .manifest {
   margin-top: 0.75rem;
-}
-.manifest summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  margin-bottom: 0.5rem;
 }
 .stage3-stopped {
   margin-top: 1rem;
@@ -1497,8 +1293,7 @@ input[type="radio"]:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0ms !important;
   }
-  .light-busy,
-  .bar-indeterminate > span {
+  .light-busy {
     animation: none;
   }
   button:hover:not(:disabled),
@@ -1534,12 +1329,12 @@ input[type="radio"]:focus-visible {
 .returns {
   margin-top: 2rem;
 }
-.returns .table {
+.returns .ant-table-wrapper {
   margin-top: 1rem;
   max-width: 64rem;
 }
-.returns .table .num,
-.returns .table .row-action {
+.returns .num,
+.returns .row-action {
   white-space: nowrap;
 }
 .returns > p {
@@ -1552,9 +1347,6 @@ input[type="radio"]:focus-visible {
   margin-top: 1rem;
 }
 .returns-running {
-  margin-top: 1rem;
-}
-.returns-running .bar {
   margin-top: 1rem;
 }
 
@@ -1571,39 +1363,6 @@ input[type="radio"]:focus-visible {
 }
 .row-action .link + .link {
   margin-left: 1rem;
-}
-
-/* Modal dialog (native <dialog>): a raised panel over a dimmed page. */
-.dialog {
-  width: min(30rem, calc(100vw - 2rem));
-  padding: 1.5rem;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-}
-.dialog::backdrop {
-  background: rgb(0 0 0 / 0.6);
-}
-.dialog h2 {
-  margin: 0 0 0.75rem;
-  font-family: var(--font-heading);
-  font-size: var(--step-1);
-  font-weight: 600;
-}
-.dialog p {
-  margin: 0 0 1rem;
-  color: var(--text-muted);
-}
-.dialog .bar {
-  margin-bottom: 1rem;
-}
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1.25rem;
 }
 
 /* Conditions: weather scenarios. Each weather channel has its own
@@ -1632,7 +1391,7 @@ input[type="radio"]:focus-visible {
   min-width: 0;
   margin: 0;
   padding: 0.75rem 1.25rem 1.25rem;
-  background: rgb(255 255 255 / 0.03);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
@@ -1654,19 +1413,14 @@ input[type="radio"]:focus-visible {
   font-weight: 600;
   letter-spacing: -0.02em;
 }
-.meta-group .field input {
-  width: 100%;
-  min-width: 0;
-}
 .meta-group .field-label {
   display: flex;
   align-items: center;
   gap: 0.25rem;
   white-space: nowrap;
 }
-/* "?" hint: its text shows on hover or keyboard focus. */
+/* "?" hint: its text shows in a tooltip. */
 .hint-icon {
-  position: relative;
   display: inline-grid;
   place-items: center;
   width: 16px;
@@ -1684,40 +1438,6 @@ input[type="radio"]:focus-visible {
 .hint-icon:focus-visible {
   color: var(--accent);
   border-color: var(--accent);
-}
-.hint-icon::after {
-  content: attr(data-tip);
-  position: absolute;
-  z-index: 5;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  width: max-content;
-  max-width: 18rem;
-  padding: 0.5rem 0.75rem;
-  transform: translateX(-50%);
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-elevated);
-  color: var(--text);
-  font-size: var(--step--1);
-  font-weight: 400;
-  line-height: 1.45;
-  white-space: normal;
-  text-align: left;
-  pointer-events: none;
-  /* Not just transparent: a hidden tip would still widen the page and add a scrollbar. */
-  display: none;
-}
-.hint-icon:hover::after,
-.hint-icon:focus-visible::after {
-  display: block;
-}
-/* The last field's tip opens leftwards so it stays inside the window. */
-.meta-group .field:last-child .hint-icon::after {
-  left: auto;
-  right: -0.5rem;
-  transform: none;
 }
 @media (max-width: 1250px) {
   .scenario-meta {
@@ -1898,10 +1618,6 @@ input[type="radio"]:focus-visible {
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
-.inspector .field input,
-.inspector .field select {
-  width: 100%;
-}
 
 .sim-running {
   margin-top: 1.5rem;
@@ -1909,19 +1625,24 @@ input[type="radio"]:focus-visible {
 .sim-result {
   margin-top: 0.5rem;
 }
-.fact-link {
+/* A result value that opens the replay at that moment: it keeps the value's own size and tone,
+   with a faint underline that brightens on hover. `.page` outweighs antd's link-button colours. */
+.page .fact-link.ant-btn,
+.page .fact-link.ant-btn:not(:disabled):hover {
+  /* Inline, so a value made of several pieces wraps as one line of text. */
+  display: inline;
+  height: auto;
   padding: 0;
-  border: 0;
-  background: none;
   color: inherit;
   font: inherit;
   letter-spacing: inherit;
+  white-space: normal;
+  text-align: left;
   text-decoration: underline;
-  text-decoration-color: rgb(255 255 255 / 0.25);
+  text-decoration-color: var(--idle);
   text-underline-offset: 4px;
 }
-.fact-link:hover:not(:disabled) {
-  background: none;
+.page .fact-link.ant-btn:not(:disabled):hover {
   text-decoration-color: currentColor;
 }
 
@@ -1935,7 +1656,7 @@ input[type="radio"]:focus-visible {
   gap: 0.5rem;
   width: 15rem;
   padding: 0.75rem 1rem;
-  background: rgb(15 15 15 / 0.82);
+  background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   pointer-events: none;
@@ -2114,14 +1835,6 @@ input[type="radio"]:focus-visible {
   flex: 1 1 22rem;
   max-width: 34rem;
 }
-.readiness-window input[type="range"] {
-  min-height: 0;
-  padding: 0;
-  accent-color: var(--accent);
-}
-.readiness-controls button {
-  min-height: 44px;
-}
 
 /* Suggestions: ranked by what each closes; the meter shows it. */
 .readiness-suggest {
@@ -2198,9 +1911,6 @@ input[type="radio"]:focus-visible {
 .suggestion-body p {
   max-width: 68ch;
 }
-.suggestion-action button {
-  white-space: nowrap;
-}
 /* The planning job a suggestion started, shown in its row, under where the button was. */
 .suggestion-progress {
   grid-column: 1 / -1;
@@ -2251,7 +1961,7 @@ input[type="radio"]:focus-visible {
 }
 .stat-cards > div {
   padding: 1rem 1.25rem;
-  background: rgb(255 255 255 / 0.03);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
@@ -2277,7 +1987,6 @@ input[type="radio"]:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-card);
 }
 .card > h2,
 .card > .stage3-title {
@@ -2289,10 +1998,6 @@ input[type="radio"]:focus-visible {
 }
 .planner-card {
   padding: 1.5rem 2rem;
-}
-.planner-card .planner-settings {
-  border-top: 0;
-  padding-top: 0;
 }
 .planner-card > .actions:first-child {
   margin-top: 0;
@@ -2312,19 +2017,18 @@ input[type="radio"]:focus-visible {
   border-radius: var(--radius-xl);
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-card);
 }
 .verdict-card-ok {
-  background: rgb(74 222 128 / 0.06);
-  border-color: rgb(74 222 128 / 0.3);
+  background: var(--ok-wash);
+  border-color: var(--ok-line);
 }
 .verdict-card-bad {
-  background: rgb(239 68 68 / 0.07);
-  border-color: rgb(239 68 68 / 0.35);
+  background: var(--bad-wash);
+  border-color: var(--bad-line);
 }
 .verdict-card-warn {
-  background: rgb(250 204 21 / 0.06);
-  border-color: rgb(250 204 21 / 0.3);
+  background: var(--warn-wash);
+  border-color: var(--warn-line);
 }
 .verdict-card .verdict {
   gap: 1rem;
@@ -2351,31 +2055,21 @@ input[type="radio"]:focus-visible {
   height: 14px;
 }
 .verdict-card-ok .verdict-icon {
-  background: rgb(74 222 128 / 0.12);
-  border-color: rgb(74 222 128 / 0.3);
-}
-.verdict-card-ok .verdict-icon .light {
-  box-shadow: 0 0 16px var(--success);
+  background: var(--ok-tint);
+  border-color: var(--ok-line);
 }
 .verdict-card-bad .verdict-icon {
-  background: rgb(239 68 68 / 0.14);
-  border-color: rgb(239 68 68 / 0.35);
-}
-.verdict-card-bad .verdict-icon .light {
-  box-shadow: 0 0 16px var(--danger);
+  background: var(--bad-tint);
+  border-color: var(--bad-line);
 }
 .verdict-card-warn .verdict-icon {
-  background: rgb(250 204 21 / 0.12);
-  border-color: rgb(250 204 21 / 0.3);
-}
-.verdict-card-warn .verdict-icon .light {
-  box-shadow: 0 0 16px var(--warning);
+  background: var(--warn-tint);
+  border-color: var(--warn-line);
 }
 /* A verdict inside a card (Stage 3): flat, smaller headline. */
 .verdict-card-inner {
   margin-top: 1.5rem;
   padding: 1.5rem 1.75rem;
-  box-shadow: none;
 }
 .verdict-card-inner .verdict h2 {
   font-size: var(--step-2);
@@ -2421,23 +2115,6 @@ input[type="radio"]:focus-visible {
 .table.data .num {
   text-align: right;
 }
-/* In a scrolling frame the frame is the border, and the header must stick to it. */
-.table-scroll .table.data {
-  border: 0;
-  border-radius: 0;
-  overflow: visible;
-}
-.table.data.settings-table tbody th[scope="row"] {
-  padding-left: 0.75rem;
-}
-.settings-table caption {
-  padding: 1rem 0 0.5rem;
-}
-.check-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
 
 /* Formations, in show order. */
 .formation-cards {
@@ -2456,7 +2133,6 @@ input[type="radio"]:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
   transition:
     transform var(--base) var(--bounce),
     border-color var(--fast) ease;
@@ -2518,47 +2194,10 @@ input[type="radio"]:focus-visible {
   color: var(--text-muted);
 }
 
-/* Modal dialog (Settings). */
-.modal {
-  width: min(760px, calc(100% - 48px));
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
-  padding: 2rem;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-elevated);
-  animation: modal-in var(--base) var(--bounce);
-}
-.modal::backdrop {
-  background: rgb(0 0 0 / 0.7);
-}
-.modal-close {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  border-radius: var(--radius-md);
-}
-.modal .page-head h1 {
-  font-size: var(--step-3);
-}
-.modal .table.data {
-  max-width: none;
-}
+/* Monospace path inputs in Settings. */
 .mono-input {
   font-family: var(--font-mono);
   font-size: var(--step--1);
-}
-@keyframes modal-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 
 @media (max-width: 1100px) {
@@ -2678,8 +2317,8 @@ input[type="radio"]:focus-visible {
 .transport {
   padding: 0.625rem 2rem;
 }
-.transport .speed select {
-  border-radius: var(--radius-md);
+.speed {
+  min-width: 5.5rem;
 }
 
 /* Weather scenarios (Stage 3): the page in v3 spacing, one card per step, full width for the timeline. */
@@ -2725,9 +2364,6 @@ input[type="radio"]:focus-visible {
   align-items: center;
   gap: 0.5rem;
 }
-.scenario-ops button {
-  min-height: 44px;
-}
 .card > .scenario-meta {
   margin: 0.75rem 0 1.25rem;
 }
@@ -2735,7 +2371,7 @@ input[type="radio"]:focus-visible {
   margin-top: 0;
 }
 .card .inspector {
-  background: rgb(255 255 255 / 0.03);
+  background: var(--surface-raised);
 }
 .card .actions:first-of-type {
   margin-top: 1rem;
@@ -2743,10 +2379,6 @@ input[type="radio"]:focus-visible {
 .fly-card .running {
   max-width: none;
   margin-top: 1.25rem;
-  box-shadow: none;
-}
-.fly-card .notice:last-child {
-  margin-bottom: 0;
 }
 .sim-result .stat-cards {
   max-width: none;

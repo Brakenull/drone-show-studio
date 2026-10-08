@@ -2,6 +2,7 @@
 // the Stage 3 tab at a time (features/Stage3Tab.tsx).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Collapse, InputNumber, Select, Table } from "antd";
 import { openRunFolder, readRunJson, readRunText } from "../bridge/api";
 import type {
   JobExit,
@@ -16,9 +17,10 @@ import type {
 } from "../bridge/types";
 import { cancelStage3, secondsLeft, startStage3, useStage3Job, type Stage3Job } from "../app/stage3Jobs";
 import { isStage2Running } from "../app/stage2Jobs";
-import { clock, duration, STATUS } from "../app/format";
+import { clock, duration } from "../app/format";
 import { isStale } from "../app/stages";
 import { VerdictCard } from "./VerdictCard";
+import { LogPane } from "./JobOutput";
 import { formatTime, metres } from "../replay/sampling";
 
 interface Props {
@@ -35,6 +37,10 @@ const D_CRASH_M = 0.5;
 const MIN_LANDING_SOC = 0.15;
 const REFERENCE_NOTE =
   "Drawn on the planned paths. In the simulated flight the drones drifted from these, so the distance shown here differs.";
+
+/** A long table: scrolls inside a frame with its header kept in view. */
+const SCROLL = { x: "max-content", y: 384 };
+const FRAME = { maxWidth: "56rem" };
 
 const soc = (v: number | null | undefined) =>
   v === null || v === undefined || !Number.isFinite(v) ? "n/a" : `${Math.round(v * 100)} %`;
@@ -175,33 +181,35 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "p
     <div className="mc-settings">
       <label className="field">
         <span className="field-label">Flights</span>
-        <input
-          type="number"
+        <InputNumber<number>
+          className="mc-flights"
           min={1}
           max={1000}
+          precision={0}
           value={runs}
-          onChange={(e) => setRuns(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
+          onChange={(v) => v !== null && setRuns(v)}
         />
       </label>
-      <label className="field field-device">
+      <label className="field">
         <span className="field-label">Simulate on</span>
-        <select value={device} disabled={!devices?.length} onChange={(e) => setChosen(e.target.value)}>
-          {devices === null ? (
-            <option value="auto">Checking…</option>
-          ) : noDevice ? (
-            <option value="auto">No device found</option>
-          ) : (
-            ["auto", ...devices.map((d) => d.id)].map((id) => (
-              <option key={id} value={id}>
-                {deviceLabel(id, devices)}
-              </option>
-            ))
-          )}
-        </select>
+        <Select
+          value={device}
+          disabled={!devices?.length}
+          loading={devices === null}
+          popupMatchSelectWidth={false}
+          onChange={setChosen}
+          options={
+            devices === null
+              ? [{ value: "auto", label: "Checking…" }]
+              : noDevice
+                ? [{ value: "auto", label: "No device found" }]
+                : ["auto", ...devices.map((d) => d.id)].map((id) => ({ value: id, label: deviceLabel(id, devices) }))
+          }
+        />
       </label>
-      <button className={status === "not_run" ? "primary" : ""} disabled={noDevice} onClick={start}>
+      <Button size="large" type={status === "not_run" ? "primary" : "default"} disabled={noDevice} onClick={start}>
         {status === "not_run" ? "Start stress test" : "Run stress test again"}
-      </button>
+      </Button>
     </div>
   );
 
@@ -216,17 +224,21 @@ function MonteCarlo({ run, devices, onFinished, onShowInReplay }: Omit<Props, "p
         {soc(MIN_LANDING_SOC)} battery.
       </p>
 
-      {startError && <p className="notice notice-bad">Could not start the stress test: {startError}</p>}
+      {startError && <Alert type="error" showIcon title={`Could not start the stress test: ${startError}`} />}
       {!running && noDevice && (
-        <p className="notice notice-bad">
-          No device to simulate on. The stress test runs on the graphics chip through its OpenCL driver, or on the
-          processor with a CPU OpenCL runtime. Install either one, then use Check again on the Settings page.
-        </p>
+        <Alert
+          type="error"
+          showIcon
+          title="No device to simulate on."
+          description="The stress test runs on the graphics chip through its OpenCL driver, or on the processor with a CPU OpenCL runtime. Install either one, then use Check again on the Settings page."
+        />
       )}
       {!running && isStale(run, part) && (
-        <p className="notice notice-warn">
-          These results are from an earlier Stage 2 result. Run the stress test again to test the current paths.
-        </p>
+        <Alert
+          type="warning"
+          showIcon
+          title="These results are from an earlier Stage 2 result. Run the stress test again to test the current paths."
+        />
       )}
 
       {running ? <McRunning job={job!} runId={run.run_id} devices={devices ?? []} /> : settings}
@@ -270,14 +282,16 @@ function McRunning({ job, runId, devices }: { job: Stage3Job; runId: string; dev
           {job.planned && <> on {deviceName(job.planned.device, devices)}</>}
         </p>
       </div>
-      <button
-        className="danger"
-        disabled={job.cancelling || job.jobId < 0}
+      <Button
+        danger
+        size="large"
+        loading={job.cancelling}
+        disabled={job.jobId < 0}
         onClick={() => cancelStage3(runId, "monte_carlo").catch((e) => setCancelError(String(e)))}
       >
         {job.cancelling ? "Cancelling…" : "Cancel stress test"}
-      </button>
-      {cancelError && <p className="notice notice-bad">{cancelError}</p>}
+      </Button>
+      {cancelError && <Alert type="error" showIcon title={cancelError} />}
     </div>
   );
 }
@@ -294,13 +308,15 @@ function McResults({
   onShowInReplay: Props["onShowInReplay"];
 }) {
   const [selected, setSelected] = useState<number | null>(null);
-  const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
+  const tableRef = useRef<HTMLDivElement>(null);
   const byRun = useMemo(() => new Map(records.map((r) => [r.run, r])), [records]);
   const nominal = byRun.get(-1);
 
   const select = (runIndex: number) => {
     setSelected(runIndex);
-    rowRefs.current.get(runIndex)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    tableRef.current
+      ?.querySelector(`[data-row-key="${runIndex}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   };
 
   const cells = Array.from({ length: planned }, (_, i) => i);
@@ -391,66 +407,84 @@ function McResults({
       </p>
 
       {records.length > 0 && (
-        <div className="table-scroll">
-          <table className="table data mc-table">
-            <thead>
-              <tr>
-                <th scope="col">Flight</th>
-                <th scope="col">Result</th>
-                <th scope="col" className="num">Closest</th>
-                <th scope="col" className="num">Lowest battery</th>
-                <th scope="col" className="num">Wind</th>
-                <th scope="col" className="num">Gust</th>
-                <th scope="col" className="num">Sim speed</th>
-                <th scope="col">
-                  <span className="visually-hidden">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {records.map((r) => {
-                const tone = recordTone(r);
-                const pair = closestPair(r);
-                return (
-                  <tr
-                    key={r.run}
-                    ref={(el) => {
-                      if (el) rowRefs.current.set(r.run, el);
-                      else rowRefs.current.delete(r.run);
-                    }}
-                    className={selected === r.run ? "is-selected" : undefined}
-                    onClick={() => setSelected(r.run)}
-                  >
-                    <td>{flightName(r)}</td>
-                    <td className={tone === "ok" ? undefined : `tone-${tone}`}>{recordResult(r)}</td>
-                    <td className={`num ${(r.min_separation_m ?? Infinity) < D_CRASH_M ? "tone-bad" : ""}`}>
-                      {metres(r.min_separation_m, 2)}
-                    </td>
-                    <td className={`num ${r.min_final_soc < MIN_LANDING_SOC ? "tone-bad" : ""}`}>
-                      {soc(r.min_final_soc)}
-                    </td>
-                    <td className="num">{r.scenario.mean_wind_mps.toFixed(1)} m/s</td>
-                    <td className="num">{r.scenario.gust_peak_mps.toFixed(1)} m/s</td>
-                    <td className="num">{r.realtime_factor.toFixed(2)}×</td>
-                    <td className="row-action">
-                      {pair && (
-                        <button
-                          className="link"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onShowInReplay(pair.time_sec, [pair.drone_a, pair.drone_b], REFERENCE_NOTE);
-                          }}
-                          title={`Drones ${pair.drone_a} and ${pair.drone_b}, ${metres(pair.min_distance_m, 2)} at ${formatTime(pair.time_sec)}`}
-                        >
-                          Show {pair.drone_a} and {pair.drone_b} in replay
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div ref={tableRef}>
+          <Table<McRecord>
+            className="mc-table"
+            size="small"
+            style={FRAME}
+            scroll={SCROLL}
+            pagination={false}
+            rowKey="run"
+            dataSource={records}
+            rowClassName={(r) => (selected === r.run ? "is-selected" : "")}
+            onRow={(r) => ({ onClick: () => setSelected(r.run) })}
+            columns={[
+              { title: "Flight", key: "flight", render: (_, r) => flightName(r) },
+              {
+                title: "Result",
+                key: "result",
+                onCell: (r) => ({ className: recordTone(r) === "ok" ? undefined : `tone-${recordTone(r)}` }),
+                render: (_, r) => recordResult(r),
+              },
+              {
+                title: "Closest",
+                key: "closest",
+                align: "right",
+                onCell: (r) => ({ className: `num ${(r.min_separation_m ?? Infinity) < D_CRASH_M ? "tone-bad" : ""}` }),
+                render: (_, r) => metres(r.min_separation_m, 2),
+              },
+              {
+                title: "Lowest battery",
+                key: "soc",
+                align: "right",
+                onCell: (r) => ({ className: `num ${r.min_final_soc < MIN_LANDING_SOC ? "tone-bad" : ""}` }),
+                render: (_, r) => soc(r.min_final_soc),
+              },
+              {
+                title: "Wind",
+                key: "wind",
+                align: "right",
+                className: "num",
+                render: (_, r) => `${r.scenario.mean_wind_mps.toFixed(1)} m/s`,
+              },
+              {
+                title: "Gust",
+                key: "gust",
+                align: "right",
+                className: "num",
+                render: (_, r) => `${r.scenario.gust_peak_mps.toFixed(1)} m/s`,
+              },
+              {
+                title: "Sim speed",
+                key: "speed",
+                align: "right",
+                className: "num",
+                render: (_, r) => `${r.realtime_factor.toFixed(2)}×`,
+              },
+              {
+                title: <span className="visually-hidden">Actions</span>,
+                key: "action",
+                render: (_, r) => {
+                  const pair = closestPair(r);
+                  return (
+                    pair && (
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onShowInReplay(pair.time_sec, [pair.drone_a, pair.drone_b], REFERENCE_NOTE);
+                        }}
+                        title={`Drones ${pair.drone_a} and ${pair.drone_b}, ${metres(pair.min_distance_m, 2)} at ${formatTime(pair.time_sec)}`}
+                      >
+                        Show {pair.drone_a} and {pair.drone_b} in replay
+                      </Button>
+                    )
+                  );
+                },
+              },
+            ]}
+          />
         </div>
       )}
       {records.length > 0 && (
@@ -508,17 +542,20 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
         reads. Each file also carries the flights home planned under Return paths, and a table that tells the drone
         which one to fly when the return is called. Every file is read back and checked after it is written.
       </p>
-      {startError && <p className="notice notice-bad">Could not start packing: {startError}</p>}
+      {startError && <Alert type="error" showIcon title={`Could not start packing: ${startError}`} />}
       {!running && isStale(run, part) && (
-        <p className="notice notice-warn">
-          These files are from an earlier Stage 2 result. Pack again before loading them onto drones.
-        </p>
+        <Alert
+          type="warning"
+          showIcon
+          title="These files are from an earlier Stage 2 result. Pack again before loading them onto drones."
+        />
       )}
       {!running && status === "succeeded" && !isStale(run, part) && returnsChanged(run, part) && (
-        <p className="notice notice-warn">
-          Return paths were planned after these files were packed, so the files don't carry them. Pack again to include
-          them.
-        </p>
+        <Alert
+          type="warning"
+          showIcon
+          title="Return paths were planned after these files were packed, so the files don't carry them. Pack again to include them."
+        />
       )}
 
       {running ? (
@@ -528,22 +565,26 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
             <p className="running-phase">{PACK_PHASE[job!.phase] ?? job!.phase}</p>
             <p className="muted">{run.input.fleet_size} drones</p>
           </div>
-          <button
-            className="danger"
-            disabled={job!.cancelling || job!.jobId < 0}
+          <Button
+            danger
+            size="large"
+            loading={job!.cancelling}
+            disabled={job!.jobId < 0}
             onClick={() => cancelStage3(run.run_id, "pack").catch((e) => setCancelError(String(e)))}
           >
             {job!.cancelling ? "Cancelling…" : "Cancel"}
-          </button>
-          {cancelError && <p className="notice notice-bad">{cancelError}</p>}
+          </Button>
+          {cancelError && <Alert type="error" showIcon title={cancelError} />}
         </div>
       ) : (
         <div className="actions">
-          <button className={status === "not_run" ? "primary" : ""} onClick={start}>
+          <Button size="large" type={status === "not_run" ? "primary" : "default"} onClick={start}>
             {status === "not_run" ? "Pack flight files" : "Pack flight files again"}
-          </button>
+          </Button>
           {status === "succeeded" && (
-            <button onClick={() => openRunFolder(run.run_id, "stage3/bin")}>Open the files' folder</button>
+            <Button size="large" onClick={() => openRunFolder(run.run_id, "stage3/bin")}>
+              Open the files' folder
+            </Button>
           )}
         </div>
       )}
@@ -578,48 +619,65 @@ function Pack({ run, onFinished }: { run: RunRecord; onFinished: Props["onFinish
           </VerdictCard>
           <PackedReturns part={part} />
           {manifest && (
-            <details className="manifest">
-              <summary>
-                File list ({manifest.files.length} files, {verified} checked)
-              </summary>
-              <div className="table-scroll">
-                {manifest.tracks && manifest.tracks.length > 1 && (
-                  <p className="muted small">
-                    Each file: the show ({manifest.tracks[0].records.toLocaleString()} samples) and{" "}
-                    {manifest.tracks.length - 1} flights home (
-                    {manifest.tracks
-                      .slice(1)
-                      .reduce((n, t) => n + t.records, 0)
-                      .toLocaleString()}{" "}
-                    samples), pack {manifest.pack_id}.
-                  </p>
-                )}
-                <table className="table data">
-                  <thead>
-                    <tr>
-                      <th scope="col">Drone</th>
-                      <th scope="col">File</th>
-                      <th scope="col" className="num">Samples</th>
-                      <th scope="col" className="num">Size</th>
-                      <th scope="col">CRC-32</th>
-                      <th scope="col">Checked</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {manifest.files.map((f) => (
-                      <tr key={f.drone_id}>
-                        <td>{f.drone_id}</td>
-                        <td className="path">{f.file}</td>
-                        <td className="num">{manifest.records_per_file.toLocaleString()}</td>
-                        <td className="num">{f.size_bytes.toLocaleString()} B</td>
-                        <td className="path">{f.crc32}</td>
-                        <td className={f.verified ? "tone-ok" : "tone-bad"}>{f.verified ? "Yes" : "No"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
+            <Collapse
+              ghost
+              size="small"
+              className="manifest"
+              items={[
+                {
+                  key: "files",
+                  label: `File list (${manifest.files.length} files, ${verified} checked)`,
+                  children: (
+                    <>
+                      {manifest.tracks && manifest.tracks.length > 1 && (
+                        <p className="muted small">
+                          Each file: the show ({manifest.tracks[0].records.toLocaleString()} samples) and{" "}
+                          {manifest.tracks.length - 1} flights home (
+                          {manifest.tracks
+                            .slice(1)
+                            .reduce((n, t) => n + t.records, 0)
+                            .toLocaleString()}{" "}
+                          samples), pack {manifest.pack_id}.
+                        </p>
+                      )}
+                      <Table<PackManifest["files"][number]>
+                        size="small"
+                        style={FRAME}
+                        scroll={SCROLL}
+                        pagination={false}
+                        rowKey="drone_id"
+                        dataSource={manifest.files}
+                        columns={[
+                          { title: "Drone", dataIndex: "drone_id" },
+                          { title: "File", dataIndex: "file", className: "path" },
+                          {
+                            title: "Samples",
+                            key: "samples",
+                            align: "right",
+                            className: "num",
+                            render: () => manifest.records_per_file.toLocaleString(),
+                          },
+                          {
+                            title: "Size",
+                            key: "size",
+                            align: "right",
+                            className: "num",
+                            render: (_, f) => `${f.size_bytes.toLocaleString()} B`,
+                          },
+                          { title: "CRC-32", dataIndex: "crc32", className: "path" },
+                          {
+                            title: "Checked",
+                            key: "verified",
+                            onCell: (f) => ({ className: f.verified ? "tone-ok" : "tone-bad" }),
+                            render: (_, f) => (f.verified ? "Yes" : "No"),
+                          },
+                        ]}
+                      />
+                    </>
+                  ),
+                },
+              ]}
+            />
           )}
         </>
       )}
@@ -651,7 +709,7 @@ function PackedReturns({ part }: { part: PackPart }) {
   const points = part.return_tracks.filter((t) => t.kind === "abort_point");
   return (
     <div className="packed-returns">
-      {part.returns_note && <p className="notice notice-warn small">Flights home left out: {part.returns_note}.</p>}
+      {part.returns_note && <Alert type="warning" showIcon title={`Flights home left out: ${part.returns_note}.`} />}
       {part.return_tracks.length === 0 ? (
         <p className="muted small">
           No flights home are planned, so if the return is called the drones keep flying the show to its own return leg
@@ -717,15 +775,13 @@ function Stopped({
   const cancelled = status === "cancelled";
   return (
     <div className="stage3-stopped">
-      <p className={`notice ${cancelled ? "" : "notice-bad"}`}>
-        <span className={`light light-${STATUS[status].tone}`} aria-hidden="true" />{" "}
-        {cancelled ? "Cancelled before it finished." : (message ?? "Stopped with an error.")}
-      </p>
+      <Alert
+        type={cancelled ? "info" : "error"}
+        showIcon
+        title={cancelled ? "Cancelled before it finished." : (message ?? "Stopped with an error.")}
+      />
       {lines.length > 0 && (
-        <details className="log">
-          <summary>Output ({lines.length} lines)</summary>
-          <pre>{lines.slice(-200).join("\n")}</pre>
-        </details>
+        <LogPane title={`Output (${lines.length} lines)`} text={lines.slice(-200).join("\n")} />
       )}
     </div>
   );

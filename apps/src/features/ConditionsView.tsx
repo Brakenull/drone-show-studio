@@ -4,6 +4,7 @@
 // paths. This page holds the inputs and the results; the playback is in the Replay tab.
 
 import { useCallback, useEffect, useState } from "react";
+import { Alert, Button, Input, InputNumber, Popconfirm, Select, Table, Tooltip } from "antd";
 import { runJob } from "../bridge/api";
 import type {
   ConditionsInfo,
@@ -23,6 +24,7 @@ import { compass, rainLabel, RTK_LABEL } from "../replay/weather";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { VerdictCard } from "./VerdictCard";
 import { TimelineEditor, type Channel, type KeyRef } from "./TimelineEditor";
+import { JobProgress } from "./JobOutput";
 
 /** Seconds the simulation keeps flying after the show (twin_sim/scenario_runner.py TAIL_SEC). */
 const TAIL_SEC = 2;
@@ -64,6 +66,7 @@ function rainCrossing(keys: Scenario["rain"], level: number): number | null {
   }
   return null;
 }
+const FULL = { width: "100%" };
 const pct = (v: number) => `${Math.round(v * 100)} %`;
 
 function errorOf(events: { type: string }[], fallback: string): { message: string; errors: string[] } {
@@ -97,7 +100,6 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
   const [selected, setSelected] = useState<KeyRef | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<{ message: string; errors: string[] } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const job = useSimulateJob(run.run_id);
   const running = !!job && !job.exit;
 
@@ -130,7 +132,6 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
   useEffect(() => {
     setSelected(null);
     setProblem(null);
-    setConfirmDelete(false);
   }, [entry?.id]);
 
   const dirty = !!entry && !!draft && !same(entry.scenario, draft);
@@ -167,7 +168,6 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
       await reload(null);
     } finally {
       setBusy(false);
-      setConfirmDelete(false);
     }
   }
 
@@ -225,7 +225,7 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
         <header className="page-head">
           <h1>Weather scenarios</h1>
         </header>
-        <p className="notice notice-bad">Could not read this run's scenarios: {loadError}</p>
+        <Alert type="error" showIcon title={`Could not read this run's scenarios: ${loadError}`} />
       </div>
     );
   }
@@ -269,41 +269,49 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
           })}
         </div>
         <div className="scenario-ops">
-          <button onClick={newScenario} disabled={busy || running} className={info.scenarios.length ? "" : "primary"}>
+          <Button
+            size="large"
+            type={info.scenarios.length ? "default" : "primary"}
+            onClick={newScenario}
+            disabled={busy || running}
+          >
             New scenario
-          </button>
-          <button onClick={duplicate} disabled={!draft || busy || running}>
+          </Button>
+          <Button size="large" onClick={duplicate} disabled={!draft || busy || running}>
             Duplicate
-          </button>
-          {entry &&
-            (confirmDelete ? (
-              <>
-                <button className="danger" onClick={() => void remove(entry.id)} disabled={busy || running}>
-                  Delete it and its results
-                </button>
-                <button className="link" onClick={() => setConfirmDelete(false)}>
-                  Keep it
-                </button>
-              </>
-            ) : (
-              <button onClick={() => setConfirmDelete(true)} disabled={busy || running}>
+          </Button>
+          {entry && (
+            <Popconfirm
+              title={`Delete "${entry.scenario.name}"?`}
+              description="Its results and playback go too."
+              okText="Delete it and its results"
+              okButtonProps={{ danger: true }}
+              cancelText="Keep it"
+              onConfirm={() => remove(entry.id)}
+            >
+              <Button size="large" disabled={busy || running}>
                 Delete
-              </button>
-            ))}
+              </Button>
+            </Popconfirm>
+          )}
         </div>
       </section>
 
       {problem && (
-        <div className="notice notice-bad">
-          <p>{problem.errors.length ? "The scenario wasn't saved:" : problem.message}</p>
-          {problem.errors.length > 0 && (
-            <ul>
-              {problem.errors.map((e) => (
-                <li key={e}>{e}</li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          title={problem.errors.length ? "The scenario wasn't saved:" : problem.message}
+          description={
+            problem.errors.length > 0 && (
+              <ul>
+                {problem.errors.map((e) => (
+                  <li key={e}>{e}</li>
+                ))}
+              </ul>
+            )
+          }
+        />
       )}
 
       {(!entry || !draft) && (
@@ -402,7 +410,7 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
 
           <section className="card">
             {info.readiness.error ? (
-              <p className="notice notice-warn">Rain return readiness isn't available: {info.readiness.error}</p>
+              <Alert type="warning" showIcon title={`Rain return readiness isn't available: ${info.readiness.error}`} />
             ) : (
               <ReadinessPanel
                 run={run}
@@ -431,16 +439,16 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
             <div className="actions">
               {running ? null : (
                 <>
-                  <button className="primary" onClick={() => void simulate()} disabled={busy}>
+                  <Button type="primary" size="large" onClick={() => void simulate()} disabled={busy}>
                     {dirty ? "Save and simulate" : "Simulate this scenario"}
-                  </button>
-                  <button onClick={() => void save(draft, entry.id)} disabled={!dirty || busy}>
+                  </Button>
+                  <Button size="large" onClick={() => void save(draft, entry.id)} disabled={!dirty || busy}>
                     Save changes
-                  </button>
+                  </Button>
                   {dirty && (
-                    <button className="link" onClick={() => setEdit(null)}>
+                    <Button type="link" onClick={() => setEdit(null)}>
                       Undo changes
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
@@ -448,12 +456,14 @@ function Conditions({ run, onFinished, onPlay, scenarioId }: Props) {
 
             {running && job!.scenarioId === entry.id && <Simulating job={job!} runId={run.run_id} />}
             {running && job!.scenarioId !== entry.id && (
-              <p className="notice">Another scenario of this run is being simulated; wait for it to finish.</p>
+              <Alert type="info" showIcon title="Another scenario of this run is being simulated; wait for it to finish." />
             )}
             {!running && job?.exit && job.scenarioId === entry.id && (job.exit.cancelled || (job.exit.code !== 0 && job.exit.code !== 1)) && (
-              <p className="notice notice-bad">
-                {job.exit.cancelled ? "The simulation was cancelled." : `The simulation stopped: ${job.errors[job.errors.length - 1] ?? `exit code ${job.exit.code}`}`}
-              </p>
+              <Alert
+                type="error"
+                showIcon
+                title={job.exit.cancelled ? "The simulation was cancelled." : `The simulation stopped: ${job.errors[job.errors.length - 1] ?? `exit code ${job.exit.code}`}`}
+              />
             )}
           </section>
           {!running && entry.result && (
@@ -502,33 +512,45 @@ function MetaField({
   // While focused, the field keeps exactly what was typed ("0." on the way to "0.5").
   const [local, setLocal] = useState<string | null>(null);
   const shown = local ?? (value === fallback && !text ? "" : String(value));
+  const type = (raw: string) => {
+    setLocal(raw);
+    const t = raw.trim();
+    if (t === "") return onChange(fallback);
+    if (text) return onChange(raw);
+    const n = Number(t);
+    if (Number.isFinite(n) && n >= 0) onChange(integer ? Math.floor(n) : n);
+  };
+  const common = {
+    value: shown,
+    placeholder: placeholder ?? String(fallback),
+    disabled,
+    onFocus: () => setLocal(shown),
+    onBlur: () => setLocal(null),
+  };
   return (
     <label className="field">
       <span className="field-label">
         {label}
         {unit && <span className="muted"> ({unit})</span>}
-        <span className="hint-icon" tabIndex={0} role="img" aria-label={help} data-tip={help}>
-          ?
-        </span>
+        <Tooltip title={help} trigger={["hover", "focus"]}>
+          <span className="hint-icon" tabIndex={0} role="img" aria-label={help}>
+            ?
+          </span>
+        </Tooltip>
       </span>
-      <input
-        type={text ? "text" : "number"}
-        min={text ? undefined : 0}
-        step={text ? undefined : integer ? 1 : step}
-        value={shown}
-        placeholder={placeholder ?? String(fallback)}
-        disabled={disabled}
-        onFocus={() => setLocal(shown)}
-        onBlur={() => setLocal(null)}
-        onChange={(e) => {
-          setLocal(e.target.value);
-          const t = e.target.value.trim();
-          if (t === "") return onChange(fallback);
-          if (text) return onChange(e.target.value);
-          const n = Number(t);
-          if (Number.isFinite(n) && n >= 0) onChange(integer ? Math.floor(n) : n);
-        }}
-      />
+      {text ? (
+        <Input {...common} onChange={(e) => type(e.target.value)} />
+      ) : (
+        <InputNumber<string>
+          {...common}
+          stringMode
+          controls={false}
+          style={FULL}
+          min="0"
+          step={integer ? 1 : step}
+          onChange={(v) => type(v ?? "")}
+        />
+      )}
     </label>
   );
 }
@@ -562,10 +584,11 @@ function KeyNumber({
         {label}
         {unit && <span className="muted"> ({unit})</span>}
       </span>
-      <input
-        type="number"
-        min={min}
-        max={max}
+      <InputNumber<string>
+        stringMode
+        style={FULL}
+        min={min === undefined ? undefined : String(min)}
+        max={max === undefined ? undefined : String(max)}
         step={step}
         value={local ?? String(value)}
         placeholder={String(local === null ? value : before)}
@@ -575,9 +598,9 @@ function KeyNumber({
           setLocal(String(value));
         }}
         onBlur={() => setLocal(null)}
-        onChange={(e) => {
-          setLocal(e.target.value);
-          const t = e.target.value.trim();
+        onChange={(v) => {
+          const t = (v ?? "").trim();
+          setLocal(t);
           if (t === "") {
             if (value !== before) onChange(before);
             return;
@@ -663,11 +686,17 @@ function Inspector({
         {channel === "rtk" && (
           <label className="field">
             <span className="field-label">From here on</span>
-            <select value={key.state as string} disabled={disabled} onChange={(e) => set("state", e.target.value as RtkState)}>
-              <option value="fixed">{RTK_LABEL.fixed} (centimetre accuracy)</option>
-              <option value="float">{RTK_LABEL.float} (about 0.3 m)</option>
-              <option value="gps">{RTK_LABEL.gps} (about 1.5 m)</option>
-            </select>
+            <Select<RtkState>
+              style={FULL}
+              value={key.state as RtkState}
+              disabled={disabled}
+              onChange={(v) => set("state", v)}
+              options={[
+                { value: "fixed", label: `${RTK_LABEL.fixed} (centimetre accuracy)` },
+                { value: "float", label: `${RTK_LABEL.float} (about 0.3 m)` },
+                { value: "gps", label: `${RTK_LABEL.gps} (about 1.5 m)` },
+              ]}
+            />
           </label>
         )}
         {channel === "rain" && (
@@ -677,15 +706,16 @@ function Inspector({
           </>
         )}
       </div>
-      <button
-        className="link"
+      <Button
+        type="link"
+        style={{ paddingInline: 0 }}
         disabled={disabled}
         onClick={() =>
           onChange({ ...scenario, [channel]: (scenario[channel] as unknown[]).filter((_, i) => i !== selected.index) }, null)
         }
       >
         Delete this key
-      </button>
+      </Button>
     </aside>
   );
 }
@@ -716,18 +746,18 @@ function Simulating({ job, runId }: { job: SimulateJob; runId: string }) {
             Running for <span className="num">{clock(now - job.startedAt)}</span>
           </p>
         </div>
-        <button
-          className="danger"
-          disabled={job.cancelling || job.jobId < 0}
+        <Button
+          danger
+          size="large"
+          loading={job.cancelling}
+          disabled={job.jobId < 0}
           onClick={() => cancelSimulate(runId).catch((e) => setCancelError(String(e)))}
         >
           {job.cancelling ? "Cancelling…" : "Cancel simulation"}
-        </button>
+        </Button>
       </div>
-      <div className={`bar ${p ? "" : "bar-indeterminate"}`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}>
-        <span style={p ? { width: `${fraction * 100}%` } : undefined} />
-      </div>
-      {cancelError && <p className="notice notice-bad">{cancelError}</p>}
+      <JobProgress pct={p ? Math.round(fraction * 100) : null} />
+      {cancelError && <Alert type="error" showIcon title={cancelError} />}
     </div>
   );
 }
@@ -766,12 +796,18 @@ function Result({
   return (
     <section className="sim-result" aria-label="Result">
       {stale && (
-        <p className="notice notice-warn">
-          This result is from an earlier Stage 2 result. Simulate again to fly the current paths.
-        </p>
+        <Alert
+          type="warning"
+          showIcon
+          title="This result is from an earlier Stage 2 result. Simulate again to fly the current paths."
+        />
       )}
       {edited && !stale && (
-        <p className="notice notice-warn">The scenario changed after this simulation. Simulate again to see the effect.</p>
+        <Alert
+          type="warning"
+          showIcon
+          title="The scenario changed after this simulation. Simulate again to see the effect."
+        />
       )}
       <VerdictCard tone={r.passed ? "ok" : "bad"} title={headline}>
         <dl className="stat-cards">
@@ -779,9 +815,9 @@ function Result({
             <dt>Closest approach</dt>
             <dd className={(r.closest?.distance_m ?? Infinity) < r.criteria.d_crash_m ? "tone-bad" : (r.closest?.distance_m ?? Infinity) < r.criteria.d_warning_m ? "tone-warn" : undefined}>
               {r.closest ? (
-                <button className="fact-link" onClick={() => onOpen(r.closest!.time_sec, [r.closest!.a, r.closest!.b])}>
+                <Button type="link" className="fact-link" onClick={() => onOpen(r.closest!.time_sec, [r.closest!.a, r.closest!.b])}>
                   {metres(r.closest.distance_m, 2)}
-                </button>
+                </Button>
               ) : (
                 "over 3 m"
               )}
@@ -790,9 +826,9 @@ function Result({
           <div>
             <dt>Largest deviation from plan</dt>
             <dd className={r.largest_deviation.distance_m > 0.5 ? "tone-warn" : undefined}>
-              <button className="fact-link" onClick={() => onOpen(r.largest_deviation.time_sec, [r.largest_deviation.drone])}>
+              <Button type="link" className="fact-link" onClick={() => onOpen(r.largest_deviation.time_sec, [r.largest_deviation.drone])}>
                 {metres(r.largest_deviation.distance_m, 2)}
-              </button>
+              </Button>
             </dd>
           </div>
           <div>
@@ -807,16 +843,16 @@ function Result({
               {r.rain.alert_time_sec === null ? (
                 rainLabel(r.rain.peak_mm_h)
               ) : (
-                <button className="fact-link" onClick={() => onOpen(r.rain.alert_time_sec!, [])}>
+                <Button type="link" className="fact-link" onClick={() => onOpen(r.rain.alert_time_sec!, [])}>
                   alert at {formatTime(r.rain.alert_time_sec)}
-                </button>
+                </Button>
               )}
             </dd>
           </div>
         </dl>
         {home && home.formation >= 0 && <RainReturnFacts home={home} reaction={r.rain.reaction_s} onOpen={onOpen} />}
         {r.rain.not_applied && (
-          <p className="notice notice-warn">The rain rule wasn't applied: {r.rain.not_applied}.</p>
+          <Alert type="warning" showIcon title={`The rain rule wasn't applied: ${r.rain.not_applied}.`} />
         )}
         <p className="muted small">
           {r.closest && <>Closest pair: drones {r.closest.a} and {r.closest.b} at {formatTime(r.closest.time_sec)}. </>}
@@ -831,42 +867,40 @@ function Result({
           {formatDuration(r.wall_time_sec)} ({r.realtime_factor.toFixed(1)}× real time).
         </p>
         {r.crash_pairs.length > 0 && (
-          <div className="table-scroll">
-            <table className="table data">
-              <thead>
-                <tr>
-                  <th scope="col">Drones</th>
-                  <th scope="col" className="num">Closest</th>
-                  <th scope="col" className="num">At</th>
-                  <th scope="col">
-                    <span className="visually-hidden">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {r.crash_pairs.slice(0, 20).map((p) => (
-                  <tr key={`${p.drone_a}-${p.drone_b}`}>
-                    <td>
-                      {p.drone_a} and {p.drone_b}
-                    </td>
-                    <td className="num tone-bad">{metres(p.min_distance_m, 2)}</td>
-                    <td className="num">{formatTime(p.time_sec)}</td>
-                    <td className="row-action">
-                      <button className="link" onClick={() => onOpen(p.time_sec, [p.drone_a, p.drone_b])}>
-                        Show in replay
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table<ScenarioResult["crash_pairs"][number]>
+            size="small"
+            pagination={false}
+            scroll={{ y: 400 }}
+            rowKey={(p) => `${p.drone_a}-${p.drone_b}`}
+            dataSource={r.crash_pairs.slice(0, 20)}
+            columns={[
+              { title: "Drones", key: "drones", render: (_, p) => `${p.drone_a} and ${p.drone_b}` },
+              {
+                title: "Closest",
+                key: "closest",
+                align: "right",
+                className: "num tone-bad",
+                render: (_, p) => metres(p.min_distance_m, 2),
+              },
+              { title: "At", key: "at", align: "right", className: "num", render: (_, p) => formatTime(p.time_sec) },
+              {
+                title: <span className="visually-hidden">Actions</span>,
+                key: "action",
+                align: "right",
+                render: (_, p) => (
+                  <Button type="link" size="small" onClick={() => onOpen(p.time_sec, [p.drone_a, p.drone_b])}>
+                    Show in replay
+                  </Button>
+                ),
+              },
+            ]}
+          />
         )}
         {entry.playback && (
           <div className="actions">
-            <button className="primary" onClick={() => onOpen(0, [])}>
+            <Button type="primary" size="large" onClick={() => onOpen(0, [])}>
               Watch in Replay
-            </button>
+            </Button>
             <span className="muted small">Times and values above open the replay at that moment.</span>
           </div>
         )}
@@ -904,27 +938,27 @@ function RainReturnFacts({
         <div>
           <dt>Return called</dt>
           <dd>
-            <button className="fact-link" onClick={() => onOpen(home.command_sec, [])}>
+            <Button type="link" className="fact-link" onClick={() => onOpen(home.command_sec, [])}>
               {formatTime(home.command_sec)}
-            </button>
+            </Button>
           </dd>
         </div>
         <div>
           <dt>Flying home from</dt>
           <dd>
-            <button className="fact-link" onClick={() => onOpen(home.start_sec, [])}>
+            <Button type="link" className="fact-link" onClick={() => onOpen(home.start_sec, [])}>
               {home.method === "abort_point" ? `the move to ${home.formation_name}` : (home.formation_name ?? "n/a")} at{" "}
               {formatTime(home.start_sec)}
-            </button>
+            </Button>
           </dd>
         </div>
         <div>
           <dt>Last drone home</dt>
           <dd className={home.all_home ? undefined : "tone-bad"}>
             {home.last_landing_sec !== null && home.all_home ? (
-              <button className="fact-link" onClick={() => onOpen(home.last_landing_sec!, home.last_drone !== null ? [home.last_drone] : [])}>
+              <Button type="link" className="fact-link" onClick={() => onOpen(home.last_landing_sec!, home.last_drone !== null ? [home.last_drone] : [])}>
                 {formatTime(home.last_landing_sec)}
-              </button>
+              </Button>
             ) : (
               `${home.not_home.length} not home`
             )}
@@ -936,14 +970,14 @@ function RainReturnFacts({
             {deadline === null ? (
               "not reached"
             ) : (
-              <button className="fact-link" onClick={() => onOpen(deadline, [])}>
+              <Button type="link" className="fact-link" onClick={() => onOpen(deadline, [])}>
                 {formatTime(deadline)}
                 {!home.all_home ? (
                   " (missed)"
                 ) : (
                   spare !== null && <> ({spare >= 0 ? `${seconds(spare)} to spare` : `${seconds(-spare)} late`})</>
                 )}
-              </button>
+              </Button>
             )}
           </dd>
         </div>

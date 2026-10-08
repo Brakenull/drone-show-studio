@@ -2,6 +2,7 @@
 // Replay tab plays the planned show, a return path, or a weather scenario flown through the digital twin.
 
 import { useEffect, useState } from "react";
+import { Alert, Button, Select } from "antd";
 import { readRunBytes, readRunJson, runJob } from "../bridge/api";
 import type { RunRecord } from "../bridge/types";
 import { ReplayPlayer } from "../replay/ReplayPlayer";
@@ -161,29 +162,35 @@ export function ReplayView({
     <div className="replay-toolbar">
       <label className="replay-pick">
         <span className="field-label">Playing</span>
-        <select
+        <Select
           value={value}
-          onChange={(e) => {
-            const v = e.target.value;
+          popupMatchSelectWidth={false}
+          onChange={(v: string) => {
             if (v === "show") onSource({ kind: "show" });
             else if (v.startsWith("scenario:")) {
               const id = v.slice("scenario:".length);
               onSource({ kind: "scenario", id, name: names.get(id) ?? id });
             }
           }}
-        >
-          <option value="show">{run.stage2.status === "failed_safety" ? "Rejected show (Stage 2)" : "Planned show (Stage 2)"}</option>
-          {source.kind === "return" && <option value={value}>Return path: flight home from {source.from}</option>}
-          {ids.length > 0 && (
-            <optgroup label="Weather scenarios, simulated">
-              {ids.map((id) => (
-                <option key={id} value={`scenario:${id}`}>
-                  {names.get(id) ?? (source.kind === "scenario" && source.id === id ? source.name : id)}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
+          options={[
+            {
+              value: "show",
+              label: run.stage2.status === "failed_safety" ? "Rejected show (Stage 2)" : "Planned show (Stage 2)",
+            },
+            ...(source.kind === "return" ? [{ value, label: `Return path: flight home from ${source.from}` }] : []),
+            ...(ids.length > 0
+              ? [
+                  {
+                    label: "Weather scenarios, simulated",
+                    options: ids.map((id) => ({
+                      value: `scenario:${id}`,
+                      label: names.get(id) ?? (source.kind === "scenario" && source.id === id ? source.name : id),
+                    })),
+                  },
+                ]
+              : []),
+          ]}
+        />
       </label>
       <p className="muted small replay-about">
         {source.kind === "scenario"
@@ -195,9 +202,9 @@ export function ReplayView({
               : "The paths Stage 2 planned."}
       </p>
       {source.kind === "scenario" && (
-        <button className="link" onClick={() => onEditScenario(source.id)}>
+        <Button type="link" onClick={() => onEditScenario(source.id)}>
           Edit this weather
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -234,7 +241,7 @@ export function ReplayView({
       {state === "loading" && <p className="status-line">Loading the replay…</p>}
       {(state === "missing" || state === "error") && (
         <>
-          {error && <p className="notice notice-bad">{error}</p>}
+          {error && <Alert type="error" showIcon title={error} />}
           {source.kind === "scenario" ? (
             <p>The playback of {source.name} is missing. Simulate the scenario again in Stage 3 › Weather scenarios.</p>
           ) : hasOutput ? (
@@ -245,9 +252,9 @@ export function ReplayView({
                   : "This run has Stage 2 output but no replay files yet."}
               </p>
               <div className="actions">
-                <button className="primary" onClick={rebuild} disabled={rebuilding}>
+                <Button type="primary" size="large" onClick={rebuild} loading={rebuilding}>
                   {rebuilding ? "Building replay…" : "Build replay"}
-                </button>
+                </Button>
               </div>
             </>
           ) : (

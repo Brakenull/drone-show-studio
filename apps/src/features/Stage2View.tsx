@@ -1,6 +1,7 @@
 // Run Stage 2 and read its outcome.
 
 import { useEffect, useState } from "react";
+import { Alert, Button, Table } from "antd";
 import { readRunJson, readRunText, runJob } from "../bridge/api";
 import type { FailureSummary, JobExit, Overrides, RunRecord } from "../bridge/types";
 import { PlannerSettings } from "./PlannerSettings";
@@ -15,6 +16,7 @@ import {
 import { isStage3Running } from "../app/stage3Jobs";
 import { isReturnsRunning } from "../app/returnsJobs";
 import { ReturnPaths } from "./ReturnPaths";
+import { JobProgress, LogPane } from "./JobOutput";
 import { VerdictCard } from "./VerdictCard";
 import { clock, duration, STATUS } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
@@ -64,11 +66,7 @@ export function Stage2View({ run, runsDir, onChanged, onFinished, onShowInReplay
         </p>
       </header>
 
-      {startError && (
-        <p className="notice notice-bad" role="alert">
-          Could not start Stage 2: {startError}
-        </p>
-      )}
+      {startError && <Alert type="error" showIcon title={`Could not start Stage 2: ${startError}`} />}
 
       {running ? (
         <RunningPanel job={job!} fleet={run.input.fleet_size} runId={run.run_id} />
@@ -145,31 +143,27 @@ function RunningPanel({ job, fleet, runId }: { job: Stage2Job; fleet: number; ru
             {fleet} drones, running for <span className="num">{clock(now - job.startedAt)}</span>
           </p>
         </div>
-        <button
-          className="danger"
-          disabled={job.cancelling || job.jobId < 0}
+        <Button
+          danger
+          size="large"
+          loading={job.cancelling}
+          disabled={job.jobId < 0}
           onClick={() => cancelStage2(runId).catch((e) => setCancelError(String(e)))}
         >
           {job.cancelling ? "Cancelling…" : "Cancel run"}
-        </button>
+        </Button>
       </div>
       {solving && <SolveStatus solve={solving} />}
-      <div
-        className={`bar ${pct === null ? "bar-indeterminate" : ""}`}
+      <JobProgress
+        pct={pct}
         title={solving ? "Approximate: a pass that converges early or a retry moves it in jumps" : undefined}
-        role="progressbar"
-        aria-valuenow={pct ?? undefined}
-        aria-valuemin={0}
-        aria-valuemax={100}
-      >
-        <span style={pct === null ? undefined : { width: `${pct}%` }} />
-      </div>
+      />
       <p className="muted small">
         Large shows can take more than an hour. The run keeps going while you look at other runs; closing
         Studio stops it.
       </p>
-      {cancelError && <p className="notice notice-bad">{cancelError}</p>}
-      <LogPane lines={job.log} />
+      {cancelError && <Alert type="error" showIcon title={cancelError} />}
+      {job.log.length > 0 && <LogPane title={`Output (${job.log.length} lines)`} text={job.log.slice(-200).join("\n")} />}
     </section>
   );
 }
@@ -190,22 +184,14 @@ function SolveStatus({ solve }: { solve: SolveState }) {
       </p>
       {steps.length > 0 && <p className="muted small">{steps.join(" · ")}</p>}
       {solve.rejected.map((r) => (
-        <p key={r.attempt} className="notice notice-warn small">
-          Try {r.attempt} failed the safety check: two drones came within {metres(r.worst)} (needs{" "}
-          {metres(r.required)}). Trying again with more time for this transition.
-        </p>
+        <Alert
+          key={r.attempt}
+          type="warning"
+          showIcon
+          title={`Try ${r.attempt} failed the safety check: two drones came within ${metres(r.worst)} (needs ${metres(r.required)}). Trying again with more time for this transition.`}
+        />
       ))}
     </div>
-  );
-}
-
-function LogPane({ lines }: { lines: string[] }) {
-  if (!lines.length) return null;
-  return (
-    <details className="log">
-      <summary>Output ({lines.length} lines)</summary>
-      <pre>{lines.slice(-200).join("\n")}</pre>
-    </details>
   );
 }
 
@@ -235,16 +221,18 @@ function Outcome({ run, status, job, controls, onShowInReplay, onChanged, onView
   const again = <div className="outcome-controls">{controls}</div>;
   const weaker = run.stage2.config_warnings ?? [];
   const note = weaker.length > 0 && (status === "succeeded" || status === "failed_safety") && (
-    <div className="notice notice-warn">
-      <p>
-        <strong>This result used weaker safety settings than the defaults:</strong>
-      </p>
-      <ul>
-        {weaker.map((w, i) => (
-          <li key={i}>{w.message}</li>
-        ))}
-      </ul>
-    </div>
+    <Alert
+      type="warning"
+      showIcon
+      title="This result used weaker safety settings than the defaults:"
+      description={
+        <ul>
+          {weaker.map((w, i) => (
+            <li key={i}>{w.message}</li>
+          ))}
+        </ul>
+      }
+    />
   );
   if (status === "succeeded")
     return (
@@ -320,7 +308,7 @@ function Rejected({
       .catch((e) => setLoadError(String(e)));
   }, [run.run_id, run.stage2.ended_at]);
 
-  if (loadError) return <p className="notice notice-bad">{loadError}</p>;
+  if (loadError) return <Alert type="error" showIcon title={loadError} />;
   if (!failure) return <p className="status-line">Loading the failure report…</p>;
   const t = failure.transition;
   const where = (name: string) => (name === "holding_area" ? "the holding area" : name);
@@ -337,34 +325,33 @@ function Rejected({
         </p>
 
         <h3>Too-close pairs</h3>
-        <table className="table data">
-          <thead>
-            <tr>
-              <th scope="col">Drones</th>
-              <th scope="col" className="num">Closest</th>
-              <th scope="col" className="num">At</th>
-              <th scope="col">
-                <span className="visually-hidden">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {failure.violations.slice(0, 100).map((v) => (
-              <tr key={`${v.drone_a}-${v.drone_b}`}>
-                <td>
-                  {v.drone_a} and {v.drone_b}
-                </td>
-                <td className="num tone-bad">{metres(v.distance_m, 3)}</td>
-                <td className="num">{formatTime(v.time_sec)}</td>
-                <td className="row-action">
-                  <button className="link" onClick={() => onShowInReplay(v.time_sec, [v.drone_a, v.drone_b])}>
-                    Show in replay
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <Table<FailureSummary["violations"][number]>
+          size="small"
+          pagination={false}
+          rowKey={(v) => `${v.drone_a}-${v.drone_b}`}
+          dataSource={failure.violations.slice(0, 100)}
+          columns={[
+            { title: "Drones", key: "drones", render: (_, v) => `${v.drone_a} and ${v.drone_b}` },
+            {
+              title: "Closest",
+              key: "closest",
+              align: "right",
+              className: "num tone-bad",
+              render: (_, v) => metres(v.distance_m, 3),
+            },
+            { title: "At", key: "at", align: "right", className: "num", render: (_, v) => formatTime(v.time_sec) },
+            {
+              title: <span className="visually-hidden">Actions</span>,
+              key: "action",
+              align: "right",
+              render: (_, v) => (
+                <Button type="link" size="small" onClick={() => onShowInReplay(v.time_sec, [v.drone_a, v.drone_b])}>
+                  Show in replay
+                </Button>
+              ),
+            },
+          ]}
+        />
         {failure.violations_truncated && (
           <p className="muted small">Showing the {failure.violations.length} closest pairs.</p>
         )}
@@ -374,24 +361,29 @@ function Rejected({
           Before rejecting a transition, Stage 2 retries it with more time and stronger spreading. If the closest
           distance doesn't improve, the formations themselves need to change.
         </p>
-        <table className="table data">
-          <thead>
-            <tr>
-              <th scope="col">Attempt</th>
-              <th scope="col" className="num">Transition time</th>
-              <th scope="col" className="num">Closest</th>
-            </tr>
-          </thead>
-          <tbody>
-            {failure.attempts.map((a) => (
-              <tr key={a.attempt}>
-                <td>{a.attempt}</td>
-                <td className="num">{a.duration_sec.toFixed(1)} s</td>
-                <td className="num tone-bad">{metres(a.worst_separation_m, 3)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <Table<FailureSummary["attempts"][number]>
+          size="small"
+          pagination={false}
+          rowKey="attempt"
+          dataSource={failure.attempts}
+          columns={[
+            { title: "Attempt", dataIndex: "attempt" },
+            {
+              title: "Transition time",
+              key: "time",
+              align: "right",
+              className: "num",
+              render: (_, a) => `${a.duration_sec.toFixed(1)} s`,
+            },
+            {
+              title: "Closest",
+              key: "closest",
+              align: "right",
+              className: "num tone-bad",
+              render: (_, a) => metres(a.worst_separation_m, 3),
+            },
+          ]}
+        />
         <p className="muted small planning-took">Planning took {duration(run.stage2.wall_time_sec)}.</p>
       </VerdictCard>
       {again}
@@ -442,14 +434,16 @@ function Stopped({
         tone={cancelled ? "idle" : STATUS[status].tone === "bad" ? "bad" : "warn"}
         title={cancelled ? "This run was cancelled" : "Stage 2 stopped with an error"}
       >
-        {!cancelled && run.stage2.message && <p className="notice notice-bad">{run.stage2.message}</p>}
+        {!cancelled && run.stage2.message && <Alert type="error" showIcon title={run.stage2.message} />}
         {!cancelled && (
           <p className="muted">
             This isn't a safety verdict. The planner didn't finish, so nothing was checked. The output below usually
             says why.
           </p>
         )}
-        <LogPane lines={logTail} />
+        {logTail.length > 0 && (
+          <LogPane title={`Output (${logTail.length} lines)`} text={logTail.slice(-200).join("\n")} />
+        )}
       </VerdictCard>
       {again}
     </section>

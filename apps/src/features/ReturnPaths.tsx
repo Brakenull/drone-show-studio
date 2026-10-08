@@ -1,13 +1,15 @@
 // "Return paths" on a passed Stage 2 run: plan, after the show
 // passed, a checked flight from each formation straight back to the holding area.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { Alert, Button, Modal, Table, type TableColumnsType } from "antd";
 import { readRunJson, readRunText, runJob } from "../bridge/api";
 import type { JobExit, ReturnEntry, ReturnIndex, RunRecord } from "../bridge/types";
 import { cancelReturns, startReturns, useReturnsJob, type ReturnsJob } from "../app/returnsJobs";
 import { solveFraction } from "../app/stage2Jobs";
 import { clock, duration, STATUS } from "../app/format";
 import { formatTime, metres } from "../replay/sampling";
+import { JobProgress } from "./JobOutput";
 
 interface Props {
   run: RunRecord;
@@ -26,6 +28,16 @@ const ROW_STATUS: Record<string, string> = {
   failed_safety: "Rejected",
   failed_error: "Error",
 };
+
+const dash = "–";
+
+/** A status light and its words. */
+const Lit = ({ tone, children }: { tone: string; children: React.ReactNode }) => (
+  <>
+    <span className={`light light-${tone}`} aria-hidden="true" />
+    {children}
+  </>
+);
 
 export function ReturnPaths({ run, onChanged, onView }: Props) {
   const job = useReturnsJob(run.run_id);
@@ -73,6 +85,123 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
   const coveredByLeg = (k: number) => hasReturnLeg && k === names.length - 1;
   const missing = names.map((_, k) => k).filter((k) => !coveredByLeg(k) && byFormation.get(k)?.status !== "succeeded");
 
+  /** One formation's row: the planned return from it, or the show's own return leg for the last one. */
+  function row(k: number) {
+    const entry = byFormation.get(k);
+    const planning = running && job!.current?.keyframe === k;
+    const reversed = entry?.method === "reversed_takeoff" && entry.status === "succeeded";
+    const viewable = entry?.status === "succeeded" ? (built ? built.has(k) : null) : undefined;
+    return { entry, planning, reversed, viewable, leg: coveredByLeg(k) };
+  }
+
+  const formationColumns: TableColumnsType<{ name: string; k: number }> = [
+    { title: "From", dataIndex: "name" },
+    {
+      title: "Reached at",
+      key: "at",
+      align: "right",
+      className: "num",
+      render: (_, { k }) => {
+        const { entry, leg } = row(k);
+        return !leg && entry ? formatTime(entry.abort_time_sec) : dash;
+      },
+    },
+    {
+      title: "Flight home",
+      key: "home",
+      align: "right",
+      className: "num",
+      render: (_, { k }) => {
+        const { entry, leg } = row(k);
+        return !leg && entry?.flown_duration_sec != null ? duration(entry.flown_duration_sec) : dash;
+      },
+    },
+    {
+      title: "Closest",
+      key: "closest",
+      align: "right",
+      onCell: ({ k }) => {
+        const { entry, leg } = row(k);
+        return {
+          className: `num ${!leg && entry?.status === "failed_safety" ? "tone-bad" : ""}`,
+          title: !leg && entry?.required_separation_m ? `needs ${metres(entry.required_separation_m, 2)}` : undefined,
+        };
+      },
+      render: (_, { k }) => {
+        const { entry, leg } = row(k);
+        return !leg && entry?.worst_separation_m != null ? metres(entry.worst_separation_m, 3) : dash;
+      },
+    },
+    {
+      title: "Status",
+      key: "status",
+      onCell: ({ k }) => {
+        const { entry, leg } = row(k);
+        return leg ? { className: "muted" } : { title: entry?.message ?? undefined };
+      },
+      render: (_, { k }) => {
+        const { entry, planning, reversed, leg } = row(k);
+        if (leg) return "The show's own return leg";
+        const tone = planning ? "busy" : entry ? STATUS[entry.status].tone : "idle";
+        return (
+          <Lit tone={tone}>
+            {planning
+              ? "Planning"
+              : reversed
+                ? "Takeoff flown backwards"
+                : entry
+                  ? (ROW_STATUS[entry.status] ?? STATUS[entry.status].label)
+                  : "Not planned"}
+          </Lit>
+        );
+      },
+    },
+    {
+      title: "3D view",
+      key: "view",
+      onCell: ({ k }) => (row(k).leg ? { className: "muted" } : {}),
+      render: (_, { k }) => {
+        const { viewable, leg } = row(k);
+        if (leg) return "In the show";
+        if (viewable === undefined) return dash;
+        if (viewable === null) return <span className="muted">Checking</span>;
+        return <Lit tone={viewable ? "ok" : "idle"}>{viewable ? "Ready" : "Not built"}</Lit>;
+      },
+    },
+    {
+      title: <span className="visually-hidden">Actions</span>,
+      key: "actions",
+      align: "right",
+      className: "row-action",
+      render: (_, { name, k }) => {
+        const { entry, reversed, viewable, leg } = row(k);
+        if (leg) return null;
+        return (
+          <>
+            {entry?.status === "succeeded" && (
+              <Button
+                type="link"
+                size="small"
+                onClick={() =>
+                  viewable
+                    ? onView(k, name, entry.abort_time_sec)
+                    : setToBuild({ keyframe: k, from: name, abortTime: entry.abort_time_sec })
+                }
+              >
+                View
+              </Button>
+            )}
+            {!running && !reversed && (
+              <Button type="link" size="small" onClick={() => plan([k])}>
+                {entry ? "Plan again" : "Plan"}
+              </Button>
+            )}
+          </>
+        );
+      },
+    },
+  ];
+
   function plan(formations: number[] | null) {
     setStartError(null);
     startReturns(run.run_id, run.run_dir, formations, (_exit: JobExit) => onChanged()).catch((e) =>
@@ -91,97 +220,13 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
         the first formation, so its flight home is simply the takeoff flown backwards.
       </p>
 
-      <table className="table data">
-        <thead>
-          <tr>
-            <th scope="col">From</th>
-            <th scope="col" className="num">Reached at</th>
-            <th scope="col" className="num">Flight home</th>
-            <th scope="col" className="num">Closest</th>
-            <th scope="col">Status</th>
-            <th scope="col">3D view</th>
-            <th scope="col">
-              <span className="visually-hidden">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {names.map((name, k) => {
-            const entry = byFormation.get(k);
-            const planning = running && job!.current?.keyframe === k;
-            if (coveredByLeg(k)) {
-              return (
-                <tr key={k}>
-                  <td>{name}</td>
-                  <td className="num">–</td>
-                  <td className="num">–</td>
-                  <td className="num">–</td>
-                  <td className="muted">The show's own return leg</td>
-                  <td className="muted">In the show</td>
-                  <td />
-                </tr>
-              );
-            }
-            const tone = planning ? "busy" : entry ? STATUS[entry.status].tone : "idle";
-            const reversed = entry?.method === "reversed_takeoff" && entry.status === "succeeded";
-            const viewable = entry?.status === "succeeded" ? (built ? built.has(k) : null) : undefined;
-            return (
-              <tr key={k}>
-                <td>{name}</td>
-                <td className="num">{entry ? formatTime(entry.abort_time_sec) : "–"}</td>
-                <td className="num">{entry?.flown_duration_sec != null ? duration(entry.flown_duration_sec) : "–"}</td>
-                <td
-                  className={`num ${entry?.status === "failed_safety" ? "tone-bad" : ""}`}
-                  title={entry?.required_separation_m ? `needs ${metres(entry.required_separation_m, 2)}` : undefined}
-                >
-                  {entry?.worst_separation_m != null ? metres(entry.worst_separation_m, 3) : "–"}
-                </td>
-                <td title={entry?.message ?? undefined}>
-                  <span className={`light light-${tone}`} aria-hidden="true" />
-                  {planning
-                    ? "Planning"
-                    : reversed
-                      ? "Takeoff flown backwards"
-                      : entry
-                        ? (ROW_STATUS[entry.status] ?? STATUS[entry.status].label)
-                        : "Not planned"}
-                </td>
-                <td>
-                  {viewable === undefined ? (
-                    "–"
-                  ) : viewable === null ? (
-                    <span className="muted">Checking</span>
-                  ) : (
-                    <>
-                      <span className={`light light-${viewable ? "ok" : "idle"}`} aria-hidden="true" />
-                      {viewable ? "Ready" : "Not built"}
-                    </>
-                  )}
-                </td>
-                <td className="row-action">
-                  {entry?.status === "succeeded" && (
-                    <button
-                      className="link"
-                      onClick={() =>
-                        viewable
-                          ? onView(k, name, entry.abort_time_sec)
-                          : setToBuild({ keyframe: k, from: name, abortTime: entry.abort_time_sec })
-                      }
-                    >
-                      View
-                    </button>
-                  )}
-                  {!running && !reversed && (
-                    <button className="link" onClick={() => plan([k])}>
-                      {entry ? "Plan again" : "Plan"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <Table<{ name: string; k: number }>
+        size="small"
+        pagination={false}
+        rowKey="k"
+        dataSource={names.map((name, k) => ({ name, k }))}
+        columns={formationColumns}
+      />
 
       {(index?.points?.length ?? 0) > 0 && (
         <AbortPointTable
@@ -198,7 +243,7 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
         />
       )}
 
-      {startError && <p className="notice notice-bad">Could not start planning: {startError}</p>}
+      {startError && <Alert type="error" showIcon title={`Could not start planning: ${startError}`} />}
       {toBuild && (
         <BuildViewDialog
           runDir={run.run_dir}
@@ -219,9 +264,9 @@ export function ReturnPaths({ run, onChanged, onView }: Props) {
           {job?.exit && <Finished job={job} />}
           {missing.length > 0 && (
             <div className="returns-controls">
-              <button className="primary" onClick={() => plan(missing)}>
+              <Button type="primary" size="large" onClick={() => plan(missing)}>
                 Plan return paths
-              </button>
+              </Button>
               <span className="muted small">
                 {missing.length === 1 ? "1 formation" : `${missing.length} formations`}
               </span>
@@ -247,14 +292,8 @@ function BuildViewDialog({
   onClose: () => void;
   onBuilt: () => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const primaryRef = useRef<HTMLButtonElement>(null);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    ref.current?.showModal();
-    primaryRef.current?.focus(); // showModal() focuses the first button; the expected action is building
-  }, []);
 
   async function build() {
     setBuilding(true);
@@ -273,47 +312,48 @@ function BuildViewDialog({
   }
 
   return (
-    <dialog
-      ref={ref}
-      className="dialog"
-      aria-labelledby="build-view-title"
-      // Escape closes the dialog; while building it stays open until the build ends.
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!building) onClose();
-      }}
+    <Modal
+      open
+      centered
+      title="No 3D view yet"
+      // While building, the dialog stays open until the build ends.
+      closable={!building}
+      keyboard={!building}
+      mask={{ closable: false }}
+      onCancel={onClose}
+      footer={[
+        <Button key="later" onClick={onClose} disabled={building}>
+          Not now
+        </Button>,
+        // The expected action is building, so it takes the focus.
+        <Button key="build" type="primary" autoFocus onClick={build} loading={building}>
+          {building ? "Building…" : "Build and view"}
+        </Button>,
+      ]}
     >
-      <h2 id="build-view-title">No 3D view yet</h2>
-      <p>
+      <p className="muted">
         The flight home from {target.from} hasn't been prepared for the 3D view. Building it samples the show up to{" "}
         {target.from} and the flight home; for {fleet} drones that takes{" "}
         {fleet >= 150 ? "about 10 to 20 seconds" : "a few seconds"}.
       </p>
-      {building && <div className="bar bar-indeterminate" role="progressbar" aria-label="Building the 3D view"><span /></div>}
-      {error && <p className="notice notice-bad">Could not build the 3D view: {error}</p>}
-      <div className="dialog-actions">
-        <button onClick={onClose} disabled={building}>
-          Not now
-        </button>
-        <button ref={primaryRef} className="primary" onClick={build} disabled={building}>
-          {building ? "Building…" : "Build and view"}
-        </button>
-      </div>
-    </dialog>
+      {error && <Alert type="error" showIcon title={`Could not build the 3D view: ${error}`} />}
+    </Modal>
   );
 }
 
 function Finished({ job }: { job: ReturnsJob }) {
-  if (job.exit?.cancelled) return <p className="notice small">Planning was cancelled. Finished return paths are kept.</p>;
+  if (job.exit?.cancelled)
+    return <Alert type="info" showIcon title="Planning was cancelled. Finished return paths are kept." />;
   const failed = job.results.filter((r) => r.status !== "succeeded");
   if (job.errors.length && !job.results.length)
-    return <p className="notice notice-bad">{job.errors[job.errors.length - 1]}</p>;
+    return <Alert type="error" showIcon title={job.errors[job.errors.length - 1]} />;
   if (!failed.length) return null;
   return (
-    <p className="notice notice-warn small">
-      {failed.length === 1 ? "One formation has" : `${failed.length} formations have`} no return path: the safety check
-      rejected {failed.length === 1 ? "its flight" : "their flights"} home. Hover its status for the details.
-    </p>
+    <Alert
+      type="warning"
+      showIcon
+      title={`${failed.length === 1 ? "One formation has" : `${failed.length} formations have`} no return path: the safety check rejected ${failed.length === 1 ? "its flight" : "their flights"} home. Hover its status for the details.`}
+    />
   );
 }
 
@@ -353,20 +393,19 @@ export function ReturnsRunning({ job, runId, names }: { job: ReturnsJob; runId: 
             {steps.length > 0 && <> · {steps.join(" · ")}</>}
           </p>
         </div>
-        <button
-          className="danger"
-          disabled={job.cancelling || job.jobId < 0}
+        <Button
+          danger
+          size="large"
+          loading={job.cancelling}
+          disabled={job.jobId < 0}
           onClick={() => cancelReturns(runId).catch((e) => setCancelError(String(e)))}
         >
           {job.cancelling ? "Cancelling…" : "Cancel planning"}
-        </button>
+        </Button>
       </div>
-      <div className={`bar ${pct === null ? "bar-indeterminate" : ""}`} role="progressbar"
-        aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100}>
-        <span style={pct === null ? undefined : { width: `${pct}%` }} />
-      </div>
+      <JobProgress pct={pct} />
       <p className="muted small">Finished return paths are saved as they complete, so cancelling keeps them.</p>
-      {cancelError && <p className="notice notice-bad">{cancelError}</p>}
+      {cancelError && <Alert type="error" showIcon title={cancelError} />}
     </div>
   );
 }
@@ -388,57 +427,71 @@ function AbortPointTable({
   onView: (id: string, from: string, abortTime: number, built: boolean) => void;
   onPlan: (formation: number, time: number) => void;
 }) {
+  const name = (p: ReturnEntry) => names[p.keyframe_index] ?? p.from_keyframe;
+  const planning = (p: ReturnEntry) => planningAt !== null && Math.abs(planningAt - p.abort_time_sec) < 1e-3;
   return (
     <>
       <h4 className="returns-subhead">From inside a move</h4>
-      <table className="table data">
-        <thead>
-          <tr>
-            <th scope="col">In the move to</th>
-            <th scope="col" className="num">From</th>
-            <th scope="col" className="num">Flight home</th>
-            <th scope="col" className="num">Closest</th>
-            <th scope="col">Status</th>
-            <th scope="col">
-              <span className="visually-hidden">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((p) => {
-            const name = names[p.keyframe_index] ?? p.from_keyframe;
-            const planning = planningAt !== null && Math.abs(planningAt - p.abort_time_sec) < 1e-3;
-            const tone = planning ? "busy" : STATUS[p.status].tone;
-            const from = `the move to ${name} at ${formatTime(p.abort_time_sec)}`;
-            return (
-              <tr key={p.id}>
-                <td>{name}</td>
-                <td className="num">{formatTime(p.abort_time_sec)}</td>
-                <td className="num">{p.flown_duration_sec != null ? duration(p.flown_duration_sec) : "–"}</td>
-                <td className={`num ${p.status === "failed_safety" ? "tone-bad" : ""}`}>
-                  {p.worst_separation_m != null ? metres(p.worst_separation_m, 3) : "–"}
-                </td>
-                <td title={p.message ?? undefined}>
-                  <span className={`light light-${tone}`} aria-hidden="true" />
-                  {planning ? "Planning" : (ROW_STATUS[p.status] ?? STATUS[p.status].label)}
-                </td>
-                <td className="row-action">
-                  {p.status === "succeeded" && (
-                    <button className="link" onClick={() => onView(p.id!, from, p.abort_time_sec, !!p.replay)}>
-                      View
-                    </button>
-                  )}
-                  {!running && (
-                    <button className="link" onClick={() => onPlan(p.keyframe_index, p.abort_time_sec)}>
-                      Plan again
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <Table<ReturnEntry>
+        size="small"
+        pagination={false}
+        rowKey={(p) => p.id!}
+        dataSource={points}
+        columns={[
+          { title: "In the move to", key: "to", render: (_, p) => name(p) },
+          { title: "From", key: "from", align: "right", className: "num", render: (_, p) => formatTime(p.abort_time_sec) },
+          {
+            title: "Flight home",
+            key: "home",
+            align: "right",
+            className: "num",
+            render: (_, p) => (p.flown_duration_sec != null ? duration(p.flown_duration_sec) : dash),
+          },
+          {
+            title: "Closest",
+            key: "closest",
+            align: "right",
+            onCell: (p) => ({ className: `num ${p.status === "failed_safety" ? "tone-bad" : ""}` }),
+            render: (_, p) => (p.worst_separation_m != null ? metres(p.worst_separation_m, 3) : dash),
+          },
+          {
+            title: "Status",
+            key: "status",
+            onCell: (p) => ({ title: p.message ?? undefined }),
+            render: (_, p) => (
+              <Lit tone={planning(p) ? "busy" : STATUS[p.status].tone}>
+                {planning(p) ? "Planning" : (ROW_STATUS[p.status] ?? STATUS[p.status].label)}
+              </Lit>
+            ),
+          },
+          {
+            title: <span className="visually-hidden">Actions</span>,
+            key: "actions",
+            align: "right",
+            className: "row-action",
+            render: (_, p) => (
+              <>
+                {p.status === "succeeded" && (
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() =>
+                      onView(p.id!, `the move to ${name(p)} at ${formatTime(p.abort_time_sec)}`, p.abort_time_sec, !!p.replay)
+                    }
+                  >
+                    View
+                  </Button>
+                )}
+                {!running && (
+                  <Button type="link" size="small" onClick={() => onPlan(p.keyframe_index, p.abort_time_sec)}>
+                    Plan again
+                  </Button>
+                )}
+              </>
+            ),
+          },
+        ]}
+      />
     </>
   );
 }
