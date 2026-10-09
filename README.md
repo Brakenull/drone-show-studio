@@ -11,6 +11,23 @@ Takes a drone light show from a Blender animation to verified flight files, one 
 
 Windows 10/11 x64 is the supported platform.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="33%"><a href="https://r2.brakenull.dev/Screenshots/drone-show-studio/01.png"><img src="https://r2.brakenull.dev/Screenshots/drone-show-studio/01.png" alt="Screenshot 1" width="100%"></a></td>
+    <td width="33%"><a href="https://r2.brakenull.dev/Screenshots/drone-show-studio/02.png"><img src="https://r2.brakenull.dev/Screenshots/drone-show-studio/02.png" alt="Screenshot 2" width="100%"></a></td>
+    <td width="33%"><a href="https://r2.brakenull.dev/Screenshots/drone-show-studio/03.png"><img src="https://r2.brakenull.dev/Screenshots/drone-show-studio/03.png" alt="Screenshot 3" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td width="33%"><a href="https://r2.brakenull.dev/Screenshots/drone-show-studio/04.png"><img src="https://r2.brakenull.dev/Screenshots/drone-show-studio/04.png" alt="Screenshot 4" width="100%"></a></td>
+    <td width="33%"><a href="https://r2.brakenull.dev/Screenshots/drone-show-studio/05.png"><img src="https://r2.brakenull.dev/Screenshots/drone-show-studio/05.png" alt="Screenshot 5" width="100%"></a></td>
+    <td width="33%"><a href="https://r2.brakenull.dev/Screenshots/drone-show-studio/06.png"><img src="https://r2.brakenull.dev/Screenshots/drone-show-studio/06.png" alt="Screenshot 6" width="100%"></a></td>
+  </tr>
+</table>
+
+<sub>Click an image to open it full size.</sub>
+
 ---
 
 ## Setup
@@ -103,6 +120,23 @@ Blender ships NumPy but not SciPy, which the add-on needs for sampling; msgpack 
 
 ```powershell
 & "C:\Program Files\Blender Foundation\Blender 4.2\4.2\python\bin\python.exe" -m pip install scipy msgpack
+```
+
+---
+
+## Try the demo show
+
+`export_200_cone.json` is a ready-made Blender export: 300 drones, about 108 seconds. Download it from the latest release, then:
+
+1. Start the app and click **New run** in the sidebar.
+2. Drop `export_200_cone.json` onto the page (or click to choose it). Studio checks the file; click **Create run**.
+3. On the **Stage 2** tab, click **Run Stage 2** to plan collision-free paths. When it finishes, open the **Replay** tab to watch the show in 3D.
+4. On the **Stage 3** tab, click **Start stress test** to fly the show in simulated weather.
+
+From the command line instead:
+
+```powershell
+.venv\Scripts\python.exe tools\scripts\export_stage2_trajectories.py export_300_cube.json out\
 ```
 
 ---
